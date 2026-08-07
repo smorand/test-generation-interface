@@ -44,12 +44,12 @@
         <div class="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label class="block text-sm text-gray-400 mb-1">Modèle Générateur</label>
-            <input type="text" name="model_generator" placeholder="gemma-4-26b-a4b-it"
+            <input type="text" name="model_generator" placeholder="{{ default_model_generator }}"
               class="input w-full" />
           </div>
           <div>
             <label class="block text-sm text-gray-400 mb-1">Modèle Juge</label>
-            <input type="text" name="model_judge" placeholder="ibm/granite-4-h-small"
+            <input type="text" name="model_judge" placeholder="{{ default_model_judge }}"
               class="input w-full" />
           </div>
         </div>

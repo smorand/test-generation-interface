@@ -118,7 +118,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return templates.TemplateResponse(
             request,
             "base.html",
-            {"projects": project_list, "page": "home"},
+            {
+                "projects": project_list,
+                "page": "home",
+                "default_model_generator": app_settings.model_generator,
+                "default_model_judge": app_settings.model_judge,
+            },
         )
 
     @application.post("/upload")
