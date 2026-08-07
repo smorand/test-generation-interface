@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     max_judge_passes: int = 3
     max_parallel_blocs: int = 5
     max_context_tokens: int = 128000
+    llm_json_retries: int = 5
     projects_dir: str = "./projects"
 
     # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)

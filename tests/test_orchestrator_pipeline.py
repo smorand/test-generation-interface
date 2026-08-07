@@ -134,6 +134,25 @@ async def test_process_bloc_error_status(orchestrator: Orchestrator) -> None:
     assert state["blocs"][0]["status"] == "error"
 
 
+async def test_process_bloc_llmjsonerror_gives_friendly_message(orchestrator: Orchestrator) -> None:
+    from tgi.services.llm import LLMJSONError
+
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+
+    orchestrator._extractor = _StubAgent("extract", LLMJSONError("model x returned no valid JSON after 5 attempts"))  # type: ignore[assignment]
+
+    state = await orchestrator._state.load(pid)
+    bloc_id = state["blocs"][0]["id"]
+    await orchestrator._process_bloc(pid, bloc_id)
+    state = await orchestrator._state.load(pid)
+    bloc = state["blocs"][0]
+    assert bloc["status"] == "error"
+    # Human-readable message, not the raw exception string.
+    assert "JSON" in bloc["error"]
+    assert "Rejouer" in bloc["error"]
+
+
 async def test_run_pipeline_no_pending(orchestrator: Orchestrator) -> None:
     pid = await _new_project(orchestrator)
     await orchestrator.split_and_propose(pid)

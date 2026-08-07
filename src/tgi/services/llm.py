@@ -19,12 +19,64 @@ logger = logging.getLogger(__name__)
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
 
+class LLMJSONError(RuntimeError):
+    """Raised when the model fails to return valid JSON after all retries.
+
+    This is an expected, recoverable outcome (a weak model returning prose),
+    not a bug. Callers should log it as a warning and mark the unit rerunnable,
+    not dump a traceback.
+    """
+
+
 def strip_code_fences(text: str) -> str:
     """Remove markdown code fences from LLM JSON output."""
     match = _CODE_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()
     return text.strip()
+
+
+def _extract_balanced(text: str, open_ch: str, close_ch: str) -> str | None:
+    """Return the first balanced {..}/[..] substring, or None.
+
+    Scans for the first opening char and tracks nesting depth so a full JSON
+    object/array embedded in surrounding prose is recovered.
+    """
+    start = text.find(open_ch)
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def extract_json(raw: str) -> Any:
+    """Parse JSON from an LLM response, tolerating prose and code fences.
+
+    Order: strip fences and parse; else find an embedded {..} object; else an
+    embedded [..] array. Raises json.JSONDecodeError if nothing parses.
+    """
+    cleaned = strip_code_fences(raw)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        candidate = _extract_balanced(cleaned, open_ch, close_ch)
+        if candidate is not None:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+    # Nothing parsed: re-raise a clean decode error on the cleaned text.
+    return json.loads(cleaned)
 
 
 class LLMClient:
@@ -73,13 +125,23 @@ class LLMClient:
         user_content: str,
         temperature: float = 0.2,
         max_tokens: int = 4096,
-        retries: int = 3,
+        retries: int | None = None,
     ) -> Any:
-        """Send request, parse JSON response. Retries up to `retries` times on parse failure."""
+        """Send request, parse JSON response, retrying on non-JSON output.
+
+        On each parse failure the model's own faulty reply is fed back with an
+        explicit correction instruction, which is far more effective than only
+        repeating the request. Prose wrapping a JSON object/array is tolerated
+        via extract_json. After all attempts, raises LLMJSONError (expected,
+        not a bug).
+        """
+        max_attempts = retries if retries is not None else settings.llm_json_retries
+        max_attempts = max(1, max_attempts)
         last_error: Exception | None = None
         current_user_content = user_content
 
-        for attempt in range(retries):
+        for attempt in range(max_attempts):
+            raw = ""
             try:
                 raw = await self.chat(
                     model=model,
@@ -88,35 +150,42 @@ class LLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                cleaned = strip_code_fences(raw)
-                return json.loads(cleaned)
+                return extract_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
                 logger.warning(
-                    "JSON parse failed on attempt %d/%d: %s",
+                    "JSON parse failed on attempt %d/%d for model %s: %s",
                     attempt + 1,
-                    retries,
+                    max_attempts,
+                    model,
                     exc,
                 )
-                if attempt < retries - 1:
+                if attempt < max_attempts - 1:
+                    # Feed the model its own faulty reply so it can correct it,
+                    # not just repeat the original request. Truncate to keep the
+                    # correction prompt bounded.
+                    faulty = raw.strip()[:2000]
                     current_user_content = (
                         f"{user_content}\n\n"
-                        f"IMPORTANT: Your previous response was not valid JSON. "
-                        f"Fix your JSON. Return ONLY valid JSON, nothing else. "
-                        f"Error: {exc}"
+                        f"IMPORTANT: your previous answer was NOT valid JSON and could not be parsed "
+                        f"(error: {exc}). Here is what you returned:\n"
+                        f"<<<\n{faulty}\n>>>\n"
+                        f"Return ONLY the corrected JSON, no prose, no markdown fences, nothing else."
                     )
             except Exception as exc:
+                # Transport / API error: retry silently up to the limit.
                 last_error = exc
                 logger.warning(
-                    "LLM call failed on attempt %d/%d: %s",
+                    "LLM call failed on attempt %d/%d for model %s: %s",
                     attempt + 1,
-                    retries,
+                    max_attempts,
+                    model,
                     exc,
                 )
-                if attempt >= retries - 1:
-                    break
 
-        raise RuntimeError(f"LLM call failed after {retries} attempts. Last error: {last_error}")
+        raise LLMJSONError(
+            f"model {model} returned no valid JSON after {max_attempts} attempts (last error: {last_error})"
+        )
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Fetch available models from the ICA endpoint."""

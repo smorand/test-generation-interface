@@ -14,6 +14,7 @@ from tgi.agents.generator import GeneratorAgent
 from tgi.agents.judge import JudgeAgent
 from tgi.agents.planner import PlannerAgent
 from tgi.config import settings
+from tgi.services.llm import LLMJSONError
 
 if TYPE_CHECKING:
     from tgi.services.git_service import GitService
@@ -279,6 +280,16 @@ class Orchestrator:
             await self._state.update_bloc(project_id, bloc_id, {"status": "needs_human", "judge_passes": max_passes})
             await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "needs_human"})
 
+        except LLMJSONError as exc:
+            # Expected, recoverable: the model did not return JSON after all
+            # retries. Log a clean warning (no traceback) and let the human rerun.
+            logger.warning("Bloc %s: %s", bloc_id, exc)
+            message = (
+                "Le modèle n'a pas renvoyé de JSON exploitable après plusieurs tentatives. "
+                "Relancez ce bloc (bouton Rejouer), réduisez sa taille, ou changez de modèle."
+            )
+            await self._state.update_bloc(project_id, bloc_id, {"status": "error", "error": message})
+            await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "error", "error": message})
         except Exception as exc:
             logger.exception("Pipeline failed for bloc %s: %s", bloc_id, exc)
             await self._state.update_bloc(project_id, bloc_id, {"status": "error", "error": str(exc)})
