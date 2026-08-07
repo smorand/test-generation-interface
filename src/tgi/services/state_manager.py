@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +16,19 @@ import aiofiles
 from tgi.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Per-project locks serialize read-modify-write cycles on the same state.json.
+# Without this, parallel bloc processing races: concurrent load/save interleave,
+# causing lost updates and reads of a half-written (empty) file.
+_STATE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _state_lock(project_id: str) -> asyncio.Lock:
+    lock = _STATE_LOCKS.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _STATE_LOCKS[project_id] = lock
+    return lock
 
 
 class StateManager:
@@ -44,9 +59,17 @@ class StateManager:
         return state
 
     async def save(self, project_id: str, state: dict[str, Any]) -> None:
+        """Atomically persist state: write to a temp file, then rename over the target.
+
+        os.replace is atomic on the same filesystem, so a concurrent load never
+        observes a truncated or half-written file.
+        """
         path = self.state_path(project_id)
-        async with aiofiles.open(path, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(state, indent=2, ensure_ascii=False))
+        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        payload = json.dumps(state, indent=2, ensure_ascii=False)
+        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+            await f.write(payload)
+        await asyncio.to_thread(os.replace, tmp_path, path)
 
     async def create(
         self,
@@ -71,17 +94,19 @@ class StateManager:
         return project_id
 
     async def update_blocs(self, project_id: str, blocs: list[dict[str, Any]]) -> None:
-        state = await self.load(project_id)
-        state["blocs"] = blocs
-        await self.save(project_id, state)
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            state["blocs"] = blocs
+            await self.save(project_id, state)
 
     async def update_bloc(self, project_id: str, bloc_id: str, updates: dict[str, Any]) -> None:
-        state = await self.load(project_id)
-        for bloc in state["blocs"]:
-            if bloc["id"] == bloc_id:
-                bloc.update(updates)
-                break
-        await self.save(project_id, state)
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            for bloc in state["blocs"]:
+                if bloc["id"] == bloc_id:
+                    bloc.update(updates)
+                    break
+            await self.save(project_id, state)
 
     async def get_bloc(self, project_id: str, bloc_id: str) -> dict[str, Any] | None:
         state = await self.load(project_id)
@@ -93,15 +118,16 @@ class StateManager:
 
     async def add_or_update_tests(self, project_id: str, bloc_id: str, tests: list[dict[str, Any]]) -> None:
         """Merge new tests into bloc's test list, deduplicating by id."""
-        state = await self.load(project_id)
-        for bloc in state["blocs"]:
-            if bloc["id"] == bloc_id:
-                existing = {t["id"]: t for t in bloc.get("tests", [])}
-                for test in tests:
-                    existing[test["id"]] = test
-                bloc["tests"] = list(existing.values())
-                break
-        await self.save(project_id, state)
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            for bloc in state["blocs"]:
+                if bloc["id"] == bloc_id:
+                    existing = {t["id"]: t for t in bloc.get("tests", [])}
+                    for test in tests:
+                        existing[test["id"]] = test
+                    bloc["tests"] = list(existing.values())
+                    break
+            await self.save(project_id, state)
 
         # Also write individual test JSON files
         for test in tests:
@@ -110,17 +136,19 @@ class StateManager:
                 await f.write(json.dumps(test, indent=2, ensure_ascii=False))
 
     async def update_test(self, project_id: str, test_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
-        state = await self.load(project_id)
-        updated_test: dict[str, Any] | None = None
-        for bloc in state["blocs"]:
-            for test in bloc.get("tests", []):
-                if test["id"] == test_id:
-                    test.update(updates)
-                    test["updated_at"] = datetime.now(UTC).isoformat()
-                    updated_test = test
-                    break
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            updated_test: dict[str, Any] | None = None
+            for bloc in state["blocs"]:
+                for test in bloc.get("tests", []):
+                    if test["id"] == test_id:
+                        test.update(updates)
+                        test["updated_at"] = datetime.now(UTC).isoformat()
+                        updated_test = test
+                        break
+            if updated_test:
+                await self.save(project_id, state)
         if updated_test:
-            await self.save(project_id, state)
             # Update individual file
             test_path = self.tests_dir(project_id) / f"{test_id}.json"
             async with aiofiles.open(test_path, "w", encoding="utf-8") as f:

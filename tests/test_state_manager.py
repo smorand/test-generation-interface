@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,49 @@ async def test_list_projects(manager: StateManager) -> None:
     assert await manager.list_projects() == []
     pid = await _create_sample(manager)
     assert pid in await manager.list_projects()
+
+
+async def test_concurrent_bloc_updates_no_lost_update(manager: StateManager) -> None:
+    """Parallel updates on the same project must not lose writes or read empty state.
+
+    Reproduces the pipeline race: several blocs processed at once, each doing a
+    load-modify-save cycle on the shared state.json.
+    """
+    pid = await _create_sample(manager)
+    bloc_ids = [f"bloc-{i}" for i in range(20)]
+    await manager.update_blocs(pid, [{"id": bid, "status": "pending", "tests": []} for bid in bloc_ids])
+
+    async def mark_done(bloc_id: str) -> None:
+        await manager.update_bloc(pid, bloc_id, {"status": "done"})
+
+    async with asyncio.TaskGroup() as tg:
+        for bid in bloc_ids:
+            tg.create_task(mark_done(bid))
+
+    state = await manager.load(pid)
+    statuses = {b["id"]: b["status"] for b in state["blocs"]}
+    assert len(statuses) == len(bloc_ids)
+    assert all(status == "done" for status in statuses.values()), statuses
+
+
+async def test_save_is_atomic_no_empty_read(manager: StateManager) -> None:
+    """Interleaving many saves and loads never yields a truncated (empty) file."""
+    pid = await _create_sample(manager)
+    await manager.update_blocs(pid, [{"id": "bloc-1", "status": "pending", "tests": []}])
+
+    async def writer(n: int) -> None:
+        await manager.update_bloc(pid, "bloc-1", {"status": f"s{n}"})
+
+    async def reader() -> None:
+        # load must always parse valid JSON, never hit an empty file
+        state = await manager.load(pid)
+        assert state["project_id"] == pid
+
+    async with asyncio.TaskGroup() as tg:
+        for n in range(30):
+            tg.create_task(writer(n))
+            tg.create_task(reader())
+
+    # No temp files left behind
+    leftovers = list((manager.state_path(pid).parent).glob("state.json.*.tmp"))
+    assert leftovers == []
