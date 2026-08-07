@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FunctionalTest",
+  "type": "object",
+  "required": ["id", "bloc_id", "business_rule", "name", "description", "steps", "status", "created_at", "updated_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique test identifier, e.g. TEST-001"
+    },
+    "bloc_id": {
+      "type": "string",
+      "description": "Reference to the parent bloc"
+    },
+    "business_rule": {
+      "type": "string",
+      "description": "The business rule this test covers"
+    },
+    "name": {
+      "type": "string",
+      "description": "Short test name"
+    },
+    "description": {
+      "type": "string",
+      "description": "What this test verifies"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["order", "description", "expected_result"],
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "expected_result": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "validated", "rejected"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

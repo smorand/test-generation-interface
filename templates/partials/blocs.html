@@ -1,0 +1,71 @@
+{% set status_colors = {
+  'pending': 'badge-gray',
+  'running': 'badge-blue',
+  'done': 'badge-green',
+  'needs_human': 'badge-orange',
+  'error': 'badge-red'
+} %}
+
+{% set status_labels = {
+  'pending': '⏳ En attente',
+  'running': '🔄 En cours',
+  'done': '✅ Terminé',
+  'needs_human': '⚠ Revue humaine',
+  'error': '❌ Erreur'
+} %}
+
+<div class="space-y-3">
+  {% for bloc in blocs %}
+  <div class="card" id="bloc-{{ bloc.id }}">
+    <div class="flex items-start justify-between mb-2">
+      <div>
+        <div class="font-semibold text-sm">{{ bloc.title }}</div>
+        <div class="text-xs text-gray-500 mt-0.5">{{ bloc.id }} &bull; {{ bloc.rules|length }} règles &bull; {{ bloc.tests|length }} tests</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="badge {{ status_colors.get(bloc.status, 'badge-gray') }}">
+          {{ status_labels.get(bloc.status, bloc.status) }}
+        </span>
+        <button
+          class="btn-secondary text-xs"
+          hx-post="/projects/{{ project_id }}/blocs/{{ bloc.id }}/rerun"
+          hx-swap="none"
+        >↺ Rejouer</button>
+      </div>
+    </div>
+
+    {% if bloc.status == 'running' %}
+    <div class="flex items-center gap-2 text-blue-400 text-xs mt-2">
+      <span class="spinner"></span> Traitement en cours (passe {{ bloc.judge_passes + 1 }})…
+    </div>
+    {% endif %}
+
+    {% if bloc.status == 'error' and bloc.get('error') %}
+    <div class="text-red-400 text-xs mt-2 bg-red-900/20 rounded p-2">{{ bloc.error }}</div>
+    {% endif %}
+
+    {% if bloc.rules %}
+    <details class="mt-2">
+      <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-200">{{ bloc.rules|length }} règles métier</summary>
+      <ul class="mt-2 space-y-1">
+        {% for rule in bloc.rules %}
+        <li class="text-xs text-gray-400 flex gap-2">
+          <span class="text-gray-600 font-mono">{{ rule.id }}</span>
+          <span>{{ rule.description }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+
+    {% if bloc.chunk %}
+    <details class="mt-1">
+      <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Aperçu du contenu</summary>
+      <pre class="mt-1 text-xs text-gray-500 bg-gray-900 rounded p-2 max-h-32 overflow-auto">{{ bloc.chunk[:500] }}{% if bloc.chunk|length > 500 %}…{% endif %}</pre>
+    </details>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="text-gray-500 text-sm">Aucun bloc trouvé. Uploadez un document pour commencer.</div>
+  {% endfor %}
+</div>

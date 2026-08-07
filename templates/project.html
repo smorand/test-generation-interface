@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Projet {{ project_id[:8] }} — QA Test Generator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen"
+  x-data="projectApp('{{ project_id }}')"
+  x-init="init()">
+
+  <header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+    <a href="/" class="text-blue-400 hover:text-blue-300 font-bold">⚡ QA Test Generator</a>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-gray-500 font-mono">{{ project_id[:8] }}</span>
+      <a href="/projects/{{ project_id }}/export" class="btn-secondary text-xs">⬇ Export ZIP</a>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav class="border-b border-gray-800 px-6 flex gap-0">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button
+        class="tab-btn"
+        :class="{ 'active': activeTab === tab.id }"
+        @click="activeTab = tab.id"
+        x-text="tab.label"
+      ></button>
+    </template>
+  </nav>
+
+  <!-- Pipeline controls -->
+  <div class="px-6 py-3 border-b border-gray-800 flex items-center gap-3">
+    <button
+      class="btn-primary text-sm"
+      x-show="!pipelineRunning"
+      @click="runPipeline()"
+    >▶ Lancer la génération</button>
+    <div x-show="pipelineRunning" class="flex items-center gap-2 text-blue-400 text-sm">
+      <span class="spinner"></span> Pipeline en cours…
+    </div>
+    <button
+      class="btn-secondary text-sm"
+      x-show="!splitValidated"
+      @click="validateSplit()"
+    >✓ Valider le découpage</button>
+    <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
+  </div>
+
+  <!-- Tab content -->
+  <main class="px-6 py-4">
+
+    <!-- DOC tab -->
+    <div x-show="activeTab === 'doc'">
+      <div class="card">
+        <h2 class="text-sm font-semibold text-gray-400 mb-2 uppercase tracking-wide">Document source</h2>
+        <div class="text-xs text-gray-500 mb-3">{{ state.doc_path }}</div>
+        <pre class="doc-preview text-xs text-gray-300 overflow-auto max-h-96 bg-gray-900 rounded p-3">{{ state.doc_text[:3000] }}{% if state.doc_text|length > 3000 %}
+… (tronqué){% endif %}</pre>
+      </div>
+    </div>
+
+    <!-- BLOCS tab -->
+    <div x-show="activeTab === 'blocs'">
+      <div id="blocs-container"
+        hx-get="/projects/{{ project_id }}/partials/blocs"
+        hx-trigger="load, every 5s"
+        hx-swap="innerHTML"
+      >
+        <div class="text-gray-500 text-sm">Chargement des blocs…</div>
+      </div>
+    </div>
+
+    <!-- TESTS tab -->
+    <div x-show="activeTab === 'tests'">
+      <div id="tests-container"
+        hx-get="/projects/{{ project_id }}/partials/tests"
+        hx-trigger="load, every 10s"
+        hx-swap="innerHTML"
+      >
+        <div class="text-gray-500 text-sm">Chargement des tests…</div>
+      </div>
+    </div>
+
+    <!-- CHAT tab -->
+    <div x-show="activeTab === 'chat'" class="flex flex-col h-[60vh]">
+      <div class="flex-1 overflow-y-auto space-y-3 mb-4" id="chat-messages">
+        <template x-for="(msg, i) in chatMessages" :key="i">
+          <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+            <div
+              :class="msg.role === 'user'
+                ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-lg text-sm'
+                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm px-4 py-2 max-w-xl text-sm'"
+              x-text="msg.content"
+            ></div>
+          </div>
+        </template>
+        <div x-show="chatLoading" class="flex justify-start">
+          <div class="bg-gray-800 rounded-2xl px-4 py-2 text-sm text-gray-400">
+            <span class="spinner"></span> Réflexion…
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <input
+          type="text"
+          class="input flex-1"
+          placeholder="Instruction ou question sur ce document…"
+          x-model="chatInput"
+          @keydown.enter="sendChat()"
+        />
+        <button class="btn-primary" @click="sendChat()" :disabled="chatLoading">Envoyer</button>
+      </div>
+    </div>
+
+    <!-- HISTORIQUE tab -->
+    <div x-show="activeTab === 'history'">
+      <div id="history-container"
+        hx-get="/projects/{{ project_id }}/partials/history"
+        hx-trigger="load"
+        hx-swap="innerHTML"
+      >
+        <div class="text-gray-500 text-sm">Chargement de l'historique…</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    function projectApp(projectId) {
+      return {
+        projectId,
+        activeTab: 'blocs',
+        tabs: [
+          { id: 'doc', label: '📄 DOC' },
+          { id: 'blocs', label: '📦 BLOCS' },
+          { id: 'tests', label: '✅ TESTS' },
+          { id: 'chat', label: '💬 CHAT' },
+          { id: 'history', label: '🕑 HISTORIQUE' },
+        ],
+        pipelineRunning: false,
+        splitValidated: {{ 'true' if state.get('validated') else 'false' }},
+        statusMessage: '',
+        chatMessages: [],
+        chatInput: '',
+        chatLoading: false,
+        eventSource: null,
+
+        init() {
+          this.connectSSE();
+        },
+
+        connectSSE() {
+          if (this.eventSource) this.eventSource.close();
+          this.eventSource = new EventSource(`/projects/${this.projectId}/stream`);
+          this.eventSource.onmessage = (e) => {
+            const evt = JSON.parse(e.data);
+            this.handleEvent(evt);
+          };
+          this.eventSource.onerror = () => {
+            setTimeout(() => this.connectSSE(), 3000);
+          };
+        },
+
+        handleEvent(evt) {
+          if (evt.type === 'pipeline_start') {
+            this.pipelineRunning = true;
+            this.statusMessage = 'Pipeline démarré…';
+          } else if (evt.type === 'pipeline_done') {
+            this.pipelineRunning = false;
+            this.statusMessage = 'Pipeline terminé';
+            htmx.trigger('#blocs-container', 'load');
+            htmx.trigger('#tests-container', 'load');
+          } else if (evt.type === 'bloc_status') {
+            this.statusMessage = `Bloc ${evt.data.bloc_id}: ${evt.data.status}`;
+            htmx.trigger('#blocs-container', 'load');
+            if (evt.data.status === 'done') {
+              htmx.trigger('#tests-container', 'load');
+            }
+          } else if (evt.type === 'bloc_step') {
+            this.statusMessage = `${evt.data.bloc_id}: ${evt.data.step}`;
+          }
+        },
+
+        async validateSplit() {
+          await fetch(`/projects/${this.projectId}/validate-split`, { method: 'POST' });
+          this.splitValidated = true;
+          this.statusMessage = 'Découpage validé';
+        },
+
+        async runPipeline() {
+          this.pipelineRunning = true;
+          await fetch(`/projects/${this.projectId}/run`, { method: 'POST' });
+        },
+
+        async sendChat() {
+          const msg = this.chatInput.trim();
+          if (!msg || this.chatLoading) return;
+          this.chatMessages.push({ role: 'user', content: msg });
+          this.chatInput = '';
+          this.chatLoading = true;
+          this.$nextTick(() => {
+            const el = document.getElementById('chat-messages');
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+          try {
+            const r = await fetch(`/projects/${this.projectId}/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: msg }),
+            });
+            const d = await r.json();
+            this.chatMessages.push({ role: 'agent', content: d.response });
+          } catch (e) {
+            this.chatMessages.push({ role: 'agent', content: '⚠ Erreur: ' + e.message });
+          } finally {
+            this.chatLoading = false;
+            this.$nextTick(() => {
+              const el = document.getElementById('chat-messages');
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          }
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

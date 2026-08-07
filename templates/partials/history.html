@@ -1,0 +1,30 @@
+{% if commits %}
+<div class="space-y-2">
+  {% for commit in commits %}
+  <div class="card flex items-center justify-between">
+    <div>
+      <div class="font-mono text-xs text-blue-400 mb-0.5">{{ commit.hash[:8] }}</div>
+      <div class="text-sm text-gray-200">{{ commit.message }}</div>
+      <div class="text-xs text-gray-500 mt-0.5">{{ commit.date }} — {{ commit.author }}</div>
+    </div>
+    <button
+      class="btn-secondary text-xs"
+      x-data
+      @click="
+        if (confirm('Revenir à ce commit ? Les changements ultérieurs seront perdus.')) {
+          fetch(`/projects/{{ project_id }}/rollback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: '{{ commit.hash }}' })
+          }).then(r => r.json()).then(d => {
+            if (d.status === 'ok') { window.location.reload(); }
+          });
+        }
+      "
+    >↩ Rollback</button>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="text-gray-500 text-sm">Aucun historique git disponible.</div>
+{% endif %}

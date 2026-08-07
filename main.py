@@ -1,0 +1,328 @@
+"""FastAPI application: routes, SSE, and dependency wiring."""
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import logging
+import shutil
+import zipfile
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, AsyncGenerator
+
+import aiofiles
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from agents.orchestrator import Orchestrator, get_event_queue
+from config import settings
+from services.doc_parser import doc_parser
+from services.git_service import git_service
+from services.llm import llm_client
+from services.state_manager import state_manager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Ensure projects dir exists
+Path(settings.projects_dir).mkdir(parents=True, exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup checks."""
+    ok_gen, ctx_gen = await llm_client.check_context_window(
+        settings.model_generator, settings.max_context_tokens
+    )
+    if not ok_gen and ctx_gen > 0:
+        raise RuntimeError(
+            f"Generator model {settings.model_generator} has context window {ctx_gen} "
+            f"< required {settings.max_context_tokens}. Aborting."
+        )
+    logger.info(
+        "Generator model: %s (context window: %s)",
+        settings.model_generator,
+        ctx_gen if ctx_gen > 0 else "unknown",
+    )
+    yield
+
+
+app = FastAPI(title="Test Generation Interface", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# Wire up orchestrator
+orchestrator = Orchestrator(state_manager, git_service, llm_client)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _raise_404(project_id: str) -> None:
+    raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+
+async def _load_or_404(project_id: str) -> dict[str, Any]:
+    try:
+        return await state_manager.load(project_id)
+    except FileNotFoundError:
+        _raise_404(project_id)
+    raise AssertionError("unreachable")
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request) -> HTMLResponse:
+    projects = await state_manager.list_projects()
+    project_list = []
+    for pid in projects:
+        try:
+            s = await state_manager.load(pid)
+            project_list.append({
+                "id": pid,
+                "doc_path": s.get("doc_path", ""),
+                "created_at": s.get("created_at", ""),
+                "bloc_count": len(s.get("blocs", [])),
+            })
+        except Exception:
+            pass
+    return templates.TemplateResponse(
+        request,
+        "base.html",
+        {"projects": project_list, "page": "home"},
+    )
+
+
+@app.post("/upload")
+async def upload_doc(
+    file: UploadFile = File(...),
+    model_generator: str = Form(default=""),
+    model_judge: str = Form(default=""),
+) -> JSONResponse:
+    model_gen = model_generator or settings.model_generator
+    model_jdg = model_judge or settings.model_judge
+
+    # Save uploaded file
+    upload_dir = Path(settings.projects_dir) / "_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = upload_dir / (file.filename or "upload.txt")
+
+    async with aiofiles.open(file_path, "wb") as f:
+        content = await file.read()
+        await f.write(content)
+
+    # Parse document
+    try:
+        doc_text = doc_parser.parse(file_path)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to parse document: {exc}") from exc
+
+    if not doc_text.strip():
+        raise HTTPException(status_code=422, detail="Document appears to be empty")
+
+    # Create project
+    project_id = await state_manager.create(
+        doc_path=str(file_path),
+        doc_text=doc_text,
+        model_generator=model_gen,
+        model_judge=model_jdg,
+    )
+
+    # Init git repo
+    await git_service.init(project_id, "init: project initialization")
+
+    # Propose bloc split
+    await orchestrator.split_and_propose(project_id)
+
+    return JSONResponse({"project_id": project_id, "redirect": f"/projects/{project_id}"})
+
+
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+async def project_view(request: Request, project_id: str) -> HTMLResponse:
+    state = await _load_or_404(project_id)
+    return templates.TemplateResponse(
+        request,
+        "project.html",
+        {"state": state, "project_id": project_id},
+    )
+
+
+@app.get("/projects/{project_id}/stream")
+async def project_stream(project_id: str) -> StreamingResponse:
+    """SSE endpoint for live project events."""
+    queue = get_event_queue(project_id)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # Send initial connected event
+        yield "data: " + json.dumps({"type": "connected", "data": {}}) + "\n\n"
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                yield "data: " + json.dumps(event) + "\n\n"
+            except asyncio.TimeoutError:
+                # Keep-alive ping
+                yield ": ping\n\n"
+            except asyncio.CancelledError:
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/projects/{project_id}/validate-split")
+async def validate_split(project_id: str) -> JSONResponse:
+    await _load_or_404(project_id)
+    await orchestrator.validate_split(project_id)
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/projects/{project_id}/run")
+async def run_pipeline(project_id: str) -> JSONResponse:
+    await _load_or_404(project_id)
+    # Fire and forget — pipeline runs in background
+    asyncio.create_task(orchestrator.run_pipeline(project_id))
+    return JSONResponse({"status": "started"})
+
+
+@app.post("/projects/{project_id}/blocs/{bloc_id}/rerun")
+async def rerun_bloc(project_id: str, bloc_id: str) -> JSONResponse:
+    await _load_or_404(project_id)
+    asyncio.create_task(orchestrator.rerun_bloc(project_id, bloc_id))
+    return JSONResponse({"status": "started", "bloc_id": bloc_id})
+
+
+@app.get("/projects/{project_id}/tests")
+async def get_tests(project_id: str) -> JSONResponse:
+    await _load_or_404(project_id)
+    tests = await state_manager.get_all_tests(project_id)
+    return JSONResponse({"tests": tests})
+
+
+@app.put("/projects/{project_id}/tests/{test_id}")
+async def update_test(project_id: str, test_id: str, request: Request) -> JSONResponse:
+    await _load_or_404(project_id)
+    body = await request.json()
+    updated = await state_manager.update_test(project_id, test_id, body)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+    await git_service.commit(project_id, f"fix(test): human edit on {test_id}")
+    return JSONResponse(updated)
+
+
+@app.post("/projects/{project_id}/chat")
+async def chat(project_id: str, request: Request) -> JSONResponse:
+    state = await _load_or_404(project_id)
+    body = await request.json()
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    model = state.get("model_generator", settings.model_generator)
+    response = await orchestrator.handle_chat(project_id, message, model)
+    return JSONResponse({"response": response})
+
+
+@app.get("/projects/{project_id}/history")
+async def get_history(project_id: str) -> JSONResponse:
+    await _load_or_404(project_id)
+    log = await git_service.log(project_id)
+    return JSONResponse({"commits": log})
+
+
+@app.post("/projects/{project_id}/rollback")
+async def rollback(project_id: str, request: Request) -> JSONResponse:
+    await _load_or_404(project_id)
+    body = await request.json()
+    commit_hash = body.get("hash", "").strip()
+    if not commit_hash:
+        raise HTTPException(status_code=422, detail="hash is required")
+
+    ok = await git_service.rollback(project_id, commit_hash)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Rollback failed")
+
+    # Reload state after rollback
+    state = await state_manager.load(project_id)
+    return JSONResponse({"status": "ok", "state": state})
+
+
+@app.get("/projects/{project_id}/export")
+async def export_project(project_id: str) -> StreamingResponse:
+    state = await _load_or_404(project_id)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Write global state
+        zf.writestr("state.json", json.dumps(state, indent=2, ensure_ascii=False))
+
+        # Write per-bloc test files
+        for bloc in state.get("blocs", []):
+            bloc_tests = bloc.get("tests", [])
+            if bloc_tests:
+                bloc_file = json.dumps(bloc_tests, indent=2, ensure_ascii=False)
+                zf.writestr(f"tests/{bloc['id']}.json", bloc_file)
+
+        # Write all tests in one file
+        all_tests = await state_manager.get_all_tests(project_id)
+        zf.writestr("tests/all_tests.json", json.dumps(all_tests, indent=2, ensure_ascii=False))
+
+    buf.seek(0)
+    return StreamingResponse(
+        io.BytesIO(buf.read()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=tests-{project_id[:8]}.zip"
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# HTMX partial endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/projects/{project_id}/partials/blocs", response_class=HTMLResponse)
+async def partial_blocs(request: Request, project_id: str) -> HTMLResponse:
+    state = await _load_or_404(project_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/blocs.html",
+        {"blocs": state["blocs"], "project_id": project_id},
+    )
+
+
+@app.get("/projects/{project_id}/partials/tests", response_class=HTMLResponse)
+async def partial_tests(request: Request, project_id: str) -> HTMLResponse:
+    state = await _load_or_404(project_id)
+    all_tests = await state_manager.get_all_tests(project_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/tests.html",
+        {"tests": all_tests, "project_id": project_id},
+    )
+
+
+@app.get("/projects/{project_id}/partials/history", response_class=HTMLResponse)
+async def partial_history(request: Request, project_id: str) -> HTMLResponse:
+    await _load_or_404(project_id)
+    commits = await git_service.log(project_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/history.html",
+        {"commits": commits, "project_id": project_id},
+    )

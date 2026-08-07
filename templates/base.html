@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr" x-data="{ darkMode: false }" :class="{ 'dark': darkMode }">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA Test Generator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <a href="/" class="text-xl font-bold text-blue-400 hover:text-blue-300">
+      ⚡ QA Test Generator
+    </a>
+    <button @click="darkMode = !darkMode" class="text-gray-400 hover:text-white text-sm">
+      <span x-text="darkMode ? '☀ Light' : '🌙 Dark'"></span>
+    </button>
+  </header>
+
+  {% if page == "home" %}
+  <main class="max-w-3xl mx-auto px-6 py-12">
+    <h1 class="text-3xl font-bold mb-2">Générateur de Tests Fonctionnels</h1>
+    <p class="text-gray-400 mb-8">Importez une spécification fonctionnelle (Word, PDF, texte) et générez des tests structurés via IA.</p>
+
+    <div class="card mb-8" x-data="{ uploading: false, error: '' }">
+      <h2 class="text-lg font-semibold mb-4">📄 Nouveau projet</h2>
+      <form
+        x-on:submit.prevent="
+          uploading = true; error = '';
+          const fd = new FormData($el);
+          fetch('/upload', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => { if (d.redirect) window.location = d.redirect; else { error = d.detail || 'Erreur'; uploading = false; } })
+            .catch(e => { error = e.message; uploading = false; })
+        "
+      >
+        <div class="mb-4">
+          <label class="block text-sm text-gray-400 mb-1">Document (Word, PDF, TXT)</label>
+          <input type="file" name="file" accept=".docx,.pdf,.txt,.md" required
+            class="block w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer" />
+        </div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Modèle Générateur</label>
+            <input type="text" name="model_generator" placeholder="gemma-4-26b-a4b-it"
+              class="input w-full" />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Modèle Juge</label>
+            <input type="text" name="model_judge" placeholder="ibm/granite-4-h-small"
+              class="input w-full" />
+          </div>
+        </div>
+        <div x-show="error" class="text-red-400 text-sm mb-3" x-text="error"></div>
+        <button type="submit" class="btn-primary w-full" :disabled="uploading">
+          <span x-show="!uploading">Importer et analyser</span>
+          <span x-show="uploading">Chargement…</span>
+        </button>
+      </form>
+    </div>
+
+    {% if projects %}
+    <div class="card">
+      <h2 class="text-lg font-semibold mb-4">📁 Projets récents</h2>
+      <div class="space-y-2">
+        {% for p in projects %}
+        <a href="/projects/{{ p.id }}" class="flex items-center justify-between p-3 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">
+          <div>
+            <div class="font-medium text-sm">{{ p.doc_path.split('/')[-1] }}</div>
+            <div class="text-xs text-gray-500">{{ p.created_at[:10] }} &bull; {{ p.bloc_count }} blocs</div>
+          </div>
+          <span class="text-gray-400">→</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </main>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+</body>
+</html>

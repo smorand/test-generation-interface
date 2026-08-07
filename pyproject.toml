@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "test-generation-interface"
+version = "0.1.0"
+description = "QA agent that generates structured functional tests from specification documents"
+requires-python = ">=3.11,<3.14"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "openai>=1.50.0",
+    "python-docx>=1.1.0",
+    "pypdf>=4.0.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.1.0",
+    "pydantic-settings>=2.5.0",
+    "jsonschema>=4.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["agents", "services", "prompts", "schemas", "templates", "static", "config.py", "main.py"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501", "B008", "N818"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
