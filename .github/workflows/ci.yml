@@ -1,0 +1,37 @@
+# =============================================================================
+# CI WORKFLOW TEMPLATE
+# =============================================================================
+# Runs lint, format check, type check, and tests on push/PR to main.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint
+        run: make lint
+
+      - name: Format check
+        run: make format-check
+
+      - name: Type check
+        run: make typecheck
+
+      - name: Tests
+        run: make test

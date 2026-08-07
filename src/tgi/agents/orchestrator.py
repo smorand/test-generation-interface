@@ -1,19 +1,24 @@
 """Orchestrator: coordinates the full test generation pipeline."""
+
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from agents.extractor import ExtractorAgent
-from agents.generator import GeneratorAgent
-from agents.judge import JudgeAgent
-from agents.planner import PlannerAgent
-from config import settings
-from services.git_service import GitService
-from services.llm import LLMClient
-from services.state_manager import StateManager
+from tgi.agents.extractor import ExtractorAgent
+from tgi.agents.generator import GeneratorAgent
+from tgi.agents.judge import JudgeAgent
+from tgi.agents.planner import PlannerAgent
+from tgi.config import settings
+
+if TYPE_CHECKING:
+    from tgi.services.git_service import GitService
+    from tgi.services.llm import LLMClient
+    from tgi.services.state_manager import StateManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +51,7 @@ def split_document(text: str, chunk_size: int = _CHUNK_SIZE) -> list[dict[str, A
     Split document text into blocs.
     Tries to split on double newlines (paragraph boundaries).
     """
-    blocs: list[dict[str, Any]] = []
+    blocs: list[str] = []
 
     # Split on headings or double newlines
     # Try heading-based split first
@@ -84,10 +89,10 @@ def split_document(text: str, chunk_size: int = _CHUNK_SIZE) -> list[dict[str, A
     for i, chunk in enumerate(blocs):
         # Extract a title from first line
         first_line = chunk.splitlines()[0].lstrip("#").strip()[:80]
-        title = first_line if first_line else f"Bloc {i+1}"
+        title = first_line if first_line else f"Bloc {i + 1}"
         result.append(
             {
-                "id": f"bloc-{i+1}",
+                "id": f"bloc-{i + 1}",
                 "title": title,
                 "chunk": chunk,
                 "rules": [],
@@ -104,13 +109,13 @@ class Orchestrator:
     """Main pipeline coordinator."""
 
     __slots__ = (
-        "_state",
-        "_git",
-        "_llm",
         "_extractor",
         "_generator",
+        "_git",
         "_judge",
+        "_llm",
         "_planner",
+        "_state",
     )
 
     def __init__(
@@ -169,9 +174,15 @@ class Orchestrator:
                 await self._emit(project_id, "pipeline_done", {"project_id": project_id})
                 return
 
+            sem = asyncio.Semaphore(settings.max_parallel_blocs)
+
+            async def _run_with_sem(bloc_id: str) -> None:
+                async with sem:
+                    await self._process_bloc(project_id, bloc_id)
+
             async with asyncio.TaskGroup() as tg:
                 for bloc in pending:
-                    tg.create_task(self._process_bloc(project_id, bloc["id"]))
+                    tg.create_task(_run_with_sem(bloc["id"]))
 
             await self._emit(project_id, "pipeline_done", {"project_id": project_id})
 
@@ -200,8 +211,7 @@ class Orchestrator:
             await self._state.update_bloc(project_id, bloc_id, {"rules": rules})
             await self._git.commit(project_id, f"feat({bloc_id}): business rules extracted")
             await self._emit(
-                project_id, "bloc_step",
-                {"bloc_id": bloc_id, "step": "rules_extracted", "count": len(rules)}
+                project_id, "bloc_step", {"bloc_id": bloc_id, "step": "rules_extracted", "count": len(rules)}
             )
 
             # Step 2: Generate initial tests
@@ -216,17 +226,13 @@ class Orchestrator:
             await self._state.add_or_update_tests(project_id, bloc_id, tests)
             await self._git.commit(project_id, f"feat({bloc_id}): tests generated v1")
             await self._emit(
-                project_id, "bloc_step",
-                {"bloc_id": bloc_id, "step": "tests_generated", "count": len(tests)}
+                project_id, "bloc_step", {"bloc_id": bloc_id, "step": "tests_generated", "count": len(tests)}
             )
 
             # Step 3: Judge loop
             max_passes = settings.max_judge_passes
             for pass_num in range(1, max_passes + 1):
-                await self._emit(
-                    project_id, "bloc_step",
-                    {"bloc_id": bloc_id, "step": "judging", "pass": pass_num}
-                )
+                await self._emit(project_id, "bloc_step", {"bloc_id": bloc_id, "step": "judging", "pass": pass_num})
 
                 # Reload current tests from state
                 current_bloc = await self._state.get_bloc(project_id, bloc_id)
@@ -239,29 +245,24 @@ class Orchestrator:
                 )
 
                 if verdict["status"] == "ok":
-                    await self._state.update_bloc(
-                        project_id, bloc_id,
-                        {"status": "done", "judge_passes": pass_num}
-                    )
-                    await self._git.commit(
-                        project_id, f"feat({bloc_id}): judge iteration pass {pass_num}"
-                    )
+                    await self._state.update_bloc(project_id, bloc_id, {"status": "done", "judge_passes": pass_num})
+                    await self._git.commit(project_id, f"feat({bloc_id}): judge iteration pass {pass_num}")
                     await self._emit(
-                        project_id, "bloc_status",
-                        {"bloc_id": bloc_id, "status": "done", "judge_passes": pass_num}
+                        project_id, "bloc_status", {"bloc_id": bloc_id, "status": "done", "judge_passes": pass_num}
                     )
                     return
 
                 # Incomplete: regenerate targeting gaps
                 if pass_num < max_passes:
                     await self._emit(
-                        project_id, "bloc_step",
+                        project_id,
+                        "bloc_step",
                         {
                             "bloc_id": bloc_id,
                             "step": "regenerating",
                             "pass": pass_num,
                             "gaps": verdict["gaps"],
-                        }
+                        },
                     )
                     new_tests = await self._generator.generate(
                         model=model_gen,
@@ -272,38 +273,20 @@ class Orchestrator:
                         test_id_offset=len(current_tests),
                     )
                     await self._state.add_or_update_tests(project_id, bloc_id, new_tests)
-                    await self._git.commit(
-                        project_id, f"feat({bloc_id}): judge iteration pass {pass_num}"
-                    )
+                    await self._git.commit(project_id, f"feat({bloc_id}): judge iteration pass {pass_num}")
 
             # Exhausted judge passes
-            await self._state.update_bloc(
-                project_id, bloc_id,
-                {"status": "needs_human", "judge_passes": max_passes}
-            )
-            await self._emit(
-                project_id, "bloc_status",
-                {"bloc_id": bloc_id, "status": "needs_human"}
-            )
+            await self._state.update_bloc(project_id, bloc_id, {"status": "needs_human", "judge_passes": max_passes})
+            await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "needs_human"})
 
         except Exception as exc:
             logger.exception("Pipeline failed for bloc %s: %s", bloc_id, exc)
-            await self._state.update_bloc(
-                project_id, bloc_id,
-                {"status": "error", "error": str(exc)}
-            )
-            await self._emit(
-                project_id, "bloc_status",
-                {"bloc_id": bloc_id, "status": "error", "error": str(exc)}
-            )
+            await self._state.update_bloc(project_id, bloc_id, {"status": "error", "error": str(exc)})
+            await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "error", "error": str(exc)})
 
-    async def handle_chat(
-        self, project_id: str, message: str, model: str
-    ) -> str:
+    async def handle_chat(self, project_id: str, message: str, model: str) -> str:
         """Process a chat message. May trigger planner for complex instructions."""
-        from pathlib import Path as _Path
-
-        chat_prompt_path = _Path(__file__).parent.parent / "prompts" / "chat.md"
+        chat_prompt_path = Path(__file__).parent.parent / "prompts" / "chat.md"
         chat_system = chat_prompt_path.read_text(encoding="utf-8").strip()
 
         state = await self._state.load(project_id)
@@ -332,9 +315,7 @@ class Orchestrator:
                     instruction=message,
                     state_summary=state_summary,
                 )
-                plan_text = "\n".join(
-                    f"{s['order']}. [{s['target']}] {s['action']}" for s in steps
-                )
+                plan_text = "\n".join(f"{s['order']}. [{s['target']}] {s['action']}" for s in steps)
                 response_prefix = f"Plan d'exécution:\n{plan_text}\n\nExécution:\n"
             except Exception as exc:
                 logger.warning("Planner failed, continuing without plan: %s", exc)
@@ -344,13 +325,9 @@ class Orchestrator:
             response_prefix = ""
             steps = []
 
-        import json as _json
-
         user_content = (
-            f"État du projet:\n{_json.dumps(state_summary, ensure_ascii=False, indent=2)}\n\n"
-            f"Instruction: {message}"
+            f"État du projet:\n{json.dumps(state_summary, ensure_ascii=False, indent=2)}\n\nInstruction: {message}"
         )
-
         response = await self._llm.chat(
             model=model,
             system_prompt=chat_system,
@@ -359,5 +336,5 @@ class Orchestrator:
             max_tokens=2048,
         )
 
-        await self._git.commit(project_id, f"fix(chat): human modification via chat")
+        await self._git.commit(project_id, "fix(chat): human modification via chat")
         return response_prefix + response

@@ -1,8 +1,12 @@
-"""Document parser: Word (.docx), PDF, plain text → clean text."""
+"""Document parser: Word (.docx), PDF, plain text to clean text."""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+
+from docx import Document
+from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +33,6 @@ class DocParser:
         return self._parse_text(p)
 
     def _parse_docx(self, path: Path) -> str:
-        from docx import Document  # type: ignore[import-untyped]
-
         doc = Document(str(path))
         parts: list[str] = []
         for para in doc.paragraphs:
@@ -48,8 +50,6 @@ class DocParser:
         return "\n\n".join(parts)
 
     def _parse_pdf(self, path: Path) -> str:
-        from pypdf import PdfReader  # type: ignore[import-untyped]
-
         reader = PdfReader(str(path))
         parts: list[str] = []
         for page in reader.pages:

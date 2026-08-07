@@ -1,15 +1,17 @@
 """Generator agent: generates functional test cases from business rules."""
+
 from __future__ import annotations
 
 import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jsonschema
 
-from services.llm import LLMClient
+if TYPE_CHECKING:
+    from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +51,7 @@ class GeneratorAgent:
         schema_text = json.dumps(self._test_schema, ensure_ascii=False, indent=2)
 
         user_content = (
-            f"Règles métier à couvrir:\n{rules_text}\n\n"
-            f"Tests déjà générés (ne pas dupliquer):\n{existing_text}\n\n"
+            f"Règles métier à couvrir:\n{rules_text}\n\nTests déjà générés (ne pas dupliquer):\n{existing_text}\n\n"
         )
         if gaps_text:
             user_content += f"Gaps spécifiques à couvrir en priorité:\n{gaps_text}\n\n"
@@ -58,11 +59,11 @@ class GeneratorAgent:
         user_content += (
             f"Schéma JSON attendu pour chaque test:\n{schema_text}\n\n"
             f"Génère les tests. Chaque test doit avoir:\n"
-            f"- id: format TEST-{test_id_offset+1:03d}, TEST-{test_id_offset+2:03d}, etc.\n"
-            f"- bloc_id: \"{bloc_id}\"\n"
-            f"- created_at et updated_at: \"{now}\"\n"
-            f"- status: \"draft\"\n"
-            f"Retourne uniquement: {{\"tests\": [...]}}"
+            f"- id: format TEST-{test_id_offset + 1:03d}, TEST-{test_id_offset + 2:03d}, etc.\n"
+            f'- bloc_id: "{bloc_id}"\n'
+            f'- created_at et updated_at: "{now}"\n'
+            f'- status: "draft"\n'
+            f'Retourne uniquement: {{"tests": [...]}}'
         )
 
         try:

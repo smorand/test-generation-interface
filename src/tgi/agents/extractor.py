@@ -1,11 +1,13 @@
 """Extractor agent: extracts business rules from a document chunk."""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from services.llm import LLMClient
+if TYPE_CHECKING:
+    from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,7 @@ class ExtractorAgent:
                 continue
             validated.append(
                 {
-                    "id": rule.get("id", f"R{i+1}"),
+                    "id": rule.get("id", f"R{i + 1}"),
                     "description": rule.get("description", str(rule)),
                 }
             )

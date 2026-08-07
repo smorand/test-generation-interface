@@ -1,12 +1,14 @@
 """Judge agent: validates test coverage against business rules."""
+
 from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from services.llm import LLMClient
+if TYPE_CHECKING:
+    from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 

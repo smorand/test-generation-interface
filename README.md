@@ -6,23 +6,27 @@ A QA agent that takes a functional specification document (Word/PDF/text), split
 
 ```
 test-generation-interface/
-├── main.py                    # FastAPI app, routes, SSE
-├── config.py                  # pydantic-settings configuration
-├── agents/
-│   ├── orchestrator.py        # Main pipeline coordinator
-│   ├── extractor.py           # Business rule extraction
-│   ├── generator.py           # Test JSON generation
-│   ├── judge.py               # Coverage validation
-│   └── planner.py             # Complex instruction decomposition
-├── services/
-│   ├── llm.py                 # ICA/OpenAI async client
-│   ├── doc_parser.py          # Word/PDF/text parsing
-│   ├── git_service.py         # Async git with asyncio.Lock
-│   └── state_manager.py       # JSON state persistence
-├── prompts/                   # System prompts for each agent role
-├── templates/                 # Jinja2 + HTMX templates
-├── static/style.css           # Minimal utility CSS
-└── schemas/test_schema.json   # JSON Schema for test validation
+├── src/tgi/
+│   ├── tgi.py                 # FastAPI app factory, routes, SSE, tracing
+│   ├── config.py              # pydantic-settings configuration
+│   ├── logging_config.py      # rich console + file logging
+│   ├── tracing.py             # OpenTelemetry tracing (JSONL export)
+│   ├── agents/
+│   │   ├── orchestrator.py     # Main pipeline coordinator
+│   │   ├── extractor.py        # Business rule extraction
+│   │   ├── generator.py        # Test JSON generation
+│   │   ├── judge.py            # Coverage validation
+│   │   └── planner.py          # Complex instruction decomposition
+│   ├── services/
+│   │   ├── llm.py              # ICA/OpenAI async client (traced)
+│   │   ├── doc_parser.py       # Word/PDF/text parsing
+│   │   ├── git_service.py      # Async git with asyncio.Lock
+│   │   └── state_manager.py    # JSON state persistence
+│   ├── prompts/               # System prompts for each agent role
+│   ├── templates/             # Jinja2 + HTMX templates
+│   ├── static/style.css       # Minimal utility CSS
+│   └── schemas/test_schema.json  # JSON Schema for test validation
+└── tests/                     # Unit + functional tests
 ```
 
 ## Setup
@@ -30,28 +34,36 @@ test-generation-interface/
 ```bash
 # Copy environment config
 cp .env.example .env
-# Edit .env: set ICA_API_KEY
+# Edit .env: set TGI_ICA_API_KEY (the sk-... model key from ICA)
 
 # Install with uv
-uv sync
+make sync
 
-# Run
-uv run uvicorn main:app --reload
+# Run (uvicorn on port 8080)
+make run
+# or, for development with reload:
+uv run uvicorn tgi.tgi:app --reload --port 8080
 ```
 
-Open `http://localhost:8000`.
+Open `http://localhost:8080`.
 
 ## Configuration (.env)
 
+All variables use the `TGI_` prefix.
+
 | Variable | Default | Description |
 |---|---|---|
-| `ICA_BASE_URL` | `https://api.nextgen-beta.ica.ibm.com/ica/v1` | ICA API endpoint |
-| `ICA_API_KEY` | — | Bearer token (required) |
-| `MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
-| `MODEL_JUDGE` | `ibm/granite-4-h-small` | LLM for coverage evaluation |
-| `MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |
-| `MAX_CONTEXT_TOKENS` | `128000` | Minimum required context window |
-| `PROJECTS_DIR` | `./projects` | Where projects are stored |
+| `TGI_ICA_BASE_URL` | `https://api.nextgen-beta.ica.ibm.com/ica/v1` | ICA API endpoint |
+| `TGI_ICA_API_KEY` | — | Bearer token (required) |
+| `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
+| `TGI_MODEL_JUDGE` | `gemma-4-26b-a4b-it` | LLM for coverage evaluation |
+| `TGI_MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |
+| `TGI_MAX_PARALLEL_BLOCS` | `5` | Max blocs processed in parallel |
+| `TGI_MAX_CONTEXT_TOKENS` | `128000` | Minimum required context window |
+| `TGI_PROJECTS_DIR` | `./projects` | Where projects are stored |
+| `TGI_LOGS` | `$HOME/.cache/tgi/logs` | Log + OTel output directory |
+| `TGI_OTEL_DESTINATION` | — | OTLP endpoint (overrides local JSONL export) |
+| `TGI_OTEL_API_KEY` | — | Bearer token for the OTLP endpoint |
 
 ## Pipeline
 

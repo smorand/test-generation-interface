@@ -1,14 +1,18 @@
 """Planner agent: decomposes complex human instructions into execution steps."""
+
 from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from services.llm import LLMClient
+if TYPE_CHECKING:
+    from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
+
+_COMPLEX_INSTRUCTION_LENGTH = 200
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "planner.md"
 
@@ -86,4 +90,4 @@ class PlannerAgent:
             "chaque",
         ]
         lower = instruction.lower()
-        return any(kw in lower for kw in complex_keywords) or len(instruction) > 200
+        return any(kw in lower for kw in complex_keywords) or len(instruction) > _COMPLEX_INSTRUCTION_LENGTH

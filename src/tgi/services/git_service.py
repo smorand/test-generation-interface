@@ -1,4 +1,5 @@
 """Git service with asyncio.Lock for safe concurrent access."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,12 +9,15 @@ from typing import Any
 
 import aiofiles
 
-from config import settings
+from tgi.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Global lock: only one git operation at a time across all projects
 _GIT_LOCK = asyncio.Lock()
+
+# Number of fields in a git log --pretty line (hash|message|date|author)
+_LOG_FIELD_COUNT = 4
 
 
 class GitService:
@@ -100,7 +104,7 @@ class GitService:
             return entries
         for line in stdout.splitlines():
             parts = line.split("|", 3)
-            if len(parts) == 4:
+            if len(parts) == _LOG_FIELD_COUNT:
                 entries.append(
                     {
                         "hash": parts[0],
