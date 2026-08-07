@@ -1,4 +1,0 @@
-# Auth
-L utilisateur doit se connecter.
-# Tableau de bord
-Acces controle.
