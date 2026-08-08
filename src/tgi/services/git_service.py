@@ -53,7 +53,7 @@ class GitService:
 
             # Write .gitignore
             gitignore = repo / ".gitignore"
-            async with aiofiles.open(gitignore, "w") as f:
+            async with aiofiles.open(gitignore, "w", encoding="utf-8") as f:
                 await f.write("uploads/\n*.tmp\n")
 
             rc, _, err = await self._run_git(project_id, "init")

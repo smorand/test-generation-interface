@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +21,28 @@ logger = logging.getLogger(__name__)
 # Without this, parallel bloc processing races: concurrent load/save interleave,
 # causing lost updates and reads of a half-written (empty) file.
 _STATE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+# Windows refuses to replace a file another handle still has open, unlike POSIX.
+_REPLACE_ATTEMPTS = 5
+_REPLACE_BACKOFF_S = 0.05
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """Move source onto target atomically, retrying a transient Windows lock.
+
+    Path.replace is atomic on POSIX and on Windows alike, but on Windows it raises
+    PermissionError when a reader still holds the target open, which a concurrent
+    load can do for a few milliseconds.
+    """
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
 
 
 def _state_lock(project_id: str) -> asyncio.Lock:
@@ -69,7 +91,7 @@ class StateManager:
         payload = json.dumps(state, indent=2, ensure_ascii=False)
         async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
             await f.write(payload)
-        await asyncio.to_thread(os.replace, tmp_path, path)
+        await asyncio.to_thread(_replace_with_retry, tmp_path, path)
 
     async def create(
         self,

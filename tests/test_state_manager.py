@@ -137,3 +137,40 @@ async def test_save_is_atomic_no_empty_read(manager: StateManager) -> None:
     # No temp files left behind
     leftovers = list((manager.state_path(pid).parent).glob("state.json.*.tmp"))
     assert leftovers == []
+
+
+async def test_replace_with_retry_survives_a_transient_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows raises PermissionError while a reader holds the target open."""
+    from tgi.services import state_manager as sm
+
+    calls = {"n": 0}
+    real_replace = Path.replace
+
+    def flaky(self: Path, target: object) -> object:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError("used by another process")
+        return real_replace(self, target)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "replace", flaky)
+    monkeypatch.setattr(sm.time, "sleep", lambda _: None)
+
+    manager = StateManager()
+    pid = await _create_sample(manager)
+    await manager.save(pid, {"project_id": pid, "blocs": []})
+    assert calls["n"] >= 3
+    assert (await manager.load(pid))["project_id"] == pid
+
+
+async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import state_manager as sm
+
+    def always_locked(self: Path, target: object) -> None:
+        raise PermissionError("used by another process")
+
+    monkeypatch.setattr(Path, "replace", always_locked)
+    monkeypatch.setattr(sm.time, "sleep", lambda _: None)
+
+    manager = StateManager()
+    with pytest.raises(PermissionError):
+        await manager.save("p1", {"blocs": []})

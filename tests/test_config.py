@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from tgi.config import Settings, settings
@@ -45,3 +46,36 @@ def test_otel_settings_default_none() -> None:
     s = Settings()
     assert s.otel_destination is None
     assert s.otel_api_key is None
+
+
+def test_default_log_dir_on_windows() -> None:
+    """A Windows service writes under %LOCALAPPDATA%, not under a dot directory."""
+    from tgi.config import default_log_dir
+
+    result = default_log_dir("tgi", is_windows=True, local_app_data=r"C:\Users\seb\AppData\Local")
+    assert result.parts[-2:] == ("tgi", "logs")
+    assert "AppData" in str(result)
+
+
+def test_default_log_dir_elsewhere() -> None:
+    from tgi.config import default_log_dir
+
+    assert default_log_dir("tgi", is_windows=False, local_app_data=None) == Path.home() / ".cache" / "tgi" / "logs"
+
+
+def test_default_log_dir_windows_without_localappdata() -> None:
+    """Fall back rather than write to an unknown location."""
+    from tgi.config import default_log_dir
+
+    assert default_log_dir("tgi", is_windows=True, local_app_data=None) == Path.home() / ".cache" / "tgi" / "logs"
+
+
+def test_explicit_logs_setting_wins() -> None:
+    assert Settings(app_name="tgi", ica_api_key="k", logs="/var/log/tgi").log_dir == Path("/var/log/tgi")
+
+
+def test_log_dir_default_matches_the_platform_helper() -> None:
+    from tgi.config import default_log_dir
+
+    expected = default_log_dir("tgi", is_windows=os.name == "nt", local_app_data=os.environ.get("LOCALAPPDATA"))
+    assert Settings(app_name="tgi", ica_api_key="k").log_dir == expected

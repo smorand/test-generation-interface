@@ -86,9 +86,22 @@ All variables use the `TGI_` prefix.
 | `TGI_MAX_CONTEXT_TOKENS` | `128000` | Minimum required context window |
 | `TGI_MAX_OUTPUT_TOKENS` | `16000` | Output budget per call, must fit a reasoning model's thinking |
 | `TGI_PROJECTS_DIR` | `./projects` | Where projects are stored |
-| `TGI_LOGS` | `$HOME/.cache/tgi/logs` | Log + OTel output directory |
+| `TGI_LOGS` | `$HOME/.cache/tgi/logs`, `%LOCALAPPDATA%\tgi\logs` on Windows | Log + OTel output directory |
 | `TGI_OTEL_DESTINATION` | — | OTLP endpoint (overrides local JSONL export) |
 | `TGI_OTEL_API_KEY` | — | Bearer token for the OTLP endpoint |
+
+## Logs
+
+Two files in `TGI_LOGS`, both UTF-8, rotated at 10 MB with 5 backups kept:
+
+- `tgi.log`, one plain text line per event: `2026-08-08 16:18:27,519 [WARNING] tgi.agents.orchestrator orchestrator._emit: ...`
+- `tgi-otel.log`, one JSON object per line (JSONL), one per span, directly parseable
+
+Neither contains prompts, model responses or credentials. A full 88 bloc run
+produced 224 kB and 460 kB respectively. `tgi-stats` reads the JSONL file to report
+per role latency and waste.
+
+Windows is supported, see [VALIDATION.md](VALIDATION.md#6-running-on-windows).
 
 ## Pipeline
 

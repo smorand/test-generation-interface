@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def default_log_dir(app_name: str, *, is_windows: bool, local_app_data: str | None) -> Path:
+    """Conventional log directory for the platform.
+
+    %LOCALAPPDATA%\\<app>\\logs on Windows, where a service is expected to write,
+    and $HOME/.cache/<app>/logs elsewhere. Kept as a free function taking the
+    platform as an argument so it stays testable from any operating system.
+    """
+    if is_windows and local_app_data:
+        return Path(local_app_data) / app_name / "logs"
+    return Path.home() / ".cache" / app_name / "logs"
 
 
 class Settings(BaseSettings):
@@ -75,10 +88,14 @@ class Settings(BaseSettings):
 
     @property
     def log_dir(self) -> Path:
-        """Resolve the log directory, defaulting to $HOME/.cache/<app_name>/logs."""
+        """Resolve the log directory, honouring TGI_LOGS when set."""
         if self.logs:
             return Path(self.logs)
-        return Path.home() / ".cache" / self.app_name / "logs"
+        return default_log_dir(
+            self.app_name,
+            is_windows=os.name == "nt",
+            local_app_data=os.environ.get("LOCALAPPDATA"),
+        )
 
 
 settings = Settings()

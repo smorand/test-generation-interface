@@ -1,6 +1,7 @@
 """Reusable logging configuration with colors and file output."""
 
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Literal
 
@@ -20,6 +21,8 @@ def setup_logging(
     verbose: bool = False,
     quiet: bool = False,
     log_dir: Path | None = None,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
 ) -> None:
     """Configure logging with colors (console) and file output.
 
@@ -32,6 +35,8 @@ def setup_logging(
         verbose: If True, set level to DEBUG (overrides level)
         quiet: If True, set level to WARNING (overrides level and verbose)
         log_dir: Directory for log files (default: current working directory)
+        max_bytes: Rotate the log file once it reaches this size
+        backup_count: How many rotated files to keep
     """
     if quiet:
         effective_level = "WARNING"
@@ -40,7 +45,9 @@ def setup_logging(
     else:
         effective_level = level
 
-    log_path = (log_dir or Path.cwd()) / f"{app_name}.log"
+    directory = log_dir or Path.cwd()
+    directory.mkdir(parents=True, exist_ok=True)
+    log_path = directory / f"{app_name}.log"
 
     console = Console(stderr=True)
     console_handler = RichHandler(
@@ -54,7 +61,13 @@ def setup_logging(
     )
     console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    # Rotating, so a long lived deployment cannot fill the disk with logs.
+    file_handler = RotatingFileHandler(
+        log_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
     file_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT))
     file_handler.setLevel(effective_level)
 
