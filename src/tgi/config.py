@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # model overshoot its output budget and return nothing usable; measured on
     # gemma, 10 rules against 26 tests answers reliably. 0 disables batching.
     judge_batch_rules: int = 10
+    # Rules per generation call. Covering dozens of rules at once produces a
+    # very long JSON payload that the output budget cuts off, wasting the call.
+    generator_batch_rules: int = 8
 
     # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)
     logs: str | None = None

@@ -179,6 +179,7 @@ class JudgeAgent:
             temperature=0.1,
             expected_type=dict,
             shape_hint=_SHAPE_HINT,
+            purpose="judge",
         )
         return result
 

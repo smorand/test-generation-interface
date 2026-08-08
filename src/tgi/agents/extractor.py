@@ -44,6 +44,7 @@ class ExtractorAgent:
                 temperature=0.1,
                 expected_type=(dict, list),
                 shape_hint=_SHAPE_HINT,
+                purpose="extractor",
             )
         except RuntimeError as exc:
             logger.warning("Extractor failed: %s", exc)

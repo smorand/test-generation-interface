@@ -258,6 +258,7 @@ class LLMClient:
         retries: int | None = None,
         expected_type: type | tuple[type, ...] | None = None,
         shape_hint: str | None = None,
+        purpose: str = "unknown",
     ) -> Any:
         """Send request, parse JSON response, retrying on non-JSON or ill-shaped output.
 
@@ -277,44 +278,55 @@ class LLMClient:
         for attempt in range(max_attempts):
             raw = ""
             truncated = False
-            try:
-                raw, finish_reason = await self._chat_raw(
-                    model=model,
-                    system_prompt=system_prompt,
-                    user_content=current_user_content,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                truncated = finish_reason == "length"
-                return _parse_answer(raw, truncated=truncated, expected_type=expected_type)
-            except (json.JSONDecodeError, ValueError) as exc:
-                last_error = exc
-                logger.warning(
-                    "JSON %s failed on attempt %d/%d for model %s: %s",
-                    _failure_kind(exc),
-                    attempt + 1,
-                    max_attempts,
-                    model,
-                    exc,
-                )
-                if attempt < max_attempts - 1:
-                    current_user_content = _correction_prompt(
-                        user_content,
-                        exc=exc,
-                        raw=raw,
-                        shape_hint=shape_hint,
-                        truncated=truncated,
+            # One span per attempt, so retries, truncations and shape failures are
+            # measurable per role instead of being invisible in the logs.
+            with trace_span(
+                "llm.json_attempt",
+                {"model": model, "purpose": purpose, "attempt": attempt + 1, "max_attempts": max_attempts},
+            ) as span:
+                try:
+                    raw, finish_reason = await self._chat_raw(
+                        model=model,
+                        system_prompt=system_prompt,
+                        user_content=current_user_content,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                     )
-            except Exception as exc:
-                # Transport / API error: retry silently up to the limit.
-                last_error = exc
-                logger.warning(
-                    "LLM call failed on attempt %d/%d for model %s: %s",
-                    attempt + 1,
-                    max_attempts,
-                    model,
-                    exc,
-                )
+                    truncated = finish_reason == "length"
+                    span.set_attribute("finish_reason", finish_reason or "")
+                    parsed = _parse_answer(raw, truncated=truncated, expected_type=expected_type)
+                    span.set_attribute("outcome", "ok")
+                    return parsed
+                except (json.JSONDecodeError, ValueError) as exc:
+                    last_error = exc
+                    span.set_attribute("outcome", _failure_kind(exc))
+                    logger.warning(
+                        "JSON %s failed on attempt %d/%d for model %s: %s",
+                        _failure_kind(exc),
+                        attempt + 1,
+                        max_attempts,
+                        model,
+                        exc,
+                    )
+                    if attempt < max_attempts - 1:
+                        current_user_content = _correction_prompt(
+                            user_content,
+                            exc=exc,
+                            raw=raw,
+                            shape_hint=shape_hint,
+                            truncated=truncated,
+                        )
+                except Exception as exc:
+                    # Transport / API error: retry silently up to the limit.
+                    last_error = exc
+                    span.set_attribute("outcome", "api_error")
+                    logger.warning(
+                        "LLM call failed on attempt %d/%d for model %s: %s",
+                        attempt + 1,
+                        max_attempts,
+                        model,
+                        exc,
+                    )
 
         raise LLMJSONError(
             f"model {model} returned no valid JSON after {max_attempts} attempts (last error: {last_error})"

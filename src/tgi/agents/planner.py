@@ -54,6 +54,7 @@ class PlannerAgent:
                 temperature=0.2,
                 expected_type=(dict, list),
                 shape_hint=_SHAPE_HINT,
+                purpose="planner",
             )
         except RuntimeError as exc:
             logger.warning("Planner failed: %s", exc)

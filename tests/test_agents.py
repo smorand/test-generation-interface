@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import pytest
 
 from tests.conftest import FakeLLMClient
 from tgi.agents.extractor import ExtractorAgent
 from tgi.agents.generator import GeneratorAgent
 from tgi.agents.judge import JudgeAgent
 from tgi.agents.planner import PlannerAgent
-
-if TYPE_CHECKING:
-    import pytest
 
 # ---------------------------------------------------------------------------
 # Extractor
@@ -417,3 +414,92 @@ async def test_judge_llm_score_mode_averages_batches(monkeypatch: pytest.MonkeyP
     agent = JudgeAgent(client)  # type: ignore[arg-type]
     verdict = await agent.evaluate(model="m", rules=_rules(4), tests=[])
     assert verdict["score"] == 75
+
+
+# ---------------------------------------------------------------------------
+# Generator batching
+# ---------------------------------------------------------------------------
+
+
+def _valid_test(test_id: str) -> dict[str, object]:
+    return {
+        "id": test_id,
+        "business_rule": "R1",
+        "name": test_id,
+        "description": "d",
+        "steps": [{"order": 1, "description": "s", "expected_result": "e"}],
+    }
+
+
+async def test_generator_batches_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "generator_batch_rules", 4)
+    client = _BatchClient(
+        [
+            {"tests": [_valid_test("TEST-001")]},
+            {"tests": [_valid_test("TEST-002")]},
+            {"tests": [_valid_test("TEST-003")]},
+        ]
+    )
+    agent = GeneratorAgent(client)  # type: ignore[arg-type]
+    tests = await agent.generate(model="m", bloc_id="bloc-1", rules=_rules(10), existing_tests=[])
+
+    assert client.batch_count == 3  # 4 + 4 + 2
+    assert [t["id"] for t in tests] == ["TEST-001", "TEST-002", "TEST-003"]
+
+
+async def test_generator_partial_batch_failure_keeps_the_rest(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.config import settings
+    from tgi.services.llm import LLMJSONError
+
+    monkeypatch.setattr(settings, "generator_batch_rules", 2)
+    client = _BatchClient([{"tests": [_valid_test("TEST-001")]}, LLMJSONError("truncated")])
+    agent = GeneratorAgent(client)  # type: ignore[arg-type]
+    tests = await agent.generate(model="m", bloc_id="bloc-1", rules=_rules(4), existing_tests=[])
+
+    # One batch died, the other still contributes
+    assert [t["id"] for t in tests] == ["TEST-001"]
+
+
+async def test_generator_raises_only_when_every_batch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.config import settings
+    from tgi.services.llm import LLMJSONError
+
+    monkeypatch.setattr(settings, "generator_batch_rules", 2)
+    client = _BatchClient([LLMJSONError("truncated")])
+    agent = GeneratorAgent(client)  # type: ignore[arg-type]
+    with pytest.raises(LLMJSONError, match="no test"):
+        await agent.generate(model="m", bloc_id="bloc-1", rules=_rules(4), existing_tests=[])
+
+
+async def test_generator_ids_continue_across_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "generator_batch_rules", 1)
+    # The model omits ids: they must be numbered continuously, not restart at 001.
+    client = _BatchClient([{"tests": [{"name": "a", "steps": []}]}, {"tests": [{"name": "b", "steps": []}]}])
+    agent = GeneratorAgent(client)  # type: ignore[arg-type]
+    tests = await agent.generate(model="m", bloc_id="bloc-1", rules=_rules(2), existing_tests=[], test_id_offset=5)
+
+    assert [t["id"] for t in tests] == ["TEST-006", "TEST-007"]
+
+
+async def test_generator_regeneration_targets_only_gap_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A regeneration pass must not spend calls on rules that are already covered."""
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "generator_batch_rules", 10)
+    client = _BatchClient([{"tests": [_valid_test("TEST-010")]}])
+    agent = GeneratorAgent(client)  # type: ignore[arg-type]
+    await agent.generate(
+        model="m",
+        bloc_id="bloc-1",
+        rules=_rules(10),
+        existing_tests=[],
+        gaps=["R7: pas couverte"],
+        test_id_offset=9,
+    )
+    # Only one call, holding only the targeted rule
+    assert client.batch_count == 1
+    assert client.rules_seen == [1]
