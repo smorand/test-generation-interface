@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<!--
+  IBM Carbon Slides — Template bootstrap vide
+  Usage: copier ce fichier, renseigner data-title sur chaque section,
+         ajouter les slides dans .slide-frame, mettre à jour TOTAL et slideNames.
+  Référence complète (catalogue de composants): templates/reference/slides/ibm-carbon.html
+  Contrainte de hauteur utile et conventions dense/compact: skill/types/slides.md
+-->
+<html lang="fr" data-doc-type="presentation">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Présentation — IBM Carbon</title>
+<style>
+  :root {
+    --cds-background:#ffffff; --cds-background-hover:#e8e8e8;
+    --cds-layer-01:#f4f4f4; --cds-layer-02:#e0e0e0;
+    --cds-border-subtle-01:#e0e0e0; --cds-border-strong-01:#8d8d8d;
+    --cds-text-primary:#161616; --cds-text-secondary:#525252;
+    --cds-text-placeholder:#a8a8a8; --cds-text-on-color:#ffffff;
+    --cds-interactive:#0f62fe; --cds-focus:#0f62fe;
+    --cds-icon-primary:#161616; --cds-support-success:#198038;
+    --cds-support-error:#da1e28; --cds-inverse-text:#f4f4f4;
+    --ibm-blue-60:#0f62fe; --ibm-blue-70:#0043ce; --ibm-blue-10:#edf5ff;
+    --ibm-gray-10:#f4f4f4; --ibm-gray-20:#e0e0e0; --ibm-gray-100:#161616;
+    --cds-spacing-02:4px; --cds-spacing-03:8px; --cds-spacing-04:12px;
+    --cds-spacing-05:16px; --cds-spacing-07:32px; --cds-spacing-08:40px;
+    --cds-font-family-sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --cds-font-family-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+  }
+  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family:var(--cds-font-family-sans); background:var(--cds-background);
+    color:var(--cds-text-primary); height:100vh; overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  .shell-header {
+    height:48px; background:var(--ibm-gray-100); display:flex; align-items:center;
+    padding:0 var(--cds-spacing-05); gap:var(--cds-spacing-05);
+    flex-shrink:0; border-bottom:1px solid #393939;
+  }
+  .shell-logo { display:flex; align-items:center; gap:var(--cds-spacing-03); color:var(--cds-inverse-text); font-size:14px; }
+  .shell-logo .product-name { font-weight:600; color:#78a9ff; }
+  .shell-divider { width:1px; height:20px; background:#393939; }
+  .shell-title { color:#c6c6c6; font-size:14px; }
+  .toolbar {
+    height:48px; background:var(--ibm-gray-10); border-bottom:1px solid var(--cds-border-subtle-01);
+    display:flex; align-items:center; padding:0 var(--cds-spacing-05); gap:var(--cds-spacing-05); flex-shrink:0;
+  }
+  .cds-select-wrapper { position:relative; display:inline-flex; align-items:center; }
+  .cds-select-label { font-size:12px; color:var(--cds-text-secondary); margin-right:var(--cds-spacing-03); white-space:nowrap; }
+  .cds-select {
+    appearance:none; -webkit-appearance:none; height:32px; min-width:260px; padding:0 36px 0 12px;
+    background:var(--cds-background); border:1px solid var(--cds-border-strong-01);
+    border-bottom-color:var(--ibm-gray-100); color:var(--cds-text-primary);
+    font-family:var(--cds-font-family-sans); font-size:14px; cursor:pointer; outline:none;
+  }
+  .cds-select:focus { border-color:var(--cds-focus); box-shadow:inset 0 0 0 1px var(--cds-focus); }
+  .cds-select-icon { position:absolute; right:10px; pointer-events:none; color:var(--cds-icon-primary); }
+  .cds-btn-icon {
+    display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px;
+    background:transparent; border:1px solid transparent; cursor:pointer; color:var(--cds-icon-primary);
+    border-radius:0; outline:none; flex-shrink:0;
+  }
+  .cds-btn-icon:hover { background:var(--cds-background-hover); }
+  .cds-btn-icon:disabled { opacity:.3; cursor:not-allowed; }
+  .cds-btn-icon svg { width:16px; height:16px; fill:currentColor; }
+  .toolbar-sep { width:1px; height:24px; background:var(--cds-border-subtle-01); }
+  .cds-tag {
+    display:inline-flex; align-items:center; height:24px; padding:0 var(--cds-spacing-03);
+    background:var(--ibm-blue-10); color:var(--ibm-blue-70); font-size:12px; font-weight:600;
+    border-radius:100px; white-space:nowrap; margin-left:auto;
+  }
+  .stage { flex:1; display:flex; align-items:stretch; overflow:hidden; background:#e8e8e8; }
+  .nav-arrow {
+    display:flex; align-items:center; justify-content:center; width:48px; background:var(--ibm-gray-10);
+    border:none; cursor:pointer; color:var(--cds-icon-primary); flex-shrink:0; outline:none;
+  }
+  .nav-arrow:hover:not(:disabled) { background:var(--ibm-gray-20); }
+  .nav-arrow:disabled { opacity:.25; cursor:not-allowed; }
+  .nav-arrow svg { width:20px; height:20px; fill:currentColor; }
+  .slide-frame { flex:1; display:flex; align-items:center; justify-content:center; padding:var(--cds-spacing-07); overflow:hidden; }
+  .slide {
+    display:none; width:100%; max-width:900px; background:var(--cds-background);
+    border:1px solid var(--cds-border-subtle-01); box-shadow:0 4px 16px rgba(0,0,0,.12);
+    flex-direction:column; animation:fadein 200ms ease; overflow-y:auto; max-height:100%;
+  }
+  .slide.active { display:flex; }
+  @keyframes fadein { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+  .slide-header { padding:var(--cds-spacing-07) var(--cds-spacing-08); border-bottom:4px solid var(--ibm-blue-60); }
+  .slide-eyebrow { font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ibm-blue-60); margin-bottom:var(--cds-spacing-03); }
+  .slide-h1 { font-size:36px; font-weight:300; line-height:1.2; color:var(--cds-text-primary); letter-spacing:-.01em; }
+  .slide-h1 strong { font-weight:600; }
+  .slide-subtitle { margin-top:var(--cds-spacing-04); font-size:16px; color:var(--cds-text-secondary); line-height:1.5; max-width:600px; }
+  .slide-body { padding:var(--cds-spacing-07) var(--cds-spacing-08); flex:1; }
+  /* Slide dense: paddings resserres pour tenir dans la hauteur utile (voir
+     skill/types/slides.md, section hauteur utile). Usage: class="slide dense". */
+  .slide.dense .slide-header { padding:22px var(--cds-spacing-08) 18px; }
+  .slide.dense .slide-body { padding:18px var(--cds-spacing-08); }
+  .slide-footer {
+    height:40px; padding:0 var(--cds-spacing-08); border-top:1px solid var(--cds-border-subtle-01);
+    display:flex; align-items:center; justify-content:space-between; background:var(--ibm-gray-10); flex-shrink:0;
+  }
+  .slide-footer-left { font-size:11.5px; color:var(--cds-text-secondary); }
+  .slide-footer-right { font-size:11.5px; color:var(--cds-text-placeholder); }
+  /* Slide sans .slide-body (couverture, coupure de section): sans cet espace, le filet
+     bleu bas du .slide-header se retrouve plaque contre la bordure du .slide-footer et
+     se lit comme une double bordure parasite. */
+  .slide-header + .slide-footer { margin-top:64px; }
+  .cds-grid { display:grid; gap:var(--cds-spacing-05); }
+  .cols-2 { grid-template-columns:1fr 1fr; }
+  .cols-3 { grid-template-columns:1fr 1fr 1fr; }
+  .cols-4 { grid-template-columns:1fr 1fr 1fr 1fr; }
+  .cds-tile { background:var(--ibm-gray-10); border:1px solid var(--cds-border-subtle-01); padding:var(--cds-spacing-05); }
+  .cds-tile .tile-eyebrow { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--ibm-blue-60); margin-bottom:var(--cds-spacing-02); }
+  .cds-tile .tile-title { font-size:14px; font-weight:600; color:var(--cds-text-primary); margin-bottom:var(--cds-spacing-02); }
+  .cds-tile p { font-size:12.5px; color:var(--cds-text-secondary); line-height:1.55; }
+  .cds-structured-list { width:100%; border-collapse:collapse; }
+  .cds-structured-list thead th { background:var(--ibm-gray-100); color:var(--cds-inverse-text); font-size:12px; font-weight:600; text-align:left; padding:var(--cds-spacing-03) var(--cds-spacing-05); letter-spacing:.04em; text-transform:uppercase; }
+  .cds-structured-list tbody td { font-size:13px; padding:var(--cds-spacing-04) var(--cds-spacing-05); border-bottom:1px solid var(--cds-border-subtle-01); color:var(--cds-text-primary); vertical-align:top; }
+  .cds-structured-list tbody tr:last-child td { border-bottom:none; }
+  /* Variante dense: le padding par defaut fait deborder une table de 5 lignes
+     accompagnee d'une notification hors de la hauteur utile de la slide. */
+  .cds-structured-list.compact tbody td { padding:8px var(--cds-spacing-05); }
+  .agenda-list { width:100%; border-collapse:collapse; }
+  .agenda-list td { padding:12px 8px; border-bottom:1px solid var(--cds-border-subtle-01); font-size:15px; color:var(--cds-text-primary); }
+  .agenda-list td.num { width:56px; font-weight:700; color:var(--ibm-blue-60); font-size:20px; }
+  .cds-notification { display:flex; gap:var(--cds-spacing-04); padding:var(--cds-spacing-04) var(--cds-spacing-05); border-left:4px solid var(--ibm-blue-60); background:var(--ibm-blue-10); margin-top:var(--cds-spacing-05); }
+  .cds-notification .notif-title { font-size:13px; font-weight:600; color:var(--ibm-blue-70); }
+  .cds-notification .notif-body { font-size:12.5px; color:var(--cds-text-secondary); margin-top:2px; }
+  .cds-notification.success { border-left-color:#198038; background:#defbe6; }
+  .cds-notification.success .notif-title { color:#0e6027; }
+  .cds-notification.warning { border-left-color:#f1c21b; background:#fdf6dd; }
+  .cds-notification.warning .notif-title { color:#8e6a00; }
+  .cds-notification.error { border-left-color:#da1e28; background:#fff1f1; }
+  .cds-notification.error .notif-title { color:#a2191f; }
+  .stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--cds-spacing-05); margin-top:var(--cds-spacing-05); }
+  .stat-card { background:var(--ibm-gray-10); border-left:4px solid var(--ibm-blue-60); padding:var(--cds-spacing-05); }
+  .stat-value { font-size:32px; font-weight:300; color:var(--ibm-blue-60); line-height:1; }
+  .stat-label { font-size:12px; color:var(--cds-text-secondary); margin-top:var(--cds-spacing-02); }
+  .cds-code { font-family:var(--cds-font-family-mono); font-size:12px; background:var(--ibm-gray-10); border:1px solid var(--cds-border-subtle-01); padding:1px 6px; color:var(--ibm-blue-70); }
+  .tag-blue { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:100px; background:#dbeafe; color:#1d4ed8; }
+  .tag-green { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:100px; background:#d1fae5; color:#065f46; }
+  .tag-purple { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:100px; background:#ede9fe; color:#5b21b6; }
+  .tag-gray { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:100px; background:#e0e0e0; color:#525252; }
+  .tag-red { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:100px; background:#ffd7d9; color:#a2191f; }
+  /* Barre de repartition proportionnelle */
+  .cw-bar { display:flex; border:1px solid var(--cds-border-subtle-01); overflow:hidden; height:32px; margin-top:var(--cds-spacing-04); border-radius:2px; }
+  .cw-seg { display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; color:#fff; overflow:hidden; white-space:nowrap; padding:0 6px; }
+  /* Pastilles de mention */
+  .mention-wrap { display:flex; flex-wrap:wrap; gap:var(--cds-spacing-03); margin-top:var(--cds-spacing-04); }
+  .mention-pill {
+    display:inline-flex; align-items:center; gap:var(--cds-spacing-02);
+    padding:var(--cds-spacing-02) var(--cds-spacing-04);
+    background:var(--ibm-gray-10); border:1px solid var(--cds-border-subtle-01);
+    font-size:12px; color:var(--cds-text-primary);
+  }
+  .mention-pill code { font-family:var(--cds-font-family-mono); font-size:11.5px; color:var(--ibm-blue-60); }
+  .mention-pill span { color:var(--cds-text-secondary); font-size:11.5px; }
+  /* Gantt: les pourcentages des barres sont relatifs a la piste (.gantt-track),
+     jamais a la ligne entiere, sinon la colonne de libelles fausse l'echelle. */
+  .gantt-scale { display:flex; margin-bottom:var(--cds-spacing-03); }
+  .gantt-scale .gantt-label-col { width:172px; flex-shrink:0; }
+  .gantt-scale .q { flex:1; text-align:center; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--cds-text-secondary); border-left:1px solid var(--ibm-gray-20); }
+  .gantt-row { display:flex; align-items:center; margin-bottom:6px; }
+  .gantt-row .gantt-label { width:172px; flex-shrink:0; font-size:12px; color:var(--cds-text-primary); padding-right:var(--cds-spacing-04); }
+  .gantt-track { flex:1; position:relative; height:26px; background:var(--ibm-gray-10);
+    background-image:linear-gradient(to right, var(--ibm-gray-20) 0 1px, transparent 1px 100%);
+    background-size:25% 100%; }
+  .gantt-bar { position:absolute; top:0; height:26px; display:flex; align-items:center; padding:0 8px;
+    font-size:11px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; }
+  /* Schema d'architecture: noeuds, formes, connecteurs, pointes, libelles.
+     data-shape et data-style ont un rendu reel grace aux selecteurs d'attribut. */
+  .arch-node {
+    box-sizing:border-box; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    font-size:11.5px; font-weight:700; line-height:1.25; padding:4px 6px;
+  }
+  .arch-node small, .arch-node-label { display:block; font-weight:400; font-size:10px; margin-top:2px; color:var(--cds-text-secondary); }
+  .arch-box, .arch-node[data-shape="box"] { border-radius:0; }
+  .arch-circle, .arch-node[data-shape="circle"] { border-radius:50%; }
+  .arch-cylinder, .arch-node[data-shape="cylinder"] { border-radius:8px / 20px; }
+  .arch-cloud, .arch-node[data-shape="cloud"] { border-radius:50px; }
+  .arch-diamond, .arch-node[data-shape="diamond"] { transform:rotate(45deg); }
+  .arch-diamond > *, .arch-node[data-shape="diamond"] > * { transform:rotate(-45deg); }
+  .arch-edge { position:absolute; }
+  .arch-line-h { height:0; border-top:1.5px solid var(--ibm-blue-60); }
+  .arch-line-v { width:0; border-left:1.5px solid var(--ibm-blue-60); }
+  .arch-line-h.dashed, .arch-line-v.dashed, .arch-edge[data-style="dashed"] { border-style:dashed; }
+  .arch-line-h.dotted, .arch-line-v.dotted, .arch-edge[data-style="dotted"] { border-style:dotted; }
+  .arch-tip { width:0; height:0; }
+  .arch-tip-r { border-left:7px solid var(--ibm-blue-60); border-top:4.5px solid transparent; border-bottom:4.5px solid transparent; }
+  .arch-tip-l { border-right:7px solid var(--ibm-blue-60); border-top:4.5px solid transparent; border-bottom:4.5px solid transparent; }
+  .arch-tip-d { border-top:7px solid var(--ibm-blue-60); border-left:4.5px solid transparent; border-right:4.5px solid transparent; }
+  .arch-tip-u { border-bottom:7px solid var(--ibm-blue-60); border-left:4.5px solid transparent; border-right:4.5px solid transparent; }
+  .arch-edge-label { position:absolute; font-size:9.5px; color:var(--cds-text-secondary); white-space:nowrap; }
+  .status-bar { height:24px; background:var(--ibm-gray-100); display:flex; align-items:center; padding:0 var(--cds-spacing-05); gap:var(--cds-spacing-05); flex-shrink:0; border-top:1px solid #393939; }
+  .status-bar span { font-size:11px; color:#8d8d8d; }
+  .status-bar .status-active { color:#42be65; }
+</style>
+</head>
+<body>
+
+<header class="shell-header">
+  <div class="shell-logo">
+    <svg width="20" height="20" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+      <rect width="32" height="32" rx="4" fill="#0f62fe"></rect>
+      <text x="7" y="22" fill="#fff" font-family="IBM Plex Sans,sans-serif" font-size="16" font-weight="700">P</text>
+    </svg>
+    <span class="product-name">Produit</span>
+  </div>
+  <div class="shell-divider"></div>
+  <span class="shell-title">Titre de la présentation</span>
+</header>
+
+<div class="toolbar">
+  <button class="cds-btn-icon" id="btn-prev" onclick="navigate(-1)" title="Précédent (←)" disabled>
+    <svg viewBox="0 0 16 16"><path d="M10.5 15.5 3 8l7.5-7.5 1.4 1.4L5.8 8l6.1 6.1z"></path></svg>
+  </button>
+  <button class="cds-btn-icon" id="btn-next" onclick="navigate(1)" title="Suivant (→)">
+    <svg viewBox="0 0 16 16"><path d="M5.5.5 13 8l-7.5 7.5-1.4-1.4L10.2 8 4.1 1.9z"></path></svg>
+  </button>
+  <div class="toolbar-sep"></div>
+  <span class="cds-select-label">Diapositive :</span>
+  <div class="cds-select-wrapper">
+    <select class="cds-select" id="slide-select" onchange="goToSlide(this.value)"></select>
+    <svg class="cds-select-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 11L3 6h10z"></path></svg>
+  </div>
+  <span class="cds-tag" id="progress-tag">1 / 3</span>
+</div>
+
+<div class="stage">
+  <button class="nav-arrow" id="nav-prev" onclick="navigate(-1)" disabled title="Précédent">
+    <svg viewBox="0 0 24 24"><path d="M15.5 20 8 12l7.5-8 1.5 1.4L11 12l6 6.6z"></path></svg>
+  </button>
+
+  <div class="slide-frame">
+
+    <!-- SLIDE 1 — Couverture. Dupliquer ce bloc pour chaque nouvelle slide.
+         Mettre à jour TOTAL et slideNames dans le <script> en bas. -->
+    <article class="slide active" id="slide-0" data-type="slide" data-id="slide-0" data-title="Vue d'ensemble">
+      <div class="slide-header">
+        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 01 / 03</div>
+        <h1 class="slide-h1" data-editable="text"><strong>Generateur de tests</strong> fonctionnels</h1>
+        <p class="slide-subtitle" data-editable="text">D'un dossier de specifications a des cas de test JSON, avec un juge qui score la couverture et un humain qui tranche.</p>
+      </div>
+      <div class="slide-body" data-editable="text">
+        <table data-type="table" style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:var(--ibm-blue-10); color:var(--ibm-blue-70);">
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Etape</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Ce qui se passe</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Qui decide</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Import</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Le document est lu, les titres et les tables dans l'ordre, puis decoupe en blocs</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Machine</td></tr>
+            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Decoupage</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Le decoupage propose est valide avant tout appel couteux</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>Humain</strong></td></tr>
+            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Generation</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Regles extraites, tests generes, couverture scoree, jusqu'a 3 passes</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Machine</td></tr>
+            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Revue</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Score par bloc, code couleur, regles proches signalees, edition et relance</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>Humain</strong></td></tr>
+            <tr><td style="padding:7px 10px;">Export</td><td style="padding:7px 10px;">Archive ZIP des tests, historique git par projet</td><td style="padding:7px 10px;">Machine</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="slide-footer">
+        <span class="slide-footer-left" data-editable="text">Produit · Présentation</span>
+        <span class="slide-footer-right">Slide 1 / 3</span>
+      </div>
+    </article>
+
+    <article class="slide" id="slide-1" data-type="slide" data-id="slide-1" data-title="Architecture applicative">
+      <div class="slide-header">
+        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 02 / 03</div>
+        <h1 class="slide-h1" data-editable="text"><strong>Architecture</strong> applicative</h1>
+      </div>
+      <div class="slide-body">
+        <div data-type="arch-diagram" style="position:relative; width:100%; height:100%; min-height:400px;">
+      <div data-type="arch-node" class="arch-node" data-label="Navigateur" data-shape="box" data-x="4.0" data-y="2.0" data-width="52.0" data-height="11.0" style="position:absolute; left:4.0%; top:2.0%; width:52.0%; height:11.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-10); color:var(--ibm-blue-70); border-radius:4px;">Navigateur<small>HTMX + Alpine, flux SSE temps reel</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="FastAPI tgi.py" data-shape="box" data-x="4.0" data-y="21.0" data-width="52.0" data-height="12.0" style="position:absolute; left:4.0%; top:21.0%; width:52.0%; height:12.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">FastAPI &middot; tgi.py<small style="color:rgba(255,255,255,.85);">routes, SSE, partials HTMX</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Orchestrateur" data-shape="box" data-x="4.0" data-y="40.0" data-width="52.0" data-height="12.0" style="position:absolute; left:4.0%; top:40.0%; width:52.0%; height:12.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Orchestrateur<small style="color:rgba(255,255,255,.85);">5 blocs en parallele, boucle du juge, versions scorees</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Extracteur" data-shape="box" data-x="4.0" data-y="59.0" data-width="16.0" data-height="12.0" style="position:absolute; left:4.0%; top:59.0%; width:16.0%; height:12.0%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Extracteur<small>regles metier</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Generateur" data-shape="box" data-x="22.0" data-y="59.0" data-width="16.0" data-height="12.0" style="position:absolute; left:22.0%; top:59.0%; width:16.0%; height:12.0%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Generateur<small>tests JSON</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Juge" data-shape="box" data-x="40.0" data-y="59.0" data-width="16.0" data-height="12.0" style="position:absolute; left:40.0%; top:59.0%; width:16.0%; height:12.0%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Juge<small>score de couverture</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Client LLM" data-shape="box" data-x="4.0" data-y="78.0" data-width="52.0" data-height="12.0" style="position:absolute; left:4.0%; top:78.0%; width:52.0%; height:12.0%; border:2px solid var(--ibm-gray-60,#6f6f6f); background:var(--cds-layer-01); color:var(--cds-text-primary); border-radius:4px;">Client LLM<small>API OpenAI, retries, extraction JSON, tracage OTel</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="DocParser" data-shape="box" data-x="64.0" data-y="21.0" data-width="32.0" data-height="12.0" style="position:absolute; left:64.0%; top:21.0%; width:32.0%; height:12.0%; border:2px solid var(--ibm-gray-60,#6f6f6f); background:var(--cds-layer-01); color:var(--cds-text-primary); border-radius:4px;">DocParser<small>docx, pdf, txt &middot; titres et tables dans l'ordre</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="StateManager + GitService" data-shape="box" data-x="64.0" data-y="40.0" data-width="32.0" data-height="12.0" style="position:absolute; left:64.0%; top:40.0%; width:32.0%; height:12.0%; border:2px solid var(--ibm-gray-60,#6f6f6f); background:var(--cds-layer-01); color:var(--cds-text-primary); border-radius:4px;">StateManager + GitService<small>ecritures atomiques, verrou par projet</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="projects/" data-shape="cylinder" data-x="64.0" data-y="59.0" data-width="32.0" data-height="12.0" style="position:absolute; left:64.0%; top:59.0%; width:32.0%; height:12.0%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939;">projects/<small>state.json, tests/, un depot git par projet</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Endpoint LLM" data-shape="cloud" data-x="64.0" data-y="78.0" data-width="32.0" data-height="12.0" style="position:absolute; left:64.0%; top:78.0%; width:32.0%; height:12.0%; border:2px dashed var(--ibm-blue-60); background:var(--ibm-blue-10); color:var(--ibm-blue-70);">Endpoint LLM<small>vLLM, SGLang ou passerelle</small></div>
+      <div data-type="arch-edge" data-from="Navigateur" data-to="FastAPI tgi.py" data-style="solid" class="arch-edge arch-line-v" style="left:30.0%; top:13.0%; height:8.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:30.0%; top:21.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge-label" style="left:31.5%; top:15.0%;">HTTP + SSE</div>
+      <div data-type="arch-edge" data-from="FastAPI tgi.py" data-to="Orchestrateur" data-style="solid" class="arch-edge arch-line-v" style="left:30.0%; top:33.0%; height:7.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:30.0%; top:40.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge arch-line-v" style="left:30.0%; top:52.0%; height:3.5%;"></div>
+      <div class="arch-edge arch-line-h" style="left:12.0%; top:55.5%; width:36.0%;"></div>
+      <div data-type="arch-edge" data-from="Orchestrateur" data-to="Extracteur" data-style="solid" class="arch-edge arch-line-v" style="left:12.0%; top:55.5%; height:3.5%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:12.0%; top:59.0%; transform:translate(-50%,-100%);"></div>
+      <div data-type="arch-edge" data-from="Orchestrateur" data-to="Generateur" data-style="solid" class="arch-edge arch-line-v" style="left:30.0%; top:55.5%; height:3.5%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:30.0%; top:59.0%; transform:translate(-50%,-100%);"></div>
+      <div data-type="arch-edge" data-from="Orchestrateur" data-to="Juge" data-style="solid" class="arch-edge arch-line-v" style="left:48.0%; top:55.5%; height:3.5%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:48.0%; top:59.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge arch-line-v" style="left:12.0%; top:71.0%; height:3.5%;"></div>
+      <div class="arch-edge arch-line-v" style="left:48.0%; top:71.0%; height:3.5%;"></div>
+      <div class="arch-edge arch-line-h" style="left:12.0%; top:74.5%; width:36.0%;"></div>
+      <div data-type="arch-edge" data-from="Generateur" data-to="Client LLM" data-style="solid" class="arch-edge arch-line-v" style="left:30.0%; top:71.0%; height:7.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:30.0%; top:78.0%; transform:translate(-50%,-100%);"></div>
+      <div data-type="arch-edge" data-from="FastAPI tgi.py" data-to="DocParser" data-style="solid" class="arch-edge arch-line-h" style="left:56.0%; top:27.0%; width:8.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:64.0%; top:27.0%; transform:translate(-100%,-50%);"></div>
+      <div class="arch-edge-label" style="left:60.0%; top:35.0%; transform:translateX(-50%);">upload et decoupage</div>
+      <div data-type="arch-edge" data-from="Orchestrateur" data-to="StateManager + GitService" data-style="solid" class="arch-edge arch-line-h" style="left:56.0%; top:46.0%; width:8.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:64.0%; top:46.0%; transform:translate(-100%,-50%);"></div>
+      <div class="arch-edge-label" style="left:60.0%; top:54.0%; transform:translateX(-50%);">etat et commits</div>
+      <div data-type="arch-edge" data-from="StateManager + GitService" data-to="projects/" data-style="solid" class="arch-edge arch-line-v" style="left:80.0%; top:52.0%; height:7.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:80.0%; top:59.0%; transform:translate(-50%,-100%);"></div>
+      <div data-type="arch-edge" data-from="Client LLM" data-to="Endpoint LLM" data-style="solid" class="arch-edge arch-line-h" style="left:56.0%; top:84.0%; width:8.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:64.0%; top:84.0%; transform:translate(-100%,-50%);"></div>
+      <div class="arch-edge-label" style="left:60.0%; top:92.0%; transform:translateX(-50%);">/chat/completions</div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span class="slide-footer-left" data-editable="text">Generateur de tests QA &middot; src/tgi</span>
+        <span class="slide-footer-right">Slide 2 / 3</span>
+      </div>
+    </article>
+
+    <article class="slide" id="slide-2" data-type="slide" data-id="slide-2" data-title="Pipeline par bloc">
+      <div class="slide-header">
+        <div class="slide-eyebrow" data-editable="text">Pipeline &middot; Slide 03 / 03</div>
+        <h1 class="slide-h1" data-editable="text"><strong>Pipeline</strong> par bloc</h1>
+        <p class="slide-subtitle" data-editable="text">Chaque passe du juge est une version scoree. La meilleure gagne, jamais la derniere.</p>
+      </div>
+      <div class="slide-body">
+        <div data-type="arch-diagram" style="position:relative; width:100%; height:100%; min-height:330px;">
+      <div data-type="arch-node" class="arch-node" data-label="Bloc" data-shape="box" data-x="1.0" data-y="8.0" data-width="17.0" data-height="14.0" style="position:absolute; left:1.0%; top:8.0%; width:17.0%; height:14.0%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939; border-radius:4px;">Bloc<small>section du document</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Extracteur" data-shape="box" data-x="22.0" data-y="8.0" data-width="17.0" data-height="14.0" style="position:absolute; left:22.0%; top:8.0%; width:17.0%; height:14.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Extracteur<small style="color:rgba(255,255,255,.85);">1 appel</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Generateur" data-shape="box" data-x="43.0" data-y="8.0" data-width="17.0" data-height="14.0" style="position:absolute; left:43.0%; top:8.0%; width:17.0%; height:14.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Generateur<small style="color:rgba(255,255,255,.85);">1 appel / 8 regles</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Juge" data-shape="box" data-x="64.0" data-y="8.0" data-width="17.0" data-height="14.0" style="position:absolute; left:64.0%; top:8.0%; width:17.0%; height:14.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Juge<small style="color:rgba(255,255,255,.85);">1 appel / 10 regles</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Regeneration ciblee" data-shape="box" data-x="43.0" data-y="42.0" data-width="17.0" data-height="13.0" style="position:absolute; left:43.0%; top:42.0%; width:17.0%; height:13.0%; border:2px solid #ff832b; background:#fff2e8; color:#8a3800; border-radius:4px;">Regeneration<small>regles non couvertes</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Termine" data-shape="box" data-x="64.0" data-y="42.0" data-width="17.0" data-height="13.0" style="position:absolute; left:64.0%; top:42.0%; width:17.0%; height:13.0%; border:2px solid #24a148; background:#defbe6; color:#0e6027; border-radius:4px;">Termine<small>score &ge; seuil</small></div>
+      <div data-type="arch-node" class="arch-node" data-label="Meilleure version" data-shape="box" data-x="22.0" data-y="70.0" data-width="59.0" data-height="13.0" style="position:absolute; left:22.0%; top:70.0%; width:59.0%; height:13.0%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939; border-radius:4px;">Seuil jamais atteint: la meilleure version scoree est restauree, le bloc passe en revue humaine</div>
+      <div data-type="arch-edge" data-from="Bloc" data-to="Extracteur" data-style="solid" class="arch-edge arch-line-h" style="left:18.0%; top:15.0%; width:4.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:22.0%; top:15.0%; transform:translate(-100%,-50%);"></div>
+      <div data-type="arch-edge" data-from="Extracteur" data-to="Generateur" data-style="solid" class="arch-edge arch-line-h" style="left:39.0%; top:15.0%; width:4.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:43.0%; top:15.0%; transform:translate(-100%,-50%);"></div>
+      <div data-type="arch-edge" data-from="Generateur" data-to="Juge" data-style="solid" class="arch-edge arch-line-h" style="left:60.0%; top:15.0%; width:4.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-r" style="left:64.0%; top:15.0%; transform:translate(-100%,-50%);"></div>
+      <div data-type="arch-edge" data-from="Juge" data-to="Termine" data-style="solid" class="arch-edge arch-line-v" style="left:72.5%; top:22.0%; height:20.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:72.5%; top:42.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge-label" style="left:74.0%; top:31.0%;">score &ge; seuil</div>
+      <div class="arch-edge arch-line-h" style="left:51.5%; top:32.0%; width:21.0%;"></div>
+      <div data-type="arch-edge" data-from="Juge" data-to="Regeneration ciblee" data-style="solid" class="arch-edge arch-line-v" style="left:51.5%; top:32.0%; height:10.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:51.5%; top:42.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge-label" style="left:53.0%; top:35.0%;">score &lt; seuil</div>
+      <div class="arch-edge arch-line-h" style="left:40.0%; top:48.5%; width:3.0%;"></div>
+      <div class="arch-edge arch-line-v" style="left:40.0%; top:26.0%; height:22.5%;"></div>
+      <div class="arch-edge arch-line-h" style="left:40.0%; top:26.0%; width:11.5%;"></div>
+      <div data-type="arch-edge" data-from="Regeneration ciblee" data-to="Generateur" data-style="dashed" class="arch-edge arch-line-v" style="left:51.5%; top:22.0%; height:4.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-u" style="left:51.5%; top:22.0%; transform:translate(-50%,0);"></div>
+      <div class="arch-edge-label" style="left:41.5%; top:37.0%;">nouvelle passe</div>
+      <div class="arch-edge arch-line-v" style="left:51.5%; top:55.0%; height:15.0%;"></div>
+      <div class="arch-edge arch-tip arch-tip-d" style="left:51.5%; top:70.0%; transform:translate(-50%,-100%);"></div>
+      <div class="arch-edge-label" style="left:53.0%; top:60.0%;">3 passes</div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span class="slide-footer-left" data-editable="text">3 appels au mieux, 7 au pire, plus un par lot</span>
+        <span class="slide-footer-right">Slide 3 / 3</span>
+      </div>
+    </article>
+
+  </div>
+
+  <button class="nav-arrow" id="nav-next" onclick="navigate(1)" title="Suivant">
+    <svg viewBox="0 0 24 24"><path d="M8.5 4 16 12l-7.5 8-1.5-1.4L13 12 7 5.4z"></path></svg>
+  </button>
+</div>
+
+<div class="status-bar">
+  <span class="status-active">●</span>
+  <span id="status-slide">Slide 1 / 3</span>
+  <span style="margin-left:auto;">Navigation : ← → ou menu déroulant</span>
+</div>
+
+<script>
+  // ── À METTRE À JOUR à chaque ajout/suppression de slide ──────
+  const TOTAL = 3;
+  const slideNames = [
+    "Vue d'ensemble",
+    "Architecture applicative",
+    "Pipeline par bloc",
+  ];
+  // ─────────────────────────────────────────────────────────────
+
+  let current = 0;
+  const sel = document.getElementById('slide-select');
+
+  // Regénère les options du dropdown (vide d'abord pour éviter les doublons)
+  function buildOptions() {
+    sel.innerHTML = '';
+    slideNames.forEach((name, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = String(i + 1).padStart(2, '0') + ' — ' + name;
+      sel.appendChild(opt);
+    });
+  }
+
+  function render() {
+    document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+    const el = document.getElementById('slide-' + current);
+    if (el) el.classList.add('active');
+    sel.value = current;
+    document.getElementById('progress-tag').textContent = (current + 1) + ' / ' + TOTAL;
+    document.getElementById('status-slide').textContent =
+      'Slide ' + (current + 1) + ' / ' + TOTAL + ' — ' + slideNames[current];
+    document.getElementById('btn-prev').disabled = current === 0;
+    document.getElementById('nav-prev').disabled = current === 0;
+    document.getElementById('btn-next').disabled = current === TOTAL - 1;
+    document.getElementById('nav-next').disabled = current === TOTAL - 1;
+  }
+
+  function navigate(dir) {
+    const next = current + dir;
+    if (next >= 0 && next < TOTAL) { current = next; render(); }
+  }
+
+  function goToSlide(idx) { current = parseInt(idx, 10); render(); }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') navigate(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')  navigate(-1);
+    if (e.key === 'Home') goToSlide(0);
+    if (e.key === 'End')  goToSlide(TOTAL - 1);
+  });
+
+  buildOptions();
+  render();
+</script>
+</body>
+</html>

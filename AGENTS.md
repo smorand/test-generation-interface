@@ -58,5 +58,7 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 - `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
 - `.agent_docs/python.md` : Python coding standards
 - `.agent_docs/makefile.md` : Makefile documentation
+- `INSTALL.md` : step by step install for a newcomer
+- `docs/architecture.html` : architecture and pipeline diagrams (mcp-htmleditor, IBM Carbon template)
 - `VALIDATION.md` : runbook to validate a model on a target infrastructure
 - `README.md` : human-facing docs, pipeline, scoring, resilience, API routes, schema

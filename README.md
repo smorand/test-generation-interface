@@ -47,6 +47,12 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 
 Open `http://localhost:8080`.
 
+## Documentation
+
+- [INSTALL.md](INSTALL.md) : step by step first install, written for a newcomer
+- [docs/architecture.html](docs/architecture.html) : architecture and pipeline diagrams, open in a browser
+- [VALIDATION.md](VALIDATION.md) : validate a model on a target infrastructure
+
 ## Validating a model on another infrastructure
 
 ```bash
