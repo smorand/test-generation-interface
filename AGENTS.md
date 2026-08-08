@@ -4,7 +4,7 @@ Compact index for AI agents. Details live in `.agent_docs/`. Read this first, th
 
 ## Overview
 
-QA test generator: FastAPI + HTMX web app that splits a spec document into blocs, extracts business rules, generates JSON functional tests via LLM sub-agents, iterates with an independent judge, and versions each project with local git. Python 3.13, src/ package layout (`src/tgi`).
+QA test generator: FastAPI + HTMX web app that splits a spec document into blocs, extracts business rules, generates JSON functional tests via LLM sub-agents, iterates with a scoring judge, and versions each project with local git. Python 3.13, src/ package layout (`src/tgi`).
 
 ## Key Commands
 
@@ -37,6 +37,14 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - Module-level singletons kept intentionally: `settings`, `llm_client`, `state_manager`, `git_service`, `doc_parser`
 - Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
 
+## Pipeline essentials
+
+Judge scores rule coverage (0 to 100, computed locally). Each pass is a scored
+version; the best one wins. Weak models need a large `TGI_MAX_OUTPUT_TOKENS` or
+they are truncated before answering. `LLMJSONError` is an expected outcome: warn,
+never `logger.exception`. Full details and the measured numbers:
+`.agent_docs/pipeline.md` (read it before touching orchestrator, judge, or llm).
+
 ## Quality Gate
 
 Run `make check` before every commit. Coverage must stay >= 80%.
@@ -44,6 +52,7 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 ## Documentation Index
 
 - `CLAUDE.md` : fuller project overview (mirrors this index)
+- `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
 - `.agent_docs/python.md` : Python coding standards
 - `.agent_docs/makefile.md` : Makefile documentation
-- `README.md` : human-facing docs, pipeline, API routes, schema
+- `README.md` : human-facing docs, pipeline, scoring, resilience, API routes, schema

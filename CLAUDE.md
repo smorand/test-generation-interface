@@ -2,7 +2,7 @@
 
 ## Overview
 
-QA agent that turns a functional specification document (Word, PDF, text) into structured functional tests. It splits the doc into business blocs, extracts rules, generates JSON tests via LLM sub-agents, iterates with an independent judge, and exposes everything in a FastAPI + HTMX web interface with human-in-the-loop and local git versioning per project.
+QA agent that turns a functional specification document (Word, PDF, text) into structured functional tests. It splits the doc into business blocs, extracts rules, generates JSON tests via LLM sub-agents, iterates with a judge that scores rule coverage, and exposes everything in a FastAPI + HTMX web interface with human-in-the-loop and local git versioning per project.
 
 Tech stack: Python 3.13, FastAPI, HTMX, OpenAI-compatible LLM client (ICA), pydantic-settings, Ruff, mypy, pytest, OpenTelemetry.
 
@@ -44,6 +44,18 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 - OTel traces to `<app>-otel.log`, app logs to `<app>.log`, both under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
 - Never trace prompts, responses, or API keys
 - Module-level singletons kept from the original design: `settings`, `llm_client`, `state_manager`, `git_service`, `doc_parser` (pre-existing pattern, no new mutable globals)
+
+## Pipeline behaviour
+
+- Judge scores rule coverage 0 to 100, computed locally from rule ids (never trusted from the model).
+  `>= TGI_JUDGE_PASS_SCORE` accepts the bloc, below `TGI_JUDGE_BAD_SCORE` flags poor coverage.
+- Each judge pass is a scored version; if the threshold is never met the best scoring version is
+  restored and the bloc goes to `needs_human`. Every pass stays in the git history.
+- A bloc with no extracted rule is finished immediately, without generation or judging.
+- Weak model handling: JSON is recovered from prose or fences (last candidate first), wrong shapes
+  and truncated answers are retried with targeted instructions, and `LLMJSONError` marks the bloc
+  `error` with a readable message plus a rerun button. Reasoning models need a large
+  `TGI_MAX_OUTPUT_TOKENS` or they are cut off before answering.
 
 ## Quality Gate
 
