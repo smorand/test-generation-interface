@@ -41,6 +41,8 @@ dev = [
 ]
 
 [project.scripts]
+tgi-validate = "tgi.validate:main"
+tgi-stats = "tgi.stats:main"
 test-generation-interface = "tgi.tgi:main"
 tgi = "tgi.tgi:main"
 

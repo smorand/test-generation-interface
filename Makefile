@@ -1,4 +1,4 @@
-.PHONY: sync run run-dev test lint lint-fix format format-check typecheck security check build install uninstall docker-build docker-push docker run-up run-down clean clean-all info help
+.PHONY: sync run run-dev validate stats test lint lint-fix format format-check typecheck security check build install uninstall docker-build docker-push docker run-up run-down clean clean-all info help
 
 # Auto-detect project name from pyproject.toml
 PROJECT_NAME=$(shell grep -m1 '^name' pyproject.toml 2>/dev/null | sed 's/.*= *"\([^"]*\)".*/\1/')
@@ -78,6 +78,14 @@ endif
 # ============================================================================
 # TESTING
 # ============================================================================
+
+## validate: Validate the configured model and endpoint against the real pipeline
+validate: sync
+	@uv run python -m tgi.validate $(ARGS)
+
+## stats: Report pipeline statistics from the OTel traces and projects
+stats: sync
+	@uv run python -m tgi.stats $(ARGS)
 
 ## test: Run tests with pytest (supports ARGS='...' for extra arguments)
 test:

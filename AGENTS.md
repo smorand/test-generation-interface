@@ -13,7 +13,9 @@ make sync     # install deps (uv)
 make run      # run ASGI server (uvicorn tgi.tgi:app, port 8080)
 make check    # quality gate: lint, format-check, typecheck (mypy strict), security (bandit), test-cov >=80%
 make test-cov # tests + coverage
-make build    # build wheel (includes prompts/schemas/templates/static)
+make build    # build wheel (includes prompts/schemas/templates/static/samples)
+make validate # validate a model/endpoint on the bundled sample, prints a verdict
+make stats    # pipeline statistics from OTel traces and project state
 ```
 
 Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
@@ -56,4 +58,5 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 - `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
 - `.agent_docs/python.md` : Python coding standards
 - `.agent_docs/makefile.md` : Makefile documentation
+- `VALIDATION.md` : runbook to validate a model on a target infrastructure
 - `README.md` : human-facing docs, pipeline, scoring, resilience, API routes, schema

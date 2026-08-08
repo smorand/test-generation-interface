@@ -24,6 +24,8 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 ## Project Structure
 
 - `src/tgi/tgi.py` : entry point. `create_app()` factory, module-level `app` (ASGI), `main()` for uvicorn
+- `src/tgi/validate.py` : model validation deliverable (`tgi-validate`), sample in `src/tgi/samples/`
+- `src/tgi/stats.py` : pipeline statistics from OTel traces (`tgi-stats`)
 - `src/tgi/config.py` : Settings via pydantic-settings (env_prefix `TGI_`), `settings` singleton, `log_dir`
 - `src/tgi/logging_config.py` : rich console + file logging (`setup_logging`)
 - `src/tgi/tracing.py` : OpenTelemetry tracing, JSONL export (`configure_tracing`, `trace_span`)

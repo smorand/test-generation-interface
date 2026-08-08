@@ -47,6 +47,19 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 
 Open `http://localhost:8080`.
 
+## Validating a model on another infrastructure
+
+```bash
+tgi-validate --model Qwen/Qwen3.6-27B     # installed from the wheel
+make validate ARGS="--model ..."          # from the repository
+tgi-stats                                 # statistics of a real run
+```
+
+`tgi-validate` runs the real pipeline on a synthetic specification shipped in the
+package, so no customer document is needed, and prints a go / no go verdict with
+the settings to change. Exit code 0 means usable. Step by step runbook:
+[VALIDATION.md](VALIDATION.md).
+
 ## Configuration (.env)
 
 All variables use the `TGI_` prefix.
