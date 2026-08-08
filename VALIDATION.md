@@ -104,7 +104,20 @@ TLS interception:
 ```powershell
 $env:HTTPS_PROXY = "http://proxy.entreprise:8080"
 $env:NO_PROXY    = "localhost,127.0.0.1,.entreprise.local"
-$env:SSL_CERT_FILE = "C:\chemin\vers\ca-entreprise.pem"   # httpx uses this bundle
+```
+
+For the certificate, the clean fix is to give the corporate bundle, in `.env`:
+
+```
+TGI_LLM_CA_BUNDLE=C:/chemin/vers/ca-entreprise.pem
+```
+
+If the bundle is not available, verification can be skipped. It unblocks the run and
+exposes the traffic, so it is opt in and logged as a warning on every start, and the
+verdict prints `TLS: verification DISABLED`:
+
+```
+TGI_LLM_VERIFY_SSL=false
 ```
 
 Quick check outside the application, same machine:

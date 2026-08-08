@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 
 from tgi.config import settings
@@ -205,6 +206,34 @@ def _is_unsupported_param_error(exc: Exception) -> bool:
     return _THINKING_SWITCH_PARAM in str(exc).lower()
 
 
+def _tls_verification() -> bool | str:
+    """What httpx should verify against: a bundle, the system store, or nothing."""
+    if not settings.llm_verify_ssl:
+        logger.warning(
+            "TLS certificate verification is DISABLED for %s (TGI_LLM_VERIFY_SSL=false): "
+            "traffic can be intercepted, prefer TGI_LLM_CA_BUNDLE",
+            settings.llm_base_url,
+        )
+        return False
+    if settings.llm_ca_bundle:
+        logger.info("Verifying TLS against %s", settings.llm_ca_bundle)
+        return settings.llm_ca_bundle
+    return True
+
+
+def _build_http_client() -> httpx.AsyncClient | None:
+    """Transport for the OpenAI client, or None to keep the SDK default.
+
+    Only built when TLS needs custom handling, so the SDK keeps its own defaults in
+    the common case. The generous read timeout matches the calls this pipeline makes:
+    a single generation answer can take minutes.
+    """
+    verify = _tls_verification()
+    if verify is True:
+        return None
+    return httpx.AsyncClient(verify=verify, timeout=httpx.Timeout(600.0, connect=15.0))
+
+
 class LLMClient:
     """Async OpenAI compatible client with JSON extraction and retry logic."""
 
@@ -214,6 +243,7 @@ class LLMClient:
         self._client = AsyncOpenAI(
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
+            http_client=_build_http_client(),
         )
         self._model_cache: dict[str, Any] | None = None
         # Assume the switch is accepted until an endpoint proves otherwise.

@@ -68,6 +68,8 @@ All variables use the `TGI_` prefix.
 |---|---|---|
 | `TGI_LLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI compatible endpoint |
 | `TGI_LLM_API_KEY` | — | Bearer token, any non empty value if the server needs none |
+| `TGI_LLM_VERIFY_SSL` | `true` | Set to `false` to skip TLS verification (exposes the traffic) |
+| `TGI_LLM_CA_BUNDLE` | — | Certificate bundle to verify against, the clean fix behind a TLS gateway |
 | `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
 | `TGI_MODEL_JUDGE` | `gemma-4-26b-a4b-it` | LLM for coverage evaluation |
 | `TGI_MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |

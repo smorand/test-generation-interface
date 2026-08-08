@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     # Any OpenAI compatible endpoint: vLLM, SGLang, a gateway, a hosted API.
     llm_base_url: str = "http://localhost:8000/v1"
     llm_api_key: str = _PLACEHOLDER_API_KEY
+    # TLS. Behind a gateway that re-signs certificates, point llm_ca_bundle at the
+    # corporate root bundle. Setting llm_verify_ssl to false skips verification
+    # entirely: it unblocks a run but exposes the traffic, so it stays opt in.
+    llm_verify_ssl: bool = True
+    llm_ca_bundle: str | None = None
     model_generator: str = "gemma-4-26b-a4b-it"
     model_judge: str = "gemma-4-26b-a4b-it"
     max_judge_passes: int = 3

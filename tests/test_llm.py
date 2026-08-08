@@ -535,3 +535,57 @@ async def test_list_models_goes_through_the_openai_client() -> None:
     # Second call is served from cache, no extra request
     await client.list_models()
     assert resource.calls == 1
+
+
+def test_tls_verification_defaults_to_the_system_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No custom transport in the common case: the SDK keeps its own defaults."""
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", True)
+    monkeypatch.setattr(llm_mod.settings, "llm_ca_bundle", None)
+    assert llm_mod._tls_verification() is True
+    assert llm_mod._build_http_client() is None
+
+
+def test_tls_verification_uses_a_ca_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", True)
+    monkeypatch.setattr(llm_mod.settings, "llm_ca_bundle", "/etc/ssl/corporate.pem")
+    assert llm_mod._tls_verification() == "/etc/ssl/corporate.pem"
+
+
+def test_tls_verification_can_be_disabled_and_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Skipping verification must never be silent."""
+    import logging
+
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", False)
+    with caplog.at_level(logging.WARNING, logger="tgi.services.llm"):
+        assert llm_mod._tls_verification() is False
+    assert any("verification is DISABLED" in record.message for record in caplog.records)
+
+
+async def test_disabled_verification_builds_an_insecure_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", False)
+    client = llm_mod._build_http_client()
+    assert client is not None
+    try:
+        # The generous read timeout matters: a generation answer can take minutes
+        assert client.timeout.read == 600.0
+        assert client.timeout.connect == 15.0
+    finally:
+        await client.aclose()
+
+
+def test_llm_client_wires_the_custom_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", False)
+    client = LLMClient()
+    assert client._client._client is not None  # the SDK received our httpx client

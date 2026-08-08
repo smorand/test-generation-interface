@@ -282,3 +282,17 @@ the application log, which it did not at first: it is the larger of the two, abo
 460 kB for a single run over a 90 bloc document, so an unbounded file would have
 filled the disk of a long lived service. Rotation happens inside the exporter, under a
 lock, since the batch processor calls it from its own thread.
+
+## TLS behind a corporate gateway
+
+`TGI_LLM_CA_BUNDLE` verifies against a given bundle, `TGI_LLM_VERIFY_SSL=false` skips
+verification entirely. A custom httpx transport is built only when one of them is set,
+so the SDK keeps its own defaults in the common case; that transport uses a 600 second
+read timeout because a single generation answer can take minutes.
+
+Disabling verification is never silent: it logs a warning naming the endpoint on every
+client build, and `tgi-validate` prints `TLS: verification DISABLED` in its verdict.
+
+Verified against a local HTTPS server with a self signed certificate: verification on
+fails with APIConnectionError, verification off connects, and passing the certificate
+as the bundle connects too.

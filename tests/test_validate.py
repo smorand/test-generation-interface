@@ -191,7 +191,8 @@ def test_connection_error_blames_transport_not_credentials(monkeypatch: pytest.M
     advice = " ".join(result.advice)
     assert "transport, not credentials" in advice
     assert "HTTPS_PROXY" in advice
-    assert "SSL_CERT_FILE" in advice
+    assert "TGI_LLM_CA_BUNDLE" in advice
+    assert "TGI_LLM_VERIFY_SSL=false" in advice
 
 
 def test_tls_error_puts_the_certificate_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

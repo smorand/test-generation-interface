@@ -124,7 +124,8 @@ def _connection_advice(exc: Exception, endpoint: str) -> list[str]:
         f"The request never reached the service, so this is transport, not credentials. Check {endpoint} "
         "is reachable from this machine",
         "Behind a corporate proxy, export HTTPS_PROXY and NO_PROXY (httpx honours them)",
-        "With TLS interception, point SSL_CERT_FILE at the corporate root certificate bundle",
+        "With TLS interception, set TGI_LLM_CA_BUNDLE to the corporate root bundle, or "
+        "TGI_LLM_VERIFY_SSL=false as a last resort (it exposes the traffic)",
     ]
     if "ssl" in text or "certificate" in text:
         advice.insert(0, "The error mentions TLS: the corporate certificate authority is the first thing to check")
@@ -233,6 +234,10 @@ def format_verdict(result: ValidationResult) -> str:
     lines.append(f"judge      : {result.model_judge}")
     if result.models_visible is not None:
         lines.append(f"models seen: {result.models_visible}")
+    if not settings.llm_verify_ssl:
+        lines.append("TLS        : verification DISABLED (TGI_LLM_VERIFY_SSL=false)")
+    elif settings.llm_ca_bundle:
+        lines.append(f"TLS        : verified against {settings.llm_ca_bundle}")
     if not result.reachable:
         lines.append(f"error      : {result.error}")
     lines.append("")
