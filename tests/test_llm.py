@@ -488,3 +488,50 @@ async def test_chat_json_ignores_reasoning_prose_and_retries() -> None:
     fake.chat.completions = _FakeCompletions(responses)
     client._client = fake  # type: ignore[assignment]
     assert await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3) == {"rules": [1]}
+
+
+class _FakeModel:
+    """OpenAI SDK style model entry, with a non standard extra field."""
+
+    def __init__(self, model_id: str, extra: dict[str, Any] | None = None) -> None:
+        self._id = model_id
+        self.model_extra = extra or {}
+
+    def model_dump(self) -> dict[str, Any]:
+        return {"id": self._id, "object": "model"}
+
+
+class _FakeModelsPage:
+    def __init__(self, models: list[_FakeModel]) -> None:
+        self.data = models
+
+
+class _FakeModelsResource:
+    def __init__(self, page: _FakeModelsPage) -> None:
+        self._page = page
+        self.calls = 0
+
+    async def list(self) -> _FakeModelsPage:
+        self.calls += 1
+        return self._page
+
+
+async def test_list_models_goes_through_the_openai_client() -> None:
+    """Model discovery must use the OpenAI compatible client, not a hand rolled call."""
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    resource = _FakeModelsResource(_FakeModelsPage([_FakeModel("m1", {"context_window": 200000})]))
+    fake.models = resource  # type: ignore[attr-defined]
+    client._client = fake  # type: ignore[assignment]
+
+    models = await client.list_models()
+    assert resource.calls == 1
+    assert models[0]["id"] == "m1"
+    # Non standard fields must survive, they carry the context window
+    assert models[0]["context_window"] == 200000
+
+    ok, ctx = await client.check_context_window("m1", 128000)
+    assert (ok, ctx) == (True, 200000)
+    # Second call is served from cache, no extra request
+    await client.list_models()
+    assert resource.calls == 1

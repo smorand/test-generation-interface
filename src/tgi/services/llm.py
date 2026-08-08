@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Any
 
-import httpx
 from openai import AsyncOpenAI
 
 from tgi.config import settings
@@ -401,22 +400,26 @@ class LLMClient:
         )
 
     async def list_models(self) -> list[dict[str, Any]]:
-        """Fetch available models from the ICA endpoint."""
+        """Fetch available models through the OpenAI compatible /models route.
+
+        Goes through the same OpenAI client as inference rather than a hand rolled
+        request, so base url, credentials, timeouts and retries stay in one place.
+        Non standard fields such as context_window survive via model_extra.
+        """
         if self._model_cache is not None:
             return list(self._model_cache.values())
 
         with trace_span("api.list_models", {"endpoint": f"{settings.ica_base_url}/models", "method": "GET"}):
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{settings.ica_base_url}/models",
-                    headers={"Authorization": f"Bearer {settings.ica_api_key}"},
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            page = await self._client.models.list()
 
-        models: list[dict[str, Any]] = data.get("data", data) if isinstance(data, dict) else data
-        self._model_cache = {m.get("id", ""): m for m in models if isinstance(m, dict)}
+        models: list[dict[str, Any]] = []
+        for entry in page.data:
+            dump = entry.model_dump() if hasattr(entry, "model_dump") else dict(entry)
+            extra = getattr(entry, "model_extra", None)
+            if extra:
+                dump.update(extra)
+            models.append(dump)
+        self._model_cache = {str(m.get("id", "")): m for m in models}
         return models
 
     async def check_context_window(self, model_id: str, required_tokens: int) -> tuple[bool, int]:
