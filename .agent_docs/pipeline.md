@@ -182,3 +182,25 @@ Measured on ICA: gemma ignores the switch (it is served through litellm to Gemin
 and keeps reasoning), so a reasoning model reached through a gateway that strips
 the parameter cannot be sped up from the client side. That is an endpoint
 limitation, not an application one.
+
+## Reading the answer, not the reasoning
+
+The answer is `content`. Reasoning traces are read for observability only, and the
+field name differs per stack: vLLM renamed `reasoning_content` to `reasoning`
+(PR 33402), while SGLang and the hosted Qwen API kept `reasoning_content`. A client
+reading only one name silently sees nothing on half the stacks, so
+`_reasoning_text` checks both.
+
+Falling back to the reasoning text when `content` is empty is kept as a last
+resort for gateways that expose no separate answer field, and it is logged as a
+warning. It is safe here only because the value must still parse as JSON of the
+expected shape, so a chain of thought cannot pass as an answer. vLLM issue 35221
+is the cautionary case: a truncated chain of thought was returned as `content`,
+which a naive client would have parsed as the result.
+
+Documented Qwen constraints worth remembering if thinking is ever turned back on:
+the recommended output budget is 32768 tokens (81920 for hard tasks), so the
+16000 default here is below Qwen's own floor for thinking mode, and Qwen advises
+against setting a tight `max_tokens` together with structured output because
+truncation yields invalid JSON. Measured need here is far lower: median output per
+call is 472 tokens for the extractor, 2333 for the generator, 16 for the judge.

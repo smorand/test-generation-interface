@@ -444,3 +444,47 @@ async def test_other_api_errors_still_propagate(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(RuntimeError, match="503"):
         await client.chat(model="m", system_prompt="s", user_content="u")
+
+
+class _MessageWithReasoning:
+    """Message exposing the new vLLM field name instead of the old one."""
+
+    def __init__(self, content: str | None, reasoning: str | None = None) -> None:
+        self.content = content
+        if reasoning is not None:
+            self.reasoning = reasoning
+
+
+async def test_chat_reads_the_new_vllm_reasoning_field() -> None:
+    """vLLM renamed reasoning_content to reasoning: reading only the old name is blind."""
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _FakeCompletions(
+        [_FakeResponse(_MessageWithReasoning(None, reasoning='{"rules": []}'))]  # type: ignore[arg-type]
+    )
+    client._client = fake  # type: ignore[assignment]
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == '{"rules": []}'
+
+
+async def test_chat_prefers_content_over_reasoning() -> None:
+    """The answer is content; reasoning must never override it."""
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _FakeCompletions(
+        [_FakeResponse(_MessageWithReasoning('{"answer": true}', reasoning="let me think about it"))]  # type: ignore[arg-type]
+    )
+    client._client = fake  # type: ignore[assignment]
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == '{"answer": true}'
+
+
+async def test_chat_json_ignores_reasoning_prose_and_retries() -> None:
+    """A chain of thought must not pass as the answer: it has to parse first."""
+    responses = [
+        _FakeResponse(_MessageWithReasoning(None, reasoning="First I will list the rules, then...")),  # type: ignore[arg-type]
+        _FakeResponse(_FakeMessage('{"rules": [1]}')),
+    ]
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _FakeCompletions(responses)
+    client._client = fake  # type: ignore[assignment]
+    assert await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3) == {"rules": [1]}

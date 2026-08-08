@@ -182,6 +182,20 @@ _THINKING_SWITCH_PARAM = "chat_template_kwargs"
 _NO_THINKING_BODY: dict[str, Any] = {_THINKING_SWITCH_PARAM: {"enable_thinking": False}}
 
 
+def _reasoning_text(message: Any) -> str:
+    """Reasoning trace of a reply, whatever the server calls it.
+
+    vLLM renamed the field from reasoning_content to reasoning, and SGLang and the
+    hosted Qwen API kept reasoning_content, so a client reading only one of them
+    silently sees nothing on half the stacks.
+    """
+    for field in ("reasoning", "reasoning_content"):
+        value = getattr(message, field, None)
+        if value:
+            return str(value)
+    return ""
+
+
 def _is_unsupported_param_error(exc: Exception) -> bool:
     """True when the endpoint rejected the switch we sent.
 
@@ -277,11 +291,22 @@ class LLMClient:
                 )
         choice = response.choices[0]
         msg = choice.message
-        # Gemma 4 (and other reasoning models via ICA) may return content=None
-        # and put the actual reply in reasoning_content (thinking blocks).
-        content = msg.content
-        if not content:
-            content = getattr(msg, "reasoning_content", None) or ""
+        content = msg.content or ""
+        reasoning = _reasoning_text(msg)
+        if reasoning:
+            # Reasoning is never the answer, but knowing it happened explains both
+            # the latency and the truncations.
+            logger.debug("Model %s returned %d characters of reasoning", model, len(reasoning))
+        if not content and reasoning:
+            # Last resort for gateways that expose no separate answer field. The
+            # value still has to parse as the expected JSON to be accepted, so a
+            # chain of thought cannot silently pass as the answer.
+            logger.warning(
+                "Model %s returned an empty answer with %d characters of reasoning, falling back to it",
+                model,
+                len(reasoning),
+            )
+            content = reasoning
         finish_reason: str | None = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
             logger.warning(
