@@ -60,7 +60,7 @@ All variables use the `TGI_` prefix.
 | `TGI_MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |
 | `TGI_MAX_PARALLEL_BLOCS` | `5` | Max blocs processed in parallel |
 | `TGI_LLM_JSON_RETRIES` | `5` | Retries when the model returns no usable JSON |
-| `TGI_DISABLE_THINKING` | `true` | Send the vLLM/SGLang switch turning reasoning off |
+| `TGI_DISABLE_THINKING` | `false` | Send the vLLM/SGLang switch turning reasoning off |
 | `TGI_JUDGE_SCORE_MODE` | `coverage` | `coverage` (computed locally) or `llm` (self-reported) |
 | `TGI_JUDGE_PASS_SCORE` | `80` | Score at or above which a bloc is accepted (green) |
 | `TGI_JUDGE_BAD_SCORE` | `40` | Score below which coverage is flagged as poor (red) |
@@ -150,7 +150,13 @@ without failing the bloc:
 Hybrid models think before answering, which this pipeline never wants: reasoning
 burns the output budget and leaves no JSON. `TGI_DISABLE_THINKING` sends the
 documented vLLM and SGLang switch `chat_template_kwargs.enable_thinking=false` on
-every call. Endpoints that validate parameters and refuse it (ICA/litellm in front
+every call.
+
+It is **off by default**, because that field is not part of the OpenAI standard and
+some gateways reject it. Turn it on once the target endpoint is known to accept it,
+then confirm on the wire with `uv run python -m tgi.stats`, whose first line reports
+whether the switch was sent on every call, never sent, or sent then dropped after a
+refusal. Endpoints that validate parameters and refuse it (ICA/litellm in front
 of Bedrock answers `chat_template_kwargs: Extra inputs are not permitted`) are
 detected on the first call, and the switch is then dropped for the rest of the
 process.

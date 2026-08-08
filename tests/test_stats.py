@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tgi.stats import aggregate_blocs, aggregate_roles, build_report, read_attempt_spans
+from tgi.stats import (
+    aggregate_blocs,
+    aggregate_roles,
+    build_report,
+    format_switch_line,
+    read_attempt_spans,
+    reasoning_switch_usage,
+)
 
 _NS = 1_000_000_000
 
@@ -157,3 +164,46 @@ def test_build_report_without_blocs(tmp_path: Path) -> None:
     _write_otel(otel, [_span("extractor", "ok", 5)])
     report = build_report(otel, tmp_path / "absent")
     assert "No bloc state found." in report
+
+
+def _chat_span(thinking_disabled: bool | None) -> dict[str, object]:
+    attributes: dict[str, object] = {"model": "m", "max_tokens": 16000}
+    if thinking_disabled is not None:
+        attributes["thinking_disabled"] = thinking_disabled
+    return {"name": "llm.chat", "start_time": 0, "end_time": _NS, "attributes": attributes}
+
+
+def test_switch_line_when_accepted(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [_chat_span(True), _chat_span(True)])
+    assert "sent on all 2 calls" in format_switch_line(reasoning_switch_usage(otel))
+
+
+def test_switch_line_when_off(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [_chat_span(False)])
+    line = format_switch_line(reasoning_switch_usage(otel))
+    assert "never sent" in line
+    assert "TGI_DISABLE_THINKING is off" in line
+
+
+def test_switch_line_when_endpoint_refused_it(tmp_path: Path) -> None:
+    """The interesting case: tried, refused, then dropped for the rest of the run."""
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [_chat_span(True), _chat_span(False), _chat_span(False)])
+    line = format_switch_line(reasoning_switch_usage(otel))
+    assert "sent on 1 of 3 calls" in line
+    assert "refused" in line
+
+
+def test_switch_line_without_instrumented_calls(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [_chat_span(None)])
+    assert "no instrumented call" in format_switch_line(reasoning_switch_usage(otel))
+
+
+def test_build_report_starts_with_the_switch_line(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [_chat_span(False), _span("judge", "ok", 3)])
+    report = build_report(otel, tmp_path / "absent")
+    assert report.startswith("Reasoning switch:")

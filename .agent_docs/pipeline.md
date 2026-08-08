@@ -162,10 +162,19 @@ titles became real section names.
 
 ## Reasoning switch (TGI_DISABLE_THINKING)
 
-Reasoning is pure cost here: the pipeline wants JSON, not deliberation. Every call
-carries `chat_template_kwargs={"enable_thinking": false}`, the switch documented
-for vLLM and SGLang, which is what `Qwen3.6-27B` needs since it thinks by default
-and dropped the `/no_think` soft switch.
+Reasoning is pure cost here: the pipeline wants JSON, not deliberation. When
+`TGI_DISABLE_THINKING` is on, every call carries
+`chat_template_kwargs={"enable_thinking": false}`, the switch documented for vLLM
+and SGLang, which is what `Qwen3.6-27B` needs since it thinks by default and
+dropped the `/no_think` soft switch.
+
+The default is **off**: that field is not part of the OpenAI standard, and the
+target infrastructure may reject it. Enable it only after validating the endpoint.
+`tgi.stats` reports on its first line whether the switch was sent on every call,
+never sent, or sent and then dropped after a refusal, which makes that validation a
+single command. Both modes were exercised against ICA: with the switch off the
+bloc completed normally, and with it on the first calls were refused, the switch
+was dropped, and the bloc still completed.
 
 Gateways that validate parameters reject it with wildly different wording, so
 detection keys on the parameter name appearing in the error, not on any phrasing.

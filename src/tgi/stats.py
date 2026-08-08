@@ -57,8 +57,8 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[index]
 
 
-def read_attempt_spans(otel_path: Path) -> list[dict[str, Any]]:
-    """Load llm.json_attempt spans from an OTel JSONL export."""
+def read_spans(otel_path: Path, name: str) -> list[dict[str, Any]]:
+    """Load spans of one name from an OTel JSONL export."""
     spans: list[dict[str, Any]] = []
     if not otel_path.exists():
         return spans
@@ -71,9 +71,32 @@ def read_attempt_spans(otel_path: Path) -> list[dict[str, Any]]:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if record.get("name") == "llm.json_attempt":
+            if record.get("name") == name:
                 spans.append(record)
     return spans
+
+
+def read_attempt_spans(otel_path: Path) -> list[dict[str, Any]]:
+    """Load llm.json_attempt spans from an OTel JSONL export."""
+    return read_spans(otel_path, "llm.json_attempt")
+
+
+def reasoning_switch_usage(otel_path: Path) -> dict[str, int]:
+    """Count calls that carried the reasoning off switch.
+
+    Tells at a glance whether the switch actually reached the endpoint, which is
+    the thing to check first when validating a new inference stack.
+    """
+    sent = not_sent = 0
+    for span in read_spans(otel_path, "llm.chat"):
+        attributes = span.get("attributes") or {}
+        if "thinking_disabled" not in attributes:
+            continue
+        if attributes.get("thinking_disabled"):
+            sent += 1
+        else:
+            not_sent += 1
+    return {"sent": sent, "not_sent": not_sent}
 
 
 def aggregate_roles(spans: list[dict[str, Any]]) -> dict[str, RoleStats]:
@@ -143,6 +166,22 @@ def aggregate_blocs(projects_dir: Path) -> dict[str, Any]:
     }
 
 
+def format_switch_line(usage: dict[str, int]) -> str:
+    """One line telling whether reasoning was switched off on the wire."""
+    sent, not_sent = usage["sent"], usage["not_sent"]
+    total = sent + not_sent
+    if not total:
+        return "Reasoning switch: no instrumented call found"
+    if sent and not not_sent:
+        return f"Reasoning switch: sent on all {sent} calls"
+    if not sent:
+        return f"Reasoning switch: never sent ({not_sent} calls), TGI_DISABLE_THINKING is off"
+    return (
+        f"Reasoning switch: sent on {sent} of {total} calls, then dropped "
+        f"({not_sent} calls without it), the endpoint refused it"
+    )
+
+
 def format_report(roles: dict[str, RoleStats], blocs: dict[str, Any]) -> str:
     """Render the statistics as a plain text report."""
     lines: list[str] = []
@@ -203,7 +242,8 @@ def build_report(otel_path: Path, projects_dir: Path) -> str:
     """Compute the full report from an OTel log and a projects directory."""
     roles = aggregate_roles(read_attempt_spans(otel_path))
     blocs = aggregate_blocs(projects_dir)
-    return format_report(roles, blocs)
+    switch = format_switch_line(reasoning_switch_usage(otel_path))
+    return f"{switch}\n\n{format_report(roles, blocs)}"
 
 
 def main() -> None:
