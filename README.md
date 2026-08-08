@@ -64,6 +64,11 @@ All variables use the `TGI_` prefix.
 | `TGI_JUDGE_PASS_SCORE` | `80` | Score at or above which a bloc is accepted (green) |
 | `TGI_JUDGE_BAD_SCORE` | `40` | Score below which coverage is flagged as poor (red) |
 | `TGI_JUDGE_BATCH_RULES` | `10` | Rules judged per LLM call (`0` disables batching) |
+| `TGI_GENERATOR_BATCH_RULES` | `8` | Rules per generation call (`0` disables batching) |
+| `TGI_MAX_TESTS_PER_RULE` | `4` | Cap on tests kept per rule (`0` disables the cap) |
+| `TGI_TEST_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two tests of the same rule are duplicates |
+| `TGI_CHUNK_SIZE` | `4000` | Characters per bloc when splitting |
+| `TGI_CHUNK_OVERLAP` | `200` | Overlap, applied only when a section must be cut |
 | `TGI_MAX_CONTEXT_TOKENS` | `128000` | Minimum required context window |
 | `TGI_MAX_OUTPUT_TOKENS` | `16000` | Output budget per call, must fit a reasoning model's thinking |
 | `TGI_PROJECTS_DIR` | `./projects` | Where projects are stored |

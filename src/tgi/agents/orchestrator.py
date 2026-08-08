@@ -15,6 +15,7 @@ from tgi.agents.judge import JudgeAgent
 from tgi.agents.planner import PlannerAgent
 from tgi.config import settings
 from tgi.services.llm import LLMJSONError
+from tgi.testset import merge_tests, saturated_rule_ids
 
 if TYPE_CHECKING:
     from tgi.services.git_service import GitService
@@ -42,55 +43,109 @@ def get_project_lock(project_id: str) -> asyncio.Lock:
     return _PROJECT_LOCKS[project_id]
 
 
-# How many characters per bloc when auto-splitting
-_CHUNK_SIZE = 4000
-_CHUNK_OVERLAP = 200
+# Heading boundaries: markdown levels produced by the docx parser, or an
+# underlined title in plain text sources.
+_HEADING_SPLIT_RE = re.compile(r"(?=\n#{1,6}\s+|\n[A-Z][^\n]{5,60}\n[-=]{3,})")
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n{2,}")
 
 
-def split_document(text: str, chunk_size: int = _CHUNK_SIZE) -> list[dict[str, Any]]:
+def _pack_paragraphs(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Pack paragraphs up to chunk_size, overlapping consecutive chunks.
+
+    Used only where no heading boundary is available, so a rule can genuinely sit
+    across the cut. The overlap repeats the tail of the previous chunk, at a word
+    boundary, so such a rule stays readable in full on one side at least.
     """
-    Split document text into blocs.
-    Tries to split on double newlines (paragraph boundaries).
+    paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text) if p.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    def flush() -> str:
+        return "\n\n".join(current).strip()
+
+    for paragraph in paragraphs:
+        if current and current_len + len(paragraph) > chunk_size:
+            previous = flush()
+            chunks.append(previous)
+            tail = previous[-overlap:] if overlap > 0 else ""
+            if tail and " " in tail:
+                tail = tail[tail.index(" ") + 1 :]
+            current = [tail] if tail else []
+            current_len = len(tail)
+        current.append(paragraph)
+        current_len += len(paragraph)
+
+    if current:
+        chunks.append(flush())
+    return [c for c in chunks if c]
+
+
+def _bloc_title(chunk: str) -> str:
+    """Title of a bloc: its first heading, else its first meaningful line.
+
+    Preferring the heading matters because a bloc can start with an overlap tail or
+    a table row, which would otherwise surface as a meaningless fragment.
     """
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                return heading[:80]
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if stripped and " | " not in stripped:
+            return stripped[:80]
+    return ""
+
+
+def _group_sections(sections: list[str], chunk_size: int) -> list[str]:
+    """Merge consecutive sections while they fit, never cutting inside one."""
+    groups: list[str] = []
+    current = ""
+    for section in sections:
+        if current and len(current) + len(section) > chunk_size:
+            groups.append(current.strip())
+            current = section
+        else:
+            current = (current + "\n\n" + section).strip()
+    if current:
+        groups.append(current.strip())
+    return groups
+
+
+def split_document(
+    text: str,
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+) -> list[dict[str, Any]]:
+    """Split document text into blocs, preferring real section boundaries.
+
+    Sections come from the document outline when the parser preserved it. Small
+    sections are merged, and a section larger than chunk_size is packed by
+    paragraphs with an overlap, since that cut is forced rather than semantic.
+    """
+    size = chunk_size if chunk_size is not None else settings.chunk_size
+    over = overlap if overlap is not None else settings.chunk_overlap
+
+    sections = [s.strip() for s in _HEADING_SPLIT_RE.split(text) if s.strip()]
+    groups = _group_sections(sections, size) if len(sections) > 1 else [text.strip()]
+
     blocs: list[str] = []
-
-    # Split on headings or double newlines
-    # Try heading-based split first
-    heading_pattern = re.compile(r"(?=\n#{1,3}\s+|\n[A-Z][^\n]{5,60}\n[-=]{3,})")
-    sections = heading_pattern.split(text)
-    sections = [s.strip() for s in sections if s.strip()]
-
-    if len(sections) <= 1:
-        # No headings found: split by paragraphs, then merge up to chunk_size
-        paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
-        current: list[str] = []
-        current_len = 0
-        for para in paragraphs:
-            if current_len + len(para) > chunk_size and current:
-                blocs.append("\n\n".join(current))
-                current = []
-                current_len = 0
-            current.append(para)
-            current_len += len(para)
-        if current:
-            blocs.append("\n\n".join(current))
-    else:
-        # Merge small sections together
-        current_chunk = ""
-        for section in sections:
-            if len(current_chunk) + len(section) > chunk_size and current_chunk:
-                blocs.append(current_chunk.strip())
-                current_chunk = section
-            else:
-                current_chunk = (current_chunk + "\n\n" + section).strip()
-        if current_chunk:
-            blocs.append(current_chunk.strip())
+    for group in groups:
+        if not group:
+            continue
+        # A single section can still dwarf the budget: cut it, or the bloc would
+        # never fit a model context.
+        if len(group) > size:
+            blocs.extend(_pack_paragraphs(group, size, over))
+        else:
+            blocs.append(group)
 
     result: list[dict[str, Any]] = []
     for i, chunk in enumerate(blocs):
-        # Extract a title from first line
-        first_line = chunk.splitlines()[0].lstrip("#").strip()[:80]
-        title = first_line if first_line else f"Bloc {i + 1}"
+        title = _bloc_title(chunk) or f"Bloc {i + 1}"
         result.append(
             {
                 "id": f"bloc-{i + 1}",
@@ -106,20 +161,30 @@ def split_document(text: str, chunk_size: int = _CHUNK_SIZE) -> list[dict[str, A
     return result
 
 
-def _targeted_gaps(verdict: dict[str, Any], rules: list[dict[str, Any]]) -> list[str]:
-    """Build the regeneration brief: judge gaps plus each uncovered rule.
+def _targeted_gaps(
+    verdict: dict[str, Any],
+    rules: list[dict[str, Any]],
+    *,
+    skip_rule_ids: set[str] | None = None,
+) -> list[str]:
+    """Build the regeneration brief: one entry per uncovered rule worth retrying.
 
     Naming the uncovered rules explicitly gives the generator something concrete
-    to aim at, which is what actually moves the coverage score up.
+    to aim at, which is what actually moves the coverage score up. Rules already
+    saturated with tests are skipped: piling more tests on them stopped helping.
     """
+    skip = skip_rule_ids or set()
     descriptions = {
         str(rule["id"]): str(rule.get("description", "")) for rule in rules if isinstance(rule, dict) and rule.get("id")
     }
-    gaps: list[str] = list(verdict.get("gaps") or [])
+    gaps: list[str] = []
     for rule_id in verdict.get("uncovered_rules") or []:
-        description = descriptions.get(str(rule_id))
+        key = str(rule_id)
+        if key in skip:
+            continue
+        description = descriptions.get(key)
         if description:
-            gaps.append(f"{rule_id}: {description}")
+            gaps.append(f"{key}: {description}")
     return gaps
 
 
@@ -301,7 +366,16 @@ class Orchestrator:
                 existing_tests=[],
                 test_id_offset=0,
             )
-            await self._state.add_or_update_tests(project_id, bloc_id, tests)
+            # The very first batch can already contain near duplicates across the
+            # generator batches, so it goes through the same merge policy.
+            first_merge = merge_tests(
+                [],
+                tests,
+                max_per_rule=settings.max_tests_per_rule,
+                similarity=settings.test_similarity_threshold,
+            )
+            tests = first_merge.tests
+            await self._state.replace_tests(project_id, bloc_id, tests)
             await self._git.commit(project_id, f"feat({bloc_id}): tests generated v1")
             await self._emit(
                 project_id, "bloc_step", {"bloc_id": bloc_id, "step": "tests_generated", "count": len(tests)}
@@ -390,9 +464,18 @@ class Orchestrator:
                 )
                 return
 
-            # Below threshold: regenerate, targeting the uncovered rules
+            # Below threshold: regenerate, targeting the uncovered rules that are
+            # not already saturated with tests.
             if pass_num < max_passes:
-                gaps = _targeted_gaps(verdict, rules)
+                saturated = saturated_rule_ids(current_tests, settings.max_tests_per_rule)
+                gaps = _targeted_gaps(verdict, rules, skip_rule_ids=saturated)
+                if not gaps:
+                    logger.info(
+                        "Bloc %s: every uncovered rule already carries %d tests, stopping early",
+                        bloc_id,
+                        settings.max_tests_per_rule,
+                    )
+                    break
                 await self._emit(
                     project_id,
                     "bloc_step",
@@ -411,7 +494,22 @@ class Orchestrator:
                     gaps=gaps,
                     test_id_offset=len(current_tests),
                 )
-                await self._state.add_or_update_tests(project_id, bloc_id, new_tests)
+                merge = merge_tests(
+                    current_tests,
+                    new_tests,
+                    max_per_rule=settings.max_tests_per_rule,
+                    similarity=settings.test_similarity_threshold,
+                )
+                if merge.dropped:
+                    logger.info(
+                        "Bloc %s pass %d: kept %d new tests, dropped %d duplicate(s) and %d over cap",
+                        bloc_id,
+                        pass_num,
+                        merge.added,
+                        merge.duplicates,
+                        merge.over_cap,
+                    )
+                await self._state.replace_tests(project_id, bloc_id, merge.tests)
                 await self._git.commit(project_id, f"feat({bloc_id}): tests regenerated after pass {pass_num}")
 
         # Threshold never reached: keep the best scoring version, not the last.

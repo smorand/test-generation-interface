@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from tgi.agents.orchestrator import split_document
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_split_empty_document() -> None:
@@ -64,3 +69,53 @@ def test_split_title_truncated_to_80() -> None:
     long_first = "x" * 200
     result = split_document(long_first)
     assert len(result[0]["title"]) <= 80
+
+
+def test_split_uses_markdown_headings_as_boundaries() -> None:
+    text = "# Titre A\n\nregle a\n\n# Titre B\n\nregle b"
+    blocs = split_document(text, chunk_size=20)
+    # Each section is its own bloc, and the title comes from the heading
+    assert [b["title"] for b in blocs] == ["Titre A", "Titre B"]
+
+
+def test_split_cuts_a_section_larger_than_the_budget() -> None:
+    """A single oversized section must still be cut, or no model could read it."""
+    big = "\n\n".join(f"paragraphe numero {i} avec du contenu" for i in range(60))
+    text = f"# Grande section\n\n{big}"
+    blocs = split_document(text, chunk_size=500, overlap=0)
+    assert len(blocs) > 1
+    assert all(len(b["chunk"]) <= 700 for b in blocs)
+
+
+def test_split_applies_overlap_only_on_forced_cuts() -> None:
+    big = "\n\n".join(f"phrase distincte numero {i}" for i in range(40))
+    text = f"# Section\n\n{big}"
+    with_overlap = split_document(text, chunk_size=400, overlap=120)
+    without = split_document(text, chunk_size=400, overlap=0)
+    # Overlap repeats the tail of the previous chunk, so total text grows
+    assert sum(len(b["chunk"]) for b in with_overlap) > sum(len(b["chunk"]) for b in without)
+
+
+def test_split_title_prefers_heading_over_overlap_tail() -> None:
+    big = "\n\n".join(f"contenu de paragraphe {i}" for i in range(40))
+    text = f"## Ma section\n\n{big}"
+    blocs = split_document(text, chunk_size=400, overlap=100)
+    # Every bloc of the section keeps a meaningful title, not a fragment
+    assert blocs[0]["title"] == "Ma section"
+    assert all(b["title"] for b in blocs)
+
+
+def test_split_title_skips_table_rows() -> None:
+    text = "colonne A | colonne B\n\nUne phrase de prose."
+    blocs = split_document(text, chunk_size=4000)
+    assert blocs[0]["title"] == "Une phrase de prose."
+
+
+def test_split_respects_configured_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "chunk_size", 100)
+    monkeypatch.setattr(settings, "chunk_overlap", 0)
+    text = "\n\n".join(f"paragraphe {i} un peu long pour depasser" for i in range(10))
+    blocs = split_document(text)
+    assert len(blocs) > 1

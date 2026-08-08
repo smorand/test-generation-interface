@@ -40,7 +40,8 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 ## Pipeline essentials
 
 Judge scores rule coverage (0 to 100, computed locally). Each pass is a scored
-version; the best one wins. Weak models need a large `TGI_MAX_OUTPUT_TOKENS` or
+version; the best one wins. Tests are deduplicated and capped per rule, and the
+splitter follows the document outline (tables read in document order). Weak models need a large `TGI_MAX_OUTPUT_TOKENS` or
 they are truncated before answering. `LLMJSONError` is an expected outcome: warn,
 never `logger.exception`. Full details and the measured numbers:
 `.agent_docs/pipeline.md` (read it before touching orchestrator, judge, or llm).

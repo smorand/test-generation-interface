@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # Rules per generation call. Covering dozens of rules at once produces a
     # very long JSON payload that the output budget cuts off, wasting the call.
     generator_batch_rules: int = 8
+    # Test set hygiene. Regeneration used to append without ever pruning, so a
+    # 49 rule bloc ended up with 270 tests, 40 percent near duplicates, while the
+    # score went down. 0 disables the cap.
+    # Document splitting. Blocs follow the document outline when available;
+    # chunk_overlap only applies where a section must be cut by paragraphs.
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+    max_tests_per_rule: int = 4
+    test_similarity_threshold: float = 0.9
 
     # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)
     logs: str | None = None

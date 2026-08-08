@@ -111,3 +111,51 @@ inter-process lock (flock) or a real database.
 
 Thresholds are passed to the template by the `partials/blocs` endpoint. Every
 bloc always shows a rerun button.
+
+## Test set hygiene (TGI_MAX_TESTS_PER_RULE, TGI_TEST_SIMILARITY_THRESHOLD)
+
+Regeneration used to append tests forever. Measured on a real 49 rule bloc: 127
+then 177 then 270 tests, 40 percent of them sharing a name with another test, one
+rule carrying 26 tests, and the score going 63 then 51 then 65. Paying calls for
+redundancy, not for coverage.
+
+`tgi.testset.merge_tests` now gates every insertion:
+
+- near duplicates are dropped, comparing normalized name plus description
+  (accents, case and punctuation removed) with a difflib ratio above
+  `TGI_TEST_SIMILARITY_THRESHOLD`, but only between tests targeting the same rule
+  ids: the same check against another rule is legitimate coverage,
+- a test is dropped when every rule it targets already carries
+  `TGI_MAX_TESTS_PER_RULE` tests,
+- a test whose id already exists replaces the previous one, keeping edits
+  idempotent.
+
+`saturated_rule_ids` additionally removes saturated rules from the regeneration
+brief, so the loop stops buying tests for a rule the judge keeps rejecting. When
+every uncovered rule is saturated the judge loop breaks early.
+
+Replayed on the real data: bloc of 39 rules 102 to 87 tests, bloc of 49 rules 270
+to 140 tests, maximum tests per rule 26 to 4.
+
+## Document splitting
+
+The parser preserves the document outline and the splitter follows it:
+
+- Word heading styles become markdown headings, matched on a trailing level digit
+  so template styles (`Heading 5`, `H3`, `Titre 2`) all work.
+- Paragraphs and tables are walked in **document order**. python-docx exposes
+  `doc.paragraphs` and `doc.tables` as two flat lists; emitting all tables at the
+  end detached specification tables from their heading and produced a single
+  144618 character heading-less blob on the reference document.
+- Paragraphs styled as hidden comments are skipped: 222 of them on the reference
+  document were being fed to the extractor as if they were specification.
+- Sections are merged while they fit `TGI_CHUNK_SIZE`; a section larger than that
+  is packed by paragraphs with `TGI_CHUNK_OVERLAP`. Overlap applies **only** to
+  those forced cuts, never at a heading boundary, because repeating text costs
+  duplicate rules.
+- A bloc title is its first heading, falling back to its first non table line, so
+  an overlap tail never surfaces as the title.
+
+Measured on the reference document, chunk size 4000: real mid sentence cuts fell
+from 76 to 51 percent, the largest bloc from 144618 to 4084 characters, and bloc
+titles became real section names.
