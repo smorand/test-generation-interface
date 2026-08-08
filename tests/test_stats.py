@@ -207,3 +207,37 @@ def test_build_report_starts_with_the_switch_line(tmp_path: Path) -> None:
     _write_otel(otel, [_chat_span(False), _span("judge", "ok", 3)])
     report = build_report(otel, tmp_path / "absent")
     assert report.startswith("Reasoning switch:")
+
+
+def test_read_spans_can_ignore_earlier_runs(tmp_path: Path) -> None:
+    """The trace file is appended across runs: one run must not count the others."""
+    otel = tmp_path / "otel.log"
+    old = _span("judge", "ok", 5)
+    old["start_time"] = 1_000
+    old["end_time"] = 2_000
+    recent = _span("judge", "ok", 5)
+    recent["start_time"] = 9_000
+    recent["end_time"] = 10_000
+    _write_otel(otel, [old, recent])
+
+    assert len(read_attempt_spans(otel)) == 2
+    assert len(read_attempt_spans(otel, since_ns=5_000)) == 1
+    assert read_attempt_spans(otel, since_ns=5_000)[0]["start_time"] == 9_000
+
+
+def test_switch_usage_can_ignore_earlier_runs(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    old = _chat_span(False)
+    old["start_time"] = 1_000
+    recent = _chat_span(True)
+    recent["start_time"] = 9_000
+    _write_otel(otel, [old, recent])
+
+    assert reasoning_switch_usage(otel) == {"sent": 1, "not_sent": 1}
+    assert reasoning_switch_usage(otel, since_ns=5_000) == {"sent": 1, "not_sent": 0}
+
+
+def test_read_spans_skips_records_without_a_start_time(tmp_path: Path) -> None:
+    otel = tmp_path / "otel.log"
+    _write_otel(otel, [{"name": "llm.json_attempt", "attributes": {"purpose": "judge", "outcome": "ok"}}])
+    assert read_attempt_spans(otel, since_ns=1) == []

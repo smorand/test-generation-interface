@@ -296,3 +296,16 @@ client build, and `tgi-validate` prints `TLS: verification DISABLED` in its verd
 Verified against a local HTTPS server with a self signed certificate: verification on
 fails with APIConnectionError, verification off connects, and passing the certificate
 as the bundle connects too.
+
+## One validation must not count the previous ones
+
+`tgi-validate` writes its traces to `TGI_LOGS`, which persists between runs, and the
+JSONL file is appended. Aggregating the whole file made every run inherit the spans of
+its predecessors: a second validation of a single bloc reported two extractor calls,
+and inflated waste rates and medians accordingly. Reported from the target
+infrastructure, where a run showed 17 calls for a 7 call workload.
+
+The run now stamps `time.time_ns()` before the pipeline starts and both
+`read_attempt_spans` and `reasoning_switch_usage` accept a `since_ns` window. History
+stays in the file, which is what `tgi-stats` wants, while a single validation reports
+only itself.

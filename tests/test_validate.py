@@ -284,3 +284,47 @@ def test_transport_failure_still_stops_early(monkeypatch: pytest.MonkeyPatch, tm
     assert any("unreachable" in p for p in result.problems)  # type: ignore[attr-defined]
     # The pipeline was not attempted
     assert not any("pipeline crashed" in p for p in result.problems)  # type: ignore[attr-defined]
+
+
+def test_measurements_ignore_a_previous_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Two validations share one trace file: the second must report only itself."""
+    import asyncio
+    import json as _json
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "logs", str(tmp_path))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    # Traces left by an earlier run, long before this one
+    (tmp_path / "tgi-validate-otel.log").write_text(
+        "\n".join(
+            _json.dumps(
+                {
+                    "name": "llm.json_attempt",
+                    "start_time": 1_000,
+                    "end_time": 2_000,
+                    "attributes": {"purpose": "extractor", "outcome": "truncation"},
+                }
+            )
+            for _ in range(9)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _models(self: object) -> list[dict[str, object]]:
+        return [{"id": "m"}]
+
+    async def _one_bloc(projects_dir: Path, client: object) -> tuple[dict[str, object], float]:
+        return {"blocs": [{"status": "done", "score": 90, "rules": [{"id": "R1"}], "tests": [{"id": "T1"}]}]}, 3.0
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _models)
+    monkeypatch.setattr("tgi.validate._run_sample", _one_bloc)
+    result = asyncio.run(validate())
+
+    # The 9 wasted attempts of the earlier run must not surface here
+    assert result.truncations == 0
+    assert result.waste_percent == 0.0
+    assert not any("extractor" in line for line in result.role_lines)

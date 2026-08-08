@@ -57,8 +57,13 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[index]
 
 
-def read_spans(otel_path: Path, name: str) -> list[dict[str, Any]]:
-    """Load spans of one name from an OTel JSONL export."""
+def read_spans(otel_path: Path, name: str, since_ns: int | None = None) -> list[dict[str, Any]]:
+    """Load spans of one name from an OTel JSONL export.
+
+    The file is appended across runs, so since_ns restricts the result to spans
+    started after a given point. Without it, one run's statistics would include
+    every previous run stored in the same file.
+    """
     spans: list[dict[str, Any]] = []
     if not otel_path.exists():
         return spans
@@ -71,24 +76,29 @@ def read_spans(otel_path: Path, name: str) -> list[dict[str, Any]]:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if record.get("name") == name:
-                spans.append(record)
+            if record.get("name") != name:
+                continue
+            if since_ns is not None:
+                start = record.get("start_time")
+                if not isinstance(start, int) or start < since_ns:
+                    continue
+            spans.append(record)
     return spans
 
 
-def read_attempt_spans(otel_path: Path) -> list[dict[str, Any]]:
+def read_attempt_spans(otel_path: Path, since_ns: int | None = None) -> list[dict[str, Any]]:
     """Load llm.json_attempt spans from an OTel JSONL export."""
-    return read_spans(otel_path, "llm.json_attempt")
+    return read_spans(otel_path, "llm.json_attempt", since_ns)
 
 
-def reasoning_switch_usage(otel_path: Path) -> dict[str, int]:
+def reasoning_switch_usage(otel_path: Path, since_ns: int | None = None) -> dict[str, int]:
     """Count calls that carried the reasoning off switch.
 
     Tells at a glance whether the switch actually reached the endpoint, which is
     the thing to check first when validating a new inference stack.
     """
     sent = not_sent = 0
-    for span in read_spans(otel_path, "llm.chat"):
+    for span in read_spans(otel_path, "llm.chat", since_ns):
         attributes = span.get("attributes") or {}
         if "thinking_disabled" not in attributes:
             continue

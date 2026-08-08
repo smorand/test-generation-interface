@@ -180,8 +180,17 @@ async def _run_sample(projects_dir: Path, client: LLMClient) -> tuple[dict[str, 
     return await state_manager.load(project_id), duration
 
 
-def _collect_measurements(result: ValidationResult, state: dict[str, Any], otel_path: Path) -> None:
-    """Fill the result from the run state and the traces it produced."""
+def _collect_measurements(
+    result: ValidationResult,
+    state: dict[str, Any],
+    otel_path: Path,
+    since_ns: int,
+) -> None:
+    """Fill the result from the run state and the traces this run produced.
+
+    since_ns matters: the trace file is appended across runs, so without it the
+    counts would mix in every earlier validation stored in the same file.
+    """
     blocs = state.get("blocs", [])
     result.blocs = len(blocs)
     for bloc in blocs:
@@ -192,8 +201,8 @@ def _collect_measurements(result: ValidationResult, state: dict[str, Any], otel_
         result.rules += len(bloc.get("rules", []))
         result.tests += len(bloc.get("tests", []))
 
-    result.switch_line = format_switch_line(reasoning_switch_usage(otel_path))
-    roles = aggregate_roles(read_attempt_spans(otel_path))
+    result.switch_line = format_switch_line(reasoning_switch_usage(otel_path, since_ns))
+    roles = aggregate_roles(read_attempt_spans(otel_path, since_ns))
     attempts = successes = 0
     for role in sorted(roles):
         stats = roles[role]
@@ -362,9 +371,10 @@ async def validate(keep: bool = False) -> ValidationResult:
     try:
         if await _check_endpoint(client, result):
             try:
+                started_ns = time.time_ns()
                 state, duration = await _run_sample(workdir / "projects", client)
                 result.duration_s = duration
-                _collect_measurements(result, state, otel_path)
+                _collect_measurements(result, state, otel_path, started_ns)
             except Exception as exc:  # reported in the verdict, not raised
                 result.error = f"{type(exc).__name__}: {exc}"
                 result.problems.append("The pipeline crashed on the sample document")
