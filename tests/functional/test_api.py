@@ -30,7 +30,7 @@ def app_settings(tmp_path: Path) -> Settings:
         app_name="test_tgi",
         projects_dir=str(tmp_path / "projects"),
         logs=str(tmp_path / "logs"),
-        ica_api_key="test-key",
+        llm_api_key="test-key",
     )
 
 

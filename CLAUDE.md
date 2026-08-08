@@ -4,7 +4,7 @@
 
 QA agent that turns a functional specification document (Word, PDF, text) into structured functional tests. It splits the doc into business blocs, extracts rules, generates JSON tests via LLM sub-agents, iterates with a judge that scores rule coverage, and exposes everything in a FastAPI + HTMX web interface with human-in-the-loop and local git versioning per project.
 
-Tech stack: Python 3.13, FastAPI, HTMX, OpenAI-compatible LLM client (ICA), pydantic-settings, Ruff, mypy, pytest, OpenTelemetry.
+Tech stack: Python 3.13, FastAPI, HTMX, OpenAI compatible LLM client, pydantic-settings, Ruff, mypy, pytest, OpenTelemetry.
 
 ## Key Commands
 
@@ -31,7 +31,7 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 - `src/tgi/tracing.py` : OpenTelemetry tracing, JSONL export (`configure_tracing`, `trace_span`)
 - `src/tgi/agents/orchestrator.py` : pipeline coordinator, `split_document`, SSE queues
 - `src/tgi/agents/{extractor,generator,judge,planner}.py` : LLM sub-agents (fresh context per call)
-- `src/tgi/services/llm.py` : async ICA/OpenAI client with JSON extraction, retry, tracing
+- `src/tgi/services/llm.py` : async OpenAI compatible client with JSON extraction, retry, tracing
 - `src/tgi/services/doc_parser.py` : Word/PDF/text parsing
 - `src/tgi/services/git_service.py` : async git per project (asyncio.Lock)
 - `src/tgi/services/state_manager.py` : JSON state persistence

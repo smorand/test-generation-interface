@@ -137,13 +137,13 @@ def test_placeholder_key_is_reported_with_the_fix(monkeypatch: pytest.MonkeyPatc
     from tgi.config import settings
     from tgi.validate import validate
 
-    monkeypatch.setattr(settings, "ica_api_key", "changeme")
+    monkeypatch.setattr(settings, "llm_api_key", "changeme")
 
     async def _unreachable(self: object) -> list[dict[str, object]]:
         raise RuntimeError("401 unauthorized")
 
     monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unreachable)
     result = asyncio.run(validate())
-    assert any("TGI_ICA_API_KEY" in p for p in result.problems)
+    assert any("TGI_LLM_API_KEY" in p for p in result.problems)
     assert any(".env" in a for a in result.advice)
     assert result.ok is False

@@ -18,7 +18,7 @@ test-generation-interface/
 │   │   ├── judge.py            # Coverage validation
 │   │   └── planner.py          # Complex instruction decomposition
 │   ├── services/
-│   │   ├── llm.py              # ICA/OpenAI async client (traced)
+│   │   ├── llm.py              # OpenAI compatible async client (traced)
 │   │   ├── doc_parser.py       # Word/PDF/text parsing
 │   │   ├── git_service.py      # Async git with asyncio.Lock
 │   │   └── state_manager.py    # JSON state persistence
@@ -34,7 +34,7 @@ test-generation-interface/
 ```bash
 # Copy environment config
 cp .env.example .env
-# Edit .env: set TGI_ICA_API_KEY (the sk-... model key from ICA)
+# Edit .env: set TGI_LLM_BASE_URL and TGI_LLM_API_KEY
 
 # Install with uv
 make sync
@@ -66,8 +66,8 @@ All variables use the `TGI_` prefix.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TGI_ICA_BASE_URL` | `https://api.nextgen-beta.ica.ibm.com/ica/v1` | ICA API endpoint |
-| `TGI_ICA_API_KEY` | — | Bearer token (required) |
+| `TGI_LLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI compatible endpoint |
+| `TGI_LLM_API_KEY` | — | Bearer token, any non empty value if the server needs none |
 | `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
 | `TGI_MODEL_JUDGE` | `gemma-4-26b-a4b-it` | LLM for coverage evaluation |
 | `TGI_MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |
@@ -183,7 +183,7 @@ It is **off by default**, because that field is not part of the OpenAI standard 
 some gateways reject it. Turn it on once the target endpoint is known to accept it,
 then confirm on the wire with `uv run python -m tgi.stats`, whose first line reports
 whether the switch was sent on every call, never sent, or sent then dropped after a
-refusal. Endpoints that validate parameters and refuse it (ICA/litellm in front
+refusal. Endpoints that validate parameters and refuse it (a litellm gateway in front
 of Bedrock answers `chat_template_kwargs: Extra inputs are not permitted`) are
 detected on the first call, and the switch is then dropped for the rest of the
 process.

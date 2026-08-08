@@ -172,14 +172,14 @@ The default is **off**: that field is not part of the OpenAI standard, and the
 target infrastructure may reject it. Enable it only after validating the endpoint.
 `tgi.stats` reports on its first line whether the switch was sent on every call,
 never sent, or sent and then dropped after a refusal, which makes that validation a
-single command. Both modes were exercised against ICA: with the switch off the
+single command. Both modes were exercised against a litellm gateway: with the switch off the
 bloc completed normally, and with it on the first calls were refused, the switch
 was dropped, and the bloc still completed.
 
 Gateways that validate parameters reject it with wildly different wording, so
 detection keys on the parameter name appearing in the error, not on any phrasing.
-Measured rejections: litellm in front of Gemini says "does not support
-parameters", ICA in front of Bedrock Claude says "chat_template_kwargs: Extra
+Measured rejections: a litellm gateway in front of Gemini says "does not support
+parameters", the same gateway in front of Bedrock Claude says "chat_template_kwargs: Extra
 inputs are not permitted". On the first rejection the switch is dropped for the
 rest of the process and the call is retried immediately.
 
@@ -187,7 +187,7 @@ Known limitation: blocs start in parallel, so up to `TGI_MAX_PARALLEL_BLOCS` fir
 calls can each pay one rejection before the flag flips. It happens once per
 process and is bounded.
 
-Measured on ICA: gemma ignores the switch (it is served through litellm to Gemini
+Measured behind a litellm gateway: gemma ignores the switch (it is served through litellm to Gemini
 and keeps reasoning), so a reasoning model reached through a gateway that strips
 the parameter cannot be sped up from the client side. That is an endpoint
 limitation, not an application one.

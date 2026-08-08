@@ -24,8 +24,8 @@ The client always speaks the OpenAI compatible API, so any server exposing
 `/v1/chat/completions` works (vLLM, SGLang, a gateway).
 
 ```bash
-export TGI_ICA_BASE_URL="http://your-inference-server:8000/v1"
-export TGI_ICA_API_KEY="whatever-the-server-expects"   # any non empty value if it needs none
+export TGI_LLM_BASE_URL="http://your-inference-server:8000/v1"
+export TGI_LLM_API_KEY="whatever-the-server-expects"   # any non empty value if it needs none
 ```
 
 ## 3. Validate

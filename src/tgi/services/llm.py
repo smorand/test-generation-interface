@@ -1,4 +1,4 @@
-"""LLM client for ICA API (OpenAI-compatible)."""
+"""LLM client for any OpenAI compatible endpoint."""
 
 from __future__ import annotations
 
@@ -206,14 +206,14 @@ def _is_unsupported_param_error(exc: Exception) -> bool:
 
 
 class LLMClient:
-    """Async ICA/OpenAI client with JSON extraction and retry logic."""
+    """Async OpenAI compatible client with JSON extraction and retry logic."""
 
     __slots__ = ("_client", "_model_cache", "_thinking_switch_supported")
 
     def __init__(self) -> None:
         self._client = AsyncOpenAI(
-            api_key=settings.ica_api_key,
-            base_url=settings.ica_base_url,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
         )
         self._model_cache: dict[str, Any] | None = None
         # Assume the switch is accepted until an endpoint proves otherwise.
@@ -409,7 +409,7 @@ class LLMClient:
         if self._model_cache is not None:
             return list(self._model_cache.values())
 
-        with trace_span("api.list_models", {"endpoint": f"{settings.ica_base_url}/models", "method": "GET"}):
+        with trace_span("api.list_models", {"endpoint": f"{settings.llm_base_url}/models", "method": "GET"}):
             page = await self._client.models.list()
 
         models: list[dict[str, Any]] = []

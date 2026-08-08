@@ -89,7 +89,7 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
     except Exception as exc:  # reported in the verdict, not raised
         result.error = f"{type(exc).__name__}: {exc}"
         result.problems.append("Endpoint unreachable or credentials refused")
-        result.advice.append("Check TGI_ICA_BASE_URL and TGI_ICA_API_KEY")
+        result.advice.append("Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY")
         return False
     result.reachable = True
     result.models_visible = len(models)
@@ -260,13 +260,13 @@ async def validate(keep: bool = False) -> ValidationResult:
     result = ValidationResult(
         model_generator=settings.model_generator,
         model_judge=settings.model_judge,
-        endpoint=settings.ica_base_url,
+        endpoint=settings.llm_base_url,
     )
     for problem in settings.configuration_problems():
         result.problems.append(problem)
         result.advice.append(
             "Run from the directory holding your .env (uv run reads it from the current directory), "
-            "or export TGI_ICA_BASE_URL and TGI_ICA_API_KEY"
+            "or export TGI_LLM_BASE_URL and TGI_LLM_API_KEY"
         )
 
     try:

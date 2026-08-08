@@ -4,12 +4,54 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 # Value that means "nothing was configured", reported instead of failing silently.
 _PLACEHOLDER_API_KEY = "changeme"
+
+# Variables renamed to drop a vendor specific term. Old names are ignored by
+# pydantic-settings, so they are reported rather than silently dropped.
+_RENAMED_VARIABLES = {
+    "TGI_ICA_BASE_URL": "TGI_LLM_BASE_URL",
+    "TGI_ICA_API_KEY": "TGI_LLM_API_KEY",
+}
+
+
+def _env_file_keys(env_file: Path) -> set[str]:
+    """Names assigned in a .env file, ignoring comments and blank lines."""
+    if not env_file.is_file():
+        return set()
+    keys: set[str] = set()
+    try:
+        content = env_file.read_text(encoding="utf-8")
+    except OSError:
+        return keys
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        keys.add(line.split("=", 1)[0].strip())
+    return keys
+
+
+def _renamed_variable_problems(environment: Mapping[str, str], env_file: Path | None = None) -> list[str]:
+    """Report configuration still set under a name that is no longer read.
+
+    Checks the process environment and the .env file, since an old name in either
+    place is simply ignored and would leave the defaults in force.
+    """
+    declared = set(_env_file_keys(env_file)) if env_file else set()
+    problems: list[str] = []
+    for old, new in _RENAMED_VARIABLES.items():
+        location = "environment" if environment.get(old) else (".env" if old in declared else None)
+        if location:
+            problems.append(f"{old} is set in the {location} but ignored, rename it to {new}")
+    return problems
 
 
 def default_log_dir(app_name: str, *, is_windows: bool, local_app_data: str | None) -> Path:
@@ -25,10 +67,10 @@ def default_log_dir(app_name: str, *, is_windows: bool, local_app_data: str | No
 
 
 class Settings(BaseSettings):
-    """Load configuration from environment variables or .env file.
+    """Load configuration from environment variables or a .env file.
 
-    Uses the TGI_ prefix to avoid collisions with IBM shell env vars
-    (ICA_BASE_URL, ICA_API_KEY) that point to different endpoints.
+    Every name carries the TGI_ prefix so it cannot collide with the vendor
+    specific variables a shell may already export for another endpoint.
     """
 
     model_config = SettingsConfigDict(
@@ -40,8 +82,9 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "tgi"
-    ica_base_url: str = "https://api.nextgen-beta.ica.ibm.com/ica/v1"
-    ica_api_key: str = _PLACEHOLDER_API_KEY
+    # Any OpenAI compatible endpoint: vLLM, SGLang, a gateway, a hosted API.
+    llm_base_url: str = "http://localhost:8000/v1"
+    llm_api_key: str = _PLACEHOLDER_API_KEY
     model_generator: str = "gemma-4-26b-a4b-it"
     model_judge: str = "gemma-4-26b-a4b-it"
     max_judge_passes: int = 3
@@ -97,11 +140,12 @@ class Settings(BaseSettings):
         confusing 401 later.
         """
         problems: list[str] = []
-        if self.ica_api_key == _PLACEHOLDER_API_KEY:
+        if self.llm_api_key == _PLACEHOLDER_API_KEY:
             problems.append(
-                "TGI_ICA_API_KEY is still the placeholder: no .env was found in the current "
+                "TGI_LLM_API_KEY is still the placeholder: no .env was found in the current "
                 "directory, and no environment variable is set"
             )
+        problems.extend(_renamed_variable_problems(os.environ, Path(".env")))
         return problems
 
     @property

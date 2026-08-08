@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tgi.config import Settings, settings
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_settings_defaults() -> None:
@@ -71,22 +75,53 @@ def test_default_log_dir_windows_without_localappdata() -> None:
 
 
 def test_explicit_logs_setting_wins() -> None:
-    assert Settings(app_name="tgi", ica_api_key="k", logs="/var/log/tgi").log_dir == Path("/var/log/tgi")
+    assert Settings(app_name="tgi", llm_api_key="k", logs="/var/log/tgi").log_dir == Path("/var/log/tgi")
 
 
 def test_log_dir_default_matches_the_platform_helper() -> None:
     from tgi.config import default_log_dir
 
     expected = default_log_dir("tgi", is_windows=os.name == "nt", local_app_data=os.environ.get("LOCALAPPDATA"))
-    assert Settings(app_name="tgi", ica_api_key="k").log_dir == expected
+    assert Settings(app_name="tgi", llm_api_key="k").log_dir == expected
 
 
 def test_configuration_problems_flags_the_placeholder_key() -> None:
     """Launching outside the .env directory must not fail silently later on."""
-    problems = Settings(ica_api_key="changeme").configuration_problems()
+    problems = Settings(llm_api_key="changeme").configuration_problems()
     assert len(problems) == 1
-    assert "TGI_ICA_API_KEY" in problems[0]
+    assert "TGI_LLM_API_KEY" in problems[0]
 
 
 def test_configuration_problems_empty_when_configured() -> None:
-    assert Settings(ica_api_key="sk-real-key").configuration_problems() == []
+    assert Settings(llm_api_key="sk-real-key").configuration_problems() == []
+
+
+def test_renamed_variables_are_reported_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An old vendor specific name is ignored, so it must be called out."""
+    from tgi.config import _renamed_variable_problems
+
+    problems = _renamed_variable_problems({"TGI_ICA_API_KEY": "sk-old"})
+    assert len(problems) == 1
+    assert "TGI_ICA_API_KEY" in problems[0]
+    assert "TGI_LLM_API_KEY" in problems[0]
+    assert "environment" in problems[0]
+
+
+def test_renamed_variables_are_reported_from_the_env_file(tmp_path: Path) -> None:
+    from tgi.config import _renamed_variable_problems
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("# commentaire\nTGI_ICA_BASE_URL=http://old\nTGI_MODEL_JUDGE=m\n", encoding="utf-8")
+    problems = _renamed_variable_problems({}, env_file)
+    assert len(problems) == 1
+    assert "TGI_LLM_BASE_URL" in problems[0]
+    assert ".env" in problems[0]
+
+
+def test_no_renamed_variable_no_problem(tmp_path: Path) -> None:
+    from tgi.config import _renamed_variable_problems
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("TGI_LLM_BASE_URL=http://new\nTGI_LLM_API_KEY=sk-new\n", encoding="utf-8")
+    assert _renamed_variable_problems({}, env_file) == []
+    assert _renamed_variable_problems({}, tmp_path / "absent") == []
