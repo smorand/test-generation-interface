@@ -227,3 +227,60 @@ def test_authentication_error_still_blames_the_credentials(monkeypatch: pytest.M
     monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unauthorized)
     result = asyncio.run(validate())
     assert result.advice == ["Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY"]
+
+
+def _no_models_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: Exception) -> object:
+    """Endpoint that answers on chat but fails on /models."""
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "logs", str(tmp_path))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    async def _fails(self: object) -> list[dict[str, object]]:
+        raise error
+
+    async def _crash_pipeline(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("pipeline not exercised in this test")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _fails)
+    monkeypatch.setattr("tgi.validate._run_sample", _crash_pipeline)
+    return asyncio.run(validate())
+
+
+def test_404_on_models_does_not_block_the_validation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A router that answers but exposes no model list is reachable, not blocked.
+
+    Reported from the target infrastructure: gating on /models declared a working
+    gateway unusable.
+    """
+    result = _no_models_endpoint(monkeypatch, tmp_path, RuntimeError("NotFoundError: 404 page not found"))
+
+    assert result.reachable is True  # type: ignore[attr-defined]
+    assert result.models_visible is None  # type: ignore[attr-defined]
+    assert "404" in (result.model_discovery_error or "")  # type: ignore[attr-defined]
+    # It went on to the real test instead of stopping
+    assert any("pipeline crashed" in p for p in result.problems)  # type: ignore[attr-defined]
+    advice = " ".join(result.advice)  # type: ignore[attr-defined]
+    assert "does not expose /models" in advice
+    assert "TGI_MODEL_GENERATOR" in advice
+    # And the verdict says so plainly
+    assert "not listed by this endpoint" in format_verdict(result)  # type: ignore[arg-type]
+
+
+def test_401_on_models_still_stops_early(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Only the 404 case is benign: a refused key must fail fast, not run the pipeline."""
+    result = _no_models_endpoint(monkeypatch, tmp_path, RuntimeError("AuthenticationError: 401 forbidden on /models"))
+    assert result.reachable is False  # type: ignore[attr-defined]
+    assert not any("pipeline crashed" in p for p in result.problems)  # type: ignore[attr-defined]
+
+
+def test_transport_failure_still_stops_early(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No point running the pipeline when nothing reaches the service."""
+    result = _no_models_endpoint(monkeypatch, tmp_path, RuntimeError("APIConnectionError: Connection error."))
+    assert result.reachable is False  # type: ignore[attr-defined]
+    assert any("unreachable" in p for p in result.problems)  # type: ignore[attr-defined]
+    # The pipeline was not attempted
+    assert not any("pipeline crashed" in p for p in result.problems)  # type: ignore[attr-defined]

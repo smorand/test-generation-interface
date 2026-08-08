@@ -55,6 +55,7 @@ class ValidationResult:
     model_judge: str
     endpoint: str
     models_visible: int | None = None
+    model_discovery_error: str | None = None
     reachable: bool = False
     error: str | None = None
     blocs: int = 0
@@ -88,14 +89,30 @@ class ValidationResult:
 
 
 async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
-    """Confirm the endpoint answers and report how many models it exposes."""
+    """Confirm the endpoint answers and report how many models it exposes.
+
+    A 404 on /models means the gateway works but does not expose the model list,
+    which is common: warn and carry on to the real test. Anything else still stops
+    the run, so a refused key or an unreachable host fails fast.
+    """
     try:
         models = await client.list_models()
     except Exception as exc:  # reported in the verdict, not raised
-        result.error = f"{type(exc).__name__}: {exc}"
+        error_text = f"{type(exc).__name__}: {exc}"
+        if "404" in error_text or "not found" in error_text.lower():
+            logger.warning("Endpoint does not expose /models: %s", error_text)
+            result.reachable = True
+            result.model_discovery_error = error_text
+            result.advice.append(
+                "The endpoint does not expose /models, so model ids cannot be checked here: make sure "
+                "TGI_MODEL_GENERATOR and TGI_MODEL_JUDGE are exactly what the server expects"
+            )
+            return True
+        result.error = error_text
         result.problems.append("Endpoint unreachable or credentials refused")
         result.advice.extend(_connection_advice(exc, result.endpoint))
         return False
+
     result.reachable = True
     result.models_visible = len(models)
     known = {str(m.get("id", "")) for m in models}
@@ -103,6 +120,18 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
         if known and model not in known:
             result.advice.append(f"The {label} model {model} is not listed by the endpoint, check its exact id")
     return True
+
+
+def _looks_like_transport_failure(exc: Exception) -> bool:
+    """True when the request never got an HTTP response.
+
+    Anything else means the service replied, which is what matters here.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in ("connection error", "connecterror", "timeout", "ssl", "certificate", "getaddrinfo")
+    )
 
 
 def _connection_advice(exc: Exception, endpoint: str) -> list[str]:
@@ -113,11 +142,7 @@ def _connection_advice(exc: Exception, endpoint: str) -> list[str]:
     the corporate certificate authority.
     """
     text = f"{type(exc).__name__}: {exc}".lower()
-    transport = any(
-        marker in text
-        for marker in ("connection error", "connecterror", "timeout", "ssl", "certificate", "getaddrinfo")
-    )
-    if not transport:
+    if not _looks_like_transport_failure(exc):
         return ["Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY"]
 
     advice = [
@@ -223,17 +248,20 @@ def _judge_the_results(result: ValidationResult) -> None:
         )
 
 
-def format_verdict(result: ValidationResult) -> str:
-    """Human readable report ending with a go / no go line."""
-    lines: list[str] = []
-    lines.append("=" * 72)
-    lines.append("TGI model validation")
-    lines.append("=" * 72)
-    lines.append(f"endpoint   : {result.endpoint}")
-    lines.append(f"generator  : {result.model_generator}")
-    lines.append(f"judge      : {result.model_judge}")
+def _header_lines(result: ValidationResult) -> list[str]:
+    """Identity of the run: endpoint, models, TLS, and why it stopped if it did."""
+    lines = [
+        "=" * 72,
+        "TGI model validation",
+        "=" * 72,
+        f"endpoint   : {result.endpoint}",
+        f"generator  : {result.model_generator}",
+        f"judge      : {result.model_judge}",
+    ]
     if result.models_visible is not None:
         lines.append(f"models seen: {result.models_visible}")
+    elif result.model_discovery_error:
+        lines.append(f"models seen: not listed by this endpoint ({result.model_discovery_error})")
     if not settings.llm_verify_ssl:
         lines.append("TLS        : verification DISABLED (TGI_LLM_VERIFY_SSL=false)")
     elif settings.llm_ca_bundle:
@@ -241,32 +269,40 @@ def format_verdict(result: ValidationResult) -> str:
     if not result.reachable:
         lines.append(f"error      : {result.error}")
     lines.append("")
+    return lines
 
-    if result.reachable and result.blocs:
-        lines.append(result.switch_line)
-        lines.append("")
+
+def _measurement_lines(result: ValidationResult) -> list[str]:
+    """What the sample run measured, empty when it never ran."""
+    if not (result.reachable and result.blocs):
+        return []
+    lines = [
+        result.switch_line,
+        "",
+        f"Sample run : {result.blocs} bloc(s) in {result.duration_s:.0f} s ({result.seconds_per_bloc:.0f} s per bloc)",
+        f"Projection : about {result.projected_hours:.1f} h for a {_REFERENCE_DOCUMENT_BLOCS} bloc "
+        f"document at {settings.max_parallel_blocs} blocs in parallel",
+        "Statuses   : " + ", ".join(f"{k}={v}" for k, v in sorted(result.statuses.items())),
+    ]
+    if result.scores:
         lines.append(
-            f"Sample run : {result.blocs} bloc(s) in {result.duration_s:.0f} s "
-            f"({result.seconds_per_bloc:.0f} s per bloc)"
+            f"Coverage   : median {statistics.median(result.scores):.0f}%  "
+            f"min {min(result.scores)}%  max {max(result.scores)}%"
         )
-        lines.append(
-            f"Projection : about {result.projected_hours:.1f} h for a {_REFERENCE_DOCUMENT_BLOCS} bloc "
-            f"document at {settings.max_parallel_blocs} blocs in parallel"
-        )
-        statuses = ", ".join(f"{k}={v}" for k, v in sorted(result.statuses.items()))
-        lines.append(f"Statuses   : {statuses}")
-        if result.scores:
-            lines.append(
-                f"Coverage   : median {statistics.median(result.scores):.0f}%  "
-                f"min {min(result.scores)}%  max {max(result.scores)}%"
-            )
-        ratio = result.tests / result.rules if result.rules else 0.0
-        lines.append(f"Output     : {result.rules} rules, {result.tests} tests ({ratio:.1f} tests per rule)")
-        lines.append(f"Wasted     : {result.waste_percent:.0f}% of calls, {result.truncations} truncated")
-        lines.append("")
-        lines.append("Per role:")
-        lines.extend(result.role_lines)
-        lines.append("")
+    ratio = result.tests / result.rules if result.rules else 0.0
+    lines.append(f"Output     : {result.rules} rules, {result.tests} tests ({ratio:.1f} tests per rule)")
+    lines.append(f"Wasted     : {result.waste_percent:.0f}% of calls, {result.truncations} truncated")
+    lines.append("")
+    lines.append("Per role:")
+    lines.extend(result.role_lines)
+    lines.append("")
+    return lines
+
+
+def format_verdict(result: ValidationResult) -> str:
+    """Human readable report ending with a go / no go line."""
+    lines = _header_lines(result)
+    lines.extend(_measurement_lines(result))
 
     if result.problems:
         lines.append("Problems:")

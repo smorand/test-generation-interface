@@ -126,6 +126,11 @@ Quick check outside the application, same machine:
 curl.exe -v "$env:TGI_LLM_BASE_URL/models" -H "Authorization: Bearer $env:TGI_LLM_API_KEY"
 ```
 
+**`models seen: not listed by this endpoint`.** The gateway answered but does not
+expose `/models`, which is common for a router. The run continues; just make sure
+`TGI_MODEL_GENERATOR` and `TGI_MODEL_JUDGE` are exactly the ids the server expects,
+since they cannot be checked automatically.
+
 **Judge returns no score.** The model cannot hold the judging contract. Lower
 `TGI_JUDGE_BATCH_RULES` (default 10) so each call covers fewer rules, or use a
 different model for judging only:
