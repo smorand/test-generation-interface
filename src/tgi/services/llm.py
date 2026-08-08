@@ -177,10 +177,25 @@ def _correction_prompt(
     )
 
 
+# Documented switch for hybrid reasoning models served by vLLM or SGLang.
+_THINKING_SWITCH_PARAM = "chat_template_kwargs"
+_NO_THINKING_BODY: dict[str, Any] = {_THINKING_SWITCH_PARAM: {"enable_thinking": False}}
+
+
+def _is_unsupported_param_error(exc: Exception) -> bool:
+    """True when the endpoint rejected the switch we sent.
+
+    Gateways word this differently (litellm says "does not support parameters",
+    Bedrock says "Extra inputs are not permitted"), so the reliable signal is the
+    parameter name coming back in the error rather than any particular phrasing.
+    """
+    return _THINKING_SWITCH_PARAM in str(exc).lower()
+
+
 class LLMClient:
     """Async ICA/OpenAI client with JSON extraction and retry logic."""
 
-    __slots__ = ("_client", "_model_cache")
+    __slots__ = ("_client", "_model_cache", "_thinking_switch_supported")
 
     def __init__(self) -> None:
         self._client = AsyncOpenAI(
@@ -188,6 +203,8 @@ class LLMClient:
             base_url=settings.ica_base_url,
         )
         self._model_cache: dict[str, Any] | None = None
+        # Assume the switch is accepted until an endpoint proves otherwise.
+        self._thinking_switch_supported = True
 
     async def chat(
         self,
@@ -222,16 +239,42 @@ class LLMClient:
         on a tight output budget.
         """
         budget = max_tokens if max_tokens is not None else settings.max_output_tokens
-        with trace_span("llm.chat", {"model": model, "max_tokens": budget}):
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=temperature,
-                max_tokens=budget,
-            )
+        send_switch = settings.disable_thinking and self._thinking_switch_supported
+        extra_body = dict(_NO_THINKING_BODY) if send_switch else None
+        with trace_span(
+            "llm.chat",
+            {"model": model, "max_tokens": budget, "thinking_disabled": bool(send_switch)},
+        ):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=temperature,
+                    max_tokens=budget,
+                    extra_body=extra_body,
+                )
+            except Exception as exc:
+                if not send_switch or not _is_unsupported_param_error(exc):
+                    raise
+                # This endpoint validates parameters and refuses the switch. Stop
+                # sending it instead of failing every call from now on.
+                logger.warning(
+                    "Endpoint rejects the thinking switch, disabling it for this process: %s",
+                    str(exc)[:200],
+                )
+                self._thinking_switch_supported = False
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=temperature,
+                    max_tokens=budget,
+                )
         choice = response.choices[0]
         msg = choice.message
         # Gemma 4 (and other reasoning models via ICA) may return content=None

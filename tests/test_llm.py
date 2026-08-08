@@ -354,3 +354,93 @@ async def test_truncation_wins_over_shape_error() -> None:
     assert result == {"covered_rules": ["R1"]}
     assert "cut off" in seen[1]
     assert "Do NOT reason" in seen[1]
+
+
+async def test_thinking_switch_is_sent_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hybrid reasoning models (Qwen3.6) think by default: the switch must be sent."""
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", True)
+    seen: list[Any] = []
+
+    class _RecordingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs.get("extra_body"))
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _RecordingCompletions([_FakeResponse(_FakeMessage("hi"))])
+    client._client = fake  # type: ignore[assignment]
+
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen == [{"chat_template_kwargs": {"enable_thinking": False}}]
+
+
+async def test_thinking_switch_omitted_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", False)
+    seen: list[Any] = []
+
+    class _RecordingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs.get("extra_body"))
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _RecordingCompletions([_FakeResponse(_FakeMessage("hi"))])
+    client._client = fake  # type: ignore[assignment]
+
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen == [None]
+
+
+async def test_thinking_switch_dropped_once_endpoint_rejects_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway that validates parameters must not break every call."""
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", True)
+    seen: list[Any] = []
+
+    class _RejectingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs.get("extra_body"))
+            if kwargs.get("extra_body") is not None:
+                raise RuntimeError(
+                    '400 - BedrockException: {"message":"chat_template_kwargs: Extra inputs are not permitted"}'
+                )
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _RejectingCompletions([_FakeResponse(_FakeMessage("ok"))])
+    client._client = fake  # type: ignore[assignment]
+
+    # First call retries without the switch and succeeds
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "ok"
+    assert seen == [{"chat_template_kwargs": {"enable_thinking": False}}, None]
+
+    # The switch is not attempted again
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[-1] is None
+    assert len(seen) == 3
+
+
+async def test_other_api_errors_still_propagate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", True)
+
+    class _FailingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            raise RuntimeError("503 service unavailable")
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _FailingCompletions([])
+    client._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="503"):
+        await client.chat(model="m", system_prompt="s", user_content="u")

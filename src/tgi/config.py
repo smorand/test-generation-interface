@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # tokens thinking before answering, so a small budget truncates them mid
     # thought and yields no JSON at all.
     max_output_tokens: int = 16000
+    # Reasoning control. Qwen3.6 and other hybrid models think by default, which
+    # costs thousands of output tokens per call and truncates JSON answers. The
+    # documented switch is chat_template_kwargs.enable_thinking on vLLM/SGLang.
+    # Endpoints that reject the parameter are detected once and it is then
+    # dropped for the rest of the process.
+    disable_thinking: bool = True
     llm_json_retries: int = 5
     projects_dir: str = "./projects"
 

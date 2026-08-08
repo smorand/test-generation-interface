@@ -60,6 +60,7 @@ All variables use the `TGI_` prefix.
 | `TGI_MAX_JUDGE_PASSES` | `3` | Max judge/generator iterations per bloc |
 | `TGI_MAX_PARALLEL_BLOCS` | `5` | Max blocs processed in parallel |
 | `TGI_LLM_JSON_RETRIES` | `5` | Retries when the model returns no usable JSON |
+| `TGI_DISABLE_THINKING` | `true` | Send the vLLM/SGLang switch turning reasoning off |
 | `TGI_JUDGE_SCORE_MODE` | `coverage` | `coverage` (computed locally) or `llm` (self-reported) |
 | `TGI_JUDGE_PASS_SCORE` | `80` | Score at or above which a bloc is accepted (green) |
 | `TGI_JUDGE_BAD_SCORE` | `40` | Score below which coverage is flagged as poor (red) |
@@ -143,6 +144,29 @@ without failing the bloc:
 > A reasoning model needs a large `TGI_MAX_OUTPUT_TOKENS`: it spends thousands of
 > tokens thinking before answering. With a budget that is too small it is cut off
 > mid thought and returns no JSON at all.
+
+### Reasoning models
+
+Hybrid models think before answering, which this pipeline never wants: reasoning
+burns the output budget and leaves no JSON. `TGI_DISABLE_THINKING` sends the
+documented vLLM and SGLang switch `chat_template_kwargs.enable_thinking=false` on
+every call. Endpoints that validate parameters and refuse it (ICA/litellm in front
+of Bedrock answers `chat_template_kwargs: Extra inputs are not permitted`) are
+detected on the first call, and the switch is then dropped for the rest of the
+process.
+
+Known behaviour of `Qwen3.6-27B`, the intended production model:
+
+- thinking is **on by default**, and the Qwen3 `/no_think` soft switch was removed
+  in 3.6, so the chat template flag is the only way to turn it off
+- reported reasoning cost ranges from about 3.5k to 39k output tokens per answer
+- serve it with `--reasoning-parser qwen3`; to keep structured output while
+  reasoning stays on, vLLM also needs
+  `--structured-outputs-config.enable_in_reasoning=True`
+- the hosted Qwen API does not support structured output in thinking mode
+
+Sources: the Qwen3.6-27B model card and the vLLM structured output and reasoning
+documentation.
 
 ### Measured behaviour (gemma-4-26b-a4b-it, real 4000 character spec bloc)
 

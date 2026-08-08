@@ -159,3 +159,26 @@ The parser preserves the document outline and the splitter follows it:
 Measured on the reference document, chunk size 4000: real mid sentence cuts fell
 from 76 to 51 percent, the largest bloc from 144618 to 4084 characters, and bloc
 titles became real section names.
+
+## Reasoning switch (TGI_DISABLE_THINKING)
+
+Reasoning is pure cost here: the pipeline wants JSON, not deliberation. Every call
+carries `chat_template_kwargs={"enable_thinking": false}`, the switch documented
+for vLLM and SGLang, which is what `Qwen3.6-27B` needs since it thinks by default
+and dropped the `/no_think` soft switch.
+
+Gateways that validate parameters reject it with wildly different wording, so
+detection keys on the parameter name appearing in the error, not on any phrasing.
+Measured rejections: litellm in front of Gemini says "does not support
+parameters", ICA in front of Bedrock Claude says "chat_template_kwargs: Extra
+inputs are not permitted". On the first rejection the switch is dropped for the
+rest of the process and the call is retried immediately.
+
+Known limitation: blocs start in parallel, so up to `TGI_MAX_PARALLEL_BLOCS` first
+calls can each pay one rejection before the flag flips. It happens once per
+process and is bounded.
+
+Measured on ICA: gemma ignores the switch (it is served through litellm to Gemini
+and keeps reasoning), so a reasoning model reached through a gateway that strips
+the parameter cannot be sped up from the client side. That is an endpoint
+limitation, not an application one.
