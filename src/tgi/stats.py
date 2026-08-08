@@ -16,9 +16,12 @@ import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tgi.config import settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _NS_PER_S = 1_000_000_000
 # A trend needs at least a first and a last score to compare
@@ -248,12 +251,53 @@ def format_report(roles: dict[str, RoleStats], blocs: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_report(otel_path: Path, projects_dir: Path) -> str:
-    """Compute the full report from an OTel log and a projects directory."""
-    roles = aggregate_roles(read_attempt_spans(otel_path))
+def resolve_otel_paths(explicit: Path | None, log_dir: Path) -> list[Path]:
+    """Trace files to read: the given one, or every export in the log directory.
+
+    The application and each validation write their own <app>-otel.log, so looking
+    at a single hardcoded name reported empty statistics after a run that had
+    actually produced traces.
+    """
+    if explicit is not None:
+        return [explicit]
+    if not log_dir.is_dir():
+        return []
+    return sorted(path for path in log_dir.glob("*-otel.log") if path.is_file())
+
+
+def build_report(otel_paths: Sequence[Path], projects_dir: Path) -> str:
+    """Compute the full report from OTel logs and a projects directory."""
+    spans: list[dict[str, Any]] = []
+    switch = {"sent": 0, "not_sent": 0}
+    for path in otel_paths:
+        spans.extend(read_attempt_spans(path))
+        usage = reasoning_switch_usage(path)
+        switch["sent"] += usage["sent"]
+        switch["not_sent"] += usage["not_sent"]
+
+    roles = aggregate_roles(spans)
     blocs = aggregate_blocs(projects_dir)
-    switch = format_switch_line(reasoning_switch_usage(otel_path))
-    return f"{switch}\n\n{format_report(roles, blocs)}"
+    report = f"{format_switch_line(switch)}\n\n{format_report(roles, blocs)}"
+    if not spans:
+        report = f"{_no_span_diagnostic(otel_paths)}\n\n{report}"
+    return report
+
+
+def _no_span_diagnostic(otel_paths: Sequence[Path]) -> str:
+    """Explain an empty report instead of printing bare headers."""
+    lines = ["No instrumented LLM call found, so the tables below are empty."]
+    if not otel_paths:
+        lines.append("  No *-otel.log file exists yet: run the pipeline or tgi-validate first.")
+        return "\n".join(lines)
+    for path in otel_paths:
+        if not path.exists():
+            lines.append(f"  {path}: does not exist")
+        elif path.stat().st_size == 0:
+            lines.append(f"  {path}: empty")
+        else:
+            lines.append(f"  {path}: no llm.json_attempt span in it")
+    lines.append("  Run the pipeline or tgi-validate, or point --otel at the right file.")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -262,8 +306,8 @@ def main() -> None:
     parser.add_argument(
         "--otel",
         type=Path,
-        default=settings.log_dir / f"{settings.app_name}-otel.log",
-        help="OTel JSONL export (default: the configured log dir)",
+        default=None,
+        help="OTel JSONL export (default: every *-otel.log in the log directory)",
     )
     parser.add_argument(
         "--projects",
@@ -272,9 +316,14 @@ def main() -> None:
         help="Projects directory (default: TGI_PROJECTS_DIR)",
     )
     args = parser.parse_args()
-    print(f"otel:     {args.otel}")
-    print(f"projects: {args.projects}\n")
-    print(build_report(args.otel, args.projects))
+    otel_paths = resolve_otel_paths(args.otel, settings.log_dir)
+    if otel_paths:
+        for index, path in enumerate(otel_paths):
+            print(f"{'otel:    ' if index == 0 else '         '} {path}")
+    else:
+        print(f"otel:     no *-otel.log found in {settings.log_dir}")
+    print(f"projects: {args.projects.resolve()}\n")
+    print(build_report(otel_paths, args.projects))
 
 
 if __name__ == "__main__":

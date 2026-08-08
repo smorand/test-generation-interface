@@ -173,9 +173,13 @@ skips `uvloop` by its own platform marker.
 ## 7. Go further
 
 ```bash
-tgi-stats                    # same statistics on a real project run
+tgi-stats                    # reads every *-otel.log in TGI_LOGS, including validations
 tgi-stats --otel <path> --projects <dir>
 ```
+
+`tgi-stats` reports per role latency and waste. Running it before any pipeline or
+validation says so explicitly rather than printing empty tables. Bloc statistics need a
+real project, so they stay empty until a document has been processed through `tgi`.
 
 Full behaviour of the pipeline, thresholds and known model traps:
 `README.md` and `.agent_docs/pipeline.md`.

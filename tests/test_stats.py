@@ -151,7 +151,7 @@ def test_build_report_contains_key_figures(tmp_path: Path) -> None:
     projects = tmp_path / "projects"
     _project(projects, "p1", [{"status": "done", "judge_passes": 1, "score": 90, "best_version": 1}])
 
-    report = build_report(otel, projects)
+    report = build_report([otel], projects)
     assert "LLM calls per role" in report
     assert "judge" in report
     assert "Blocs: 1" in report
@@ -162,7 +162,7 @@ def test_build_report_contains_key_figures(tmp_path: Path) -> None:
 def test_build_report_without_blocs(tmp_path: Path) -> None:
     otel = tmp_path / "otel.log"
     _write_otel(otel, [_span("extractor", "ok", 5)])
-    report = build_report(otel, tmp_path / "absent")
+    report = build_report([otel], tmp_path / "absent")
     assert "No bloc state found." in report
 
 
@@ -205,7 +205,7 @@ def test_switch_line_without_instrumented_calls(tmp_path: Path) -> None:
 def test_build_report_starts_with_the_switch_line(tmp_path: Path) -> None:
     otel = tmp_path / "otel.log"
     _write_otel(otel, [_chat_span(False), _span("judge", "ok", 3)])
-    report = build_report(otel, tmp_path / "absent")
+    report = build_report([otel], tmp_path / "absent")
     assert report.startswith("Reasoning switch:")
 
 
@@ -241,3 +241,58 @@ def test_read_spans_skips_records_without_a_start_time(tmp_path: Path) -> None:
     otel = tmp_path / "otel.log"
     _write_otel(otel, [{"name": "llm.json_attempt", "attributes": {"purpose": "judge", "outcome": "ok"}}])
     assert read_attempt_spans(otel, since_ns=1) == []
+
+
+def test_resolve_otel_paths_finds_every_export(tmp_path: Path) -> None:
+    """The app and each validation write their own file: read them all."""
+    from tgi.stats import resolve_otel_paths
+
+    (tmp_path / "tgi-otel.log").write_text("", encoding="utf-8")
+    (tmp_path / "tgi-validate-otel.log").write_text("", encoding="utf-8")
+    (tmp_path / "tgi.log").write_text("", encoding="utf-8")
+
+    found = resolve_otel_paths(None, tmp_path)
+    assert [p.name for p in found] == ["tgi-otel.log", "tgi-validate-otel.log"]
+
+
+def test_resolve_otel_paths_honours_an_explicit_file(tmp_path: Path) -> None:
+    from tgi.stats import resolve_otel_paths
+
+    explicit = tmp_path / "ailleurs.log"
+    assert resolve_otel_paths(explicit, tmp_path) == [explicit]
+
+
+def test_resolve_otel_paths_on_a_missing_directory(tmp_path: Path) -> None:
+    from tgi.stats import resolve_otel_paths
+
+    assert resolve_otel_paths(None, tmp_path / "absent") == []
+
+
+def test_report_explains_an_empty_result_instead_of_bare_tables(tmp_path: Path) -> None:
+    """Silence was the bug: empty tables with no reason looked like a broken tool."""
+    missing = tmp_path / "nope-otel.log"
+    empty = tmp_path / "empty-otel.log"
+    empty.write_text("", encoding="utf-8")
+
+    report = build_report([missing, empty], tmp_path / "absent")
+    assert "No instrumented LLM call found" in report
+    assert "does not exist" in report
+    assert "empty" in report
+    assert "tgi-validate" in report
+
+
+def test_report_explains_when_no_file_exists_at_all(tmp_path: Path) -> None:
+    report = build_report([], tmp_path / "absent")
+    assert "No *-otel.log file exists yet" in report
+
+
+def test_report_aggregates_several_files(tmp_path: Path) -> None:
+    first = tmp_path / "a-otel.log"
+    second = tmp_path / "b-otel.log"
+    _write_otel(first, [_span("judge", "ok", 3), _chat_span(True)])
+    _write_otel(second, [_span("generator", "truncation", 30), _chat_span(True)])
+
+    report = build_report([first, second], tmp_path / "absent")
+    assert "judge" in report
+    assert "generator" in report
+    assert "sent on all 2 calls" in report

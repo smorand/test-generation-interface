@@ -309,3 +309,19 @@ The run now stamps `time.time_ns()` before the pipeline starts and both
 `read_attempt_spans` and `reasoning_switch_usage` accept a `since_ns` window. History
 stays in the file, which is what `tgi-stats` wants, while a single validation reports
 only itself.
+
+## tgi-stats must not stay silent
+
+Reported from the target infrastructure: after successful validations, `tgi-stats`
+printed empty tables and "No bloc state found." with no error anywhere. Two defects,
+both mine.
+
+It defaulted to a single hardcoded `<app_name>-otel.log`, while each component writes
+its own file: the application writes `tgi-otel.log` and a validation writes
+`tgi-validate-otel.log`. Traces existed, just not under the name being read. It now
+reads **every** `*-otel.log` in the log directory, and `--otel` still pins one file.
+
+And it said nothing about why the tables were empty. It now states whether each file
+is missing, empty, or holds no `llm.json_attempt` span, and tells the user to run the
+pipeline or a validation. The projects directory is printed resolved, since the default
+is relative to the working directory.
