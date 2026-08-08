@@ -93,8 +93,7 @@ All variables use the `TGI_` prefix.
 
 ## Logs
 
-`TGI_LOGS` holds **both** files, UTF-8, the application log rotated at 10 MB with 5
-backups kept:
+`TGI_LOGS` holds **both** files, UTF-8, each rotated at 10 MB with 5 backups kept:
 
 - `tgi.log`, one plain text line per event: `2026-08-08 16:18:27,519 [WARNING] tgi.agents.orchestrator orchestrator._emit: ...`
 - `tgi-otel.log`, one JSON object per line (JSONL), one per span, directly parseable

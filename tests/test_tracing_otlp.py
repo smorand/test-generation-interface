@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -101,3 +102,32 @@ def test_no_destination_means_file_only(tmp_path: Path) -> None:
     provider.force_flush(2000)
     assert "test.local" in (tmp_path / "otlp_off-otel.log").read_text(encoding="utf-8")
     assert _received == []
+
+
+def test_jsonl_file_rotates_by_size(tmp_path: Path) -> None:
+    """The JSONL export is the bigger file: unbounded growth would fill the disk."""
+    provider = configure_tracing(app_name="rot", log_dir=tmp_path, max_bytes=1500, backup_count=2)
+    for i in range(60):
+        with trace_span(f"test.span.number.{i}", {"index": i, "padding": "x" * 50}):
+            pass
+    provider.force_flush(2000)
+
+    current = tmp_path / "rot-otel.log"
+    assert current.exists()
+    assert (tmp_path / "rot-otel.log.1").exists()
+    # backup_count is honoured, the oldest is dropped
+    assert not (tmp_path / "rot-otel.log.3").exists()
+    # Every kept file is still valid JSONL
+    for path in (current, tmp_path / "rot-otel.log.1"):
+        for line in path.read_text(encoding="utf-8").strip().splitlines():
+            assert json.loads(line)["name"].startswith("test.span.number.")
+
+
+def test_jsonl_rotation_disabled_keeps_one_file(tmp_path: Path) -> None:
+    provider = configure_tracing(app_name="norot", log_dir=tmp_path, max_bytes=0)
+    for i in range(30):
+        with trace_span(f"test.span.{i}"):
+            pass
+    provider.force_flush(2000)
+    assert (tmp_path / "norot-otel.log").exists()
+    assert not (tmp_path / "norot-otel.log.1").exists()

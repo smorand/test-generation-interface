@@ -276,3 +276,9 @@ an unreachable collector must not slow the pipeline.
 Verified against a local HTTP receiver: spans arrive on `/v1/traces`, the api key is
 sent as `Authorization: Bearer ...`, the JSONL file still holds the span, and pointing
 the destination at a closed port changes nothing for the caller.
+
+Without a destination the telemetry is that JSONL file only. It rotates by size like
+the application log, which it did not at first: it is the larger of the two, about
+460 kB for a single run over a 90 bloc document, so an unbounded file would have
+filled the disk of a long lived service. Rotation happens inside the exporter, under a
+lock, since the batch processor calls it from its own thread.

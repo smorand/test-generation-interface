@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,15 +29,46 @@ logger = logging.getLogger(__name__)
 
 
 class JSONLFileExporter(SpanExporter):
-    """Exports spans as JSONL to a file (<app_name>-otel.log)."""
+    """Exports spans as JSONL to a file (<app_name>-otel.log).
 
-    __slots__ = ("_path",)
+    Rotates by size like the application log: this file is the larger of the two, a
+    single run over a 90 bloc document writes about 460 kB, so an unbounded file
+    would eventually fill the disk of a long lived service.
+    """
 
-    def __init__(self, path: Path) -> None:
+    __slots__ = ("_backup_count", "_lock", "_max_bytes", "_path")
+
+    def __init__(self, path: Path, max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5) -> None:
         self._path = path
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        # Exporters are called from the batch processor thread as well as the caller.
+        self._lock = threading.Lock()
+
+    def _rotate_if_needed(self) -> None:
+        """Roll <file> to <file>.1, shifting older backups, dropping the oldest."""
+        if self._max_bytes <= 0 or self._backup_count <= 0:
+            return
+        try:
+            if self._path.stat().st_size < self._max_bytes:
+                return
+        except OSError:
+            return
+        oldest = self._path.with_name(f"{self._path.name}.{self._backup_count}")
+        oldest.unlink(missing_ok=True)
+        for index in range(self._backup_count - 1, 0, -1):
+            source = self._path.with_name(f"{self._path.name}.{index}")
+            if source.exists():
+                source.replace(self._path.with_name(f"{self._path.name}.{index + 1}"))
+        self._path.replace(self._path.with_name(f"{self._path.name}.1"))
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """Write spans as JSON lines to the log file."""
+        with self._lock:
+            self._rotate_if_needed()
+            return self._write(spans)
+
+    def _write(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         with self._path.open("a", encoding="utf-8") as fh:
             for span in spans:
                 record: dict[str, Any] = {
@@ -71,6 +103,8 @@ def configure_tracing(
     log_dir: Path | None = None,
     destination: str | None = None,
     api_key: str | None = None,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
 ) -> TracerProvider:
     """Configure OpenTelemetry tracing.
 
@@ -83,6 +117,8 @@ def configure_tracing(
         log_dir: Directory for the JSONL log file (default: current working directory)
         destination: OTLP HTTP traces endpoint, for example http://collector:4318/v1/traces
         api_key: Bearer token for that endpoint, when it requires one
+        max_bytes: Rotate the JSONL file once it reaches this size
+        backup_count: How many rotated JSONL files to keep
     """
     directory = log_dir or Path.cwd()
     directory.mkdir(parents=True, exist_ok=True)
@@ -90,7 +126,9 @@ def configure_tracing(
 
     resource = Resource.create({"service.name": app_name})
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(SimpleSpanProcessor(JSONLFileExporter(otel_path)))
+    provider.add_span_processor(
+        SimpleSpanProcessor(JSONLFileExporter(otel_path, max_bytes=max_bytes, backup_count=backup_count))
+    )
 
     if destination:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
