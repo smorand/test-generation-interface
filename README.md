@@ -93,7 +93,8 @@ All variables use the `TGI_` prefix.
 
 ## Logs
 
-Two files in `TGI_LOGS`, both UTF-8, rotated at 10 MB with 5 backups kept:
+`TGI_LOGS` holds **both** files, UTF-8, the application log rotated at 10 MB with 5
+backups kept:
 
 - `tgi.log`, one plain text line per event: `2026-08-08 16:18:27,519 [WARNING] tgi.agents.orchestrator orchestrator._emit: ...`
 - `tgi-otel.log`, one JSON object per line (JSONL), one per span, directly parseable
@@ -101,6 +102,17 @@ Two files in `TGI_LOGS`, both UTF-8, rotated at 10 MB with 5 backups kept:
 Neither contains prompts, model responses or credentials. A full 88 bloc run
 produced 224 kB and 460 kB respectively. `tgi-stats` reads the JSONL file to report
 per role latency and waste.
+
+Set `TGI_OTEL_DESTINATION` to an OTLP HTTP traces endpoint to **also** ship spans to
+a collector, with `TGI_OTEL_API_KEY` as its bearer token. The export is batched, so an
+unreachable collector never slows a request, and the local JSONL file is always
+written since that is what `tgi-stats` reads.
+
+```
+TGI_LOGS=/var/log/tgi
+TGI_OTEL_DESTINATION=http://collector:4318/v1/traces
+TGI_OTEL_API_KEY=token
+```
 
 On Windows use the same commands through `uv run`, from the project directory: see
 [VALIDATION.md](VALIDATION.md#6-running-on-windows).

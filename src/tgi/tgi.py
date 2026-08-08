@@ -45,7 +45,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     log_dir = app_settings.log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(app_name=app_settings.app_name, log_dir=log_dir)
-    provider = configure_tracing(app_name=app_settings.app_name, log_dir=log_dir)
+    provider = configure_tracing(
+        app_name=app_settings.app_name,
+        log_dir=log_dir,
+        destination=app_settings.otel_destination,
+        api_key=app_settings.otel_api_key,
+    )
 
     # Ensure projects dir exists
     for problem in app_settings.configuration_problems():

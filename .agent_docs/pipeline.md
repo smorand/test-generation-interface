@@ -261,3 +261,18 @@ rate, to delete business rules.
 and the UI shows both wordings side by side, stating that nothing was merged. Rules,
 scores and generation are untouched. On the reference specification that flags 112
 pairs across 42 of 88 blocs, capped at 20 per bloc, closest first.
+
+## Where the traces go
+
+`TGI_LOGS` holds both the application log and the OTel JSONL export; the same
+directory is passed to `setup_logging` and to `configure_tracing`.
+
+`TGI_OTEL_DESTINATION` and `TGI_OTEL_API_KEY` used to be declared in the settings and
+read nowhere, so the configuration advertised an OTLP endpoint that did nothing. They
+now drive a real `BatchSpanProcessor` over OTLP HTTP, added alongside the JSONL
+exporter, never replacing it, because `tgi-stats` reads the file. Batched on purpose:
+an unreachable collector must not slow the pipeline.
+
+Verified against a local HTTP receiver: spans arrive on `/v1/traces`, the api key is
+sent as `Authorization: Bearer ...`, the JSONL file still holds the span, and pointing
+the destination at a closed port changes nothing for the caller.

@@ -253,7 +253,12 @@ async def validate(keep: bool = False) -> ValidationResult:
     log_dir = workdir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(app_name="tgi-validate", log_dir=log_dir)
-    configure_tracing(app_name="tgi-validate", log_dir=log_dir)
+    configure_tracing(
+        app_name="tgi-validate",
+        log_dir=log_dir,
+        destination=settings.otel_destination,
+        api_key=settings.otel_api_key,
+    )
     otel_path = log_dir / "tgi-validate-otel.log"
 
     client = LLMClient()

@@ -130,9 +130,10 @@ class Settings(BaseSettings):
     # merged: similarity cannot tell a restated rule from its own negation.
     rule_similarity_threshold: float = 0.9
 
-    # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)
+    # Logging and tracing. Both the application log and the OTel JSONL export land
+    # in TGI_LOGS. Setting otel_destination additionally ships spans over OTLP HTTP.
     logs: str | None = None
-    otel_destination: str | None = None
+    otel_destination: str | None = None  # e.g. http://collector:4318/v1/traces
     otel_api_key: str | None = None
 
     def configuration_problems(self) -> list[str]:

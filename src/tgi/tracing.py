@@ -9,9 +9,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -63,22 +69,36 @@ def configure_tracing(
     app_name: str = "app",
     *,
     log_dir: Path | None = None,
+    destination: str | None = None,
+    api_key: str | None = None,
 ) -> TracerProvider:
-    """Configure OpenTelemetry tracing with JSONL file export.
+    """Configure OpenTelemetry tracing.
 
-    Creates a tracer provider that writes spans to <app_name>-otel.log.
+    Spans always go to <app_name>-otel.log as JSONL, which is what tgi.stats reads.
+    When destination is set they are additionally exported over OTLP HTTP, batched so
+    a slow or unreachable collector never blocks a request.
 
     Args:
         app_name: Application name, used for service name and log file (<app_name>-otel.log)
         log_dir: Directory for the JSONL log file (default: current working directory)
+        destination: OTLP HTTP traces endpoint, for example http://collector:4318/v1/traces
+        api_key: Bearer token for that endpoint, when it requires one
     """
-    otel_path = (log_dir or Path.cwd()) / f"{app_name}-otel.log"
+    directory = log_dir or Path.cwd()
+    directory.mkdir(parents=True, exist_ok=True)
+    otel_path = directory / f"{app_name}-otel.log"
 
     resource = Resource.create({"service.name": app_name})
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(SimpleSpanProcessor(JSONLFileExporter(otel_path)))
-    trace.set_tracer_provider(provider)
 
+    if destination:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        # Batched on purpose: an unreachable collector must not slow the pipeline.
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=destination, headers=headers)))
+        logger.info("OpenTelemetry tracing also exporting to %s", destination)
+
+    trace.set_tracer_provider(provider)
     logger.info("OpenTelemetry tracing configured, writing to %s", otel_path)
     return provider
 
