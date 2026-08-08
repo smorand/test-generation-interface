@@ -30,6 +30,9 @@ _EVENT_QUEUES: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 # Locks per project to prevent concurrent pipeline runs
 _PROJECT_LOCKS: dict[str, asyncio.Lock] = {}
 
+# Projects whose event queue already overflowed, so the warning is logged once
+_SATURATED_QUEUES: set[str] = set()
+
 
 def get_event_queue(project_id: str) -> asyncio.Queue[dict[str, Any]]:
     if project_id not in _EVENT_QUEUES:
@@ -236,11 +239,32 @@ class Orchestrator:
         self._planner = PlannerAgent(llm_client)
 
     async def _emit(self, project_id: str, event_type: str, data: dict[str, Any]) -> None:
+        """Publish a UI event, keeping the most recent state when nobody listens.
+
+        With no browser attached (headless runs, closed tab) the queue fills up.
+        Dropping the oldest event rather than the new one keeps the freshest status
+        for a client that connects later, and the warning is only logged once per
+        project instead of on every event.
+        """
         queue = get_event_queue(project_id)
+        event = {"type": event_type, "data": data}
         try:
-            queue.put_nowait({"type": event_type, "data": data})
+            queue.put_nowait(event)
+            return
         except asyncio.QueueFull:
-            logger.warning("Event queue full for project %s, dropping event", project_id)
+            pass
+
+        if project_id not in _SATURATED_QUEUES:
+            _SATURATED_QUEUES.add(project_id)
+            logger.warning(
+                "Event queue full for project %s (no listener), dropping oldest events from now on",
+                project_id,
+            )
+        try:
+            queue.get_nowait()
+            queue.put_nowait(event)
+        except (asyncio.QueueEmpty, asyncio.QueueFull):
+            logger.debug("Could not requeue event for project %s", project_id)
 
     async def split_and_propose(self, project_id: str) -> list[dict[str, Any]]:
         """Split document into blocs and save to state (without running the pipeline)."""

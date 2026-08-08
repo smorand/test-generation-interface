@@ -213,3 +213,26 @@ the recommended output budget is 32768 tokens (81920 for hard tasks), so the
 against setting a tight `max_tokens` together with structured output because
 truncation yields invalid JSON. Measured need here is far lower: median output per
 call is 472 tokens for the extractor, 2333 for the generator, 16 for the judge.
+
+## Full scale measurement (reference)
+
+Whole reference specification, 88 blocs, `claude-haiku-4-5`, 5 blocs in parallel:
+
+| Measure | Value |
+|---|---|
+| Wall clock | 31.5 min, 21 s per bloc |
+| Statuses | done 77, needs_human 11, error 0 |
+| Coverage | median 93 percent, mean 91, min 62, max 100 |
+| Output | 1614 rules, 3799 tests, 2.4 tests per rule |
+| LLM calls | 691 total, 1 percent wasted |
+| Judge passes | 1 pass 64 blocs, 2 passes 11, 3 passes 13 |
+| Best version kept | v1 67, v2 17, v3 4 |
+| Multi pass outcome | 19 improved, 1 regressed |
+
+Two things this confirms. The judge loop earns its cost: 24 blocs needed more than
+one pass and 19 of them improved. And keeping the best version is not theoretical:
+one bloc scored worse on a later pass and its earlier version was restored.
+
+Event queue: with no browser attached the SSE queue saturates. The oldest event is
+dropped rather than the newest, so a client connecting later still gets the current
+state, and the warning is logged once per project instead of on every event.

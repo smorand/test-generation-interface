@@ -355,3 +355,43 @@ def test_get_project_lock_singleton() -> None:
     lock_a = get_project_lock("p-lock")
     lock_b = get_project_lock("p-lock")
     assert lock_a is lock_b
+
+
+async def test_emit_keeps_the_freshest_events_when_nobody_listens(orchestrator: Orchestrator) -> None:
+    """A headless run must not spam warnings nor lose the latest status."""
+    import logging
+
+    from tgi.agents import orchestrator as orch_module
+
+    project_id = "p-saturated"
+    orch_module._SATURATED_QUEUES.discard(project_id)
+    queue = get_event_queue(project_id)
+    while not queue.empty():
+        queue.get_nowait()
+
+    # Fill the queue to its limit
+    for i in range(queue.maxsize):
+        queue.put_nowait({"type": "filler", "data": {"i": i}})
+
+    await orchestrator._emit(project_id, "bloc_status", {"bloc_id": "bloc-1", "status": "done"})
+
+    # Size is unchanged, the oldest was dropped and the newest is last
+    assert queue.qsize() == queue.maxsize
+    events = [queue.get_nowait() for _ in range(queue.qsize())]
+    assert events[-1]["type"] == "bloc_status"
+    assert events[0]["data"]["i"] == 1  # the very first filler is gone
+
+    # The warning is logged once per project, not on every event
+    assert project_id in orch_module._SATURATED_QUEUES
+    for i in range(queue.maxsize):
+        queue.put_nowait({"type": "filler", "data": {"i": i}})
+    logger = logging.getLogger("tgi.agents.orchestrator")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger.addHandler(handler)
+    try:
+        await orchestrator._emit(project_id, "bloc_status", {"bloc_id": "bloc-2", "status": "done"})
+    finally:
+        logger.removeHandler(handler)
+    assert [r for r in records if r.levelno >= logging.WARNING] == []
