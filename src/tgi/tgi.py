@@ -48,6 +48,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     provider = configure_tracing(app_name=app_settings.app_name, log_dir=log_dir)
 
     # Ensure projects dir exists
+    for problem in app_settings.configuration_problems():
+        logger.warning("Configuration: %s", problem)
+
     Path(app_settings.projects_dir).mkdir(parents=True, exist_ok=True)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))

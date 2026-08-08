@@ -101,7 +101,8 @@ Neither contains prompts, model responses or credentials. A full 88 bloc run
 produced 224 kB and 460 kB respectively. `tgi-stats` reads the JSONL file to report
 per role latency and waste.
 
-Windows is supported, see [VALIDATION.md](VALIDATION.md#6-running-on-windows).
+On Windows use the same commands through `uv run`, from the project directory: see
+[VALIDATION.md](VALIDATION.md#6-running-on-windows).
 
 ## Pipeline
 

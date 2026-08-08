@@ -109,62 +109,31 @@ generated tests with `--keep`, which preserves the temporary project and its log
 
 ## 6. Running on Windows
 
-There is no `make` on Windows, so use the console scripts installed with the wheel,
-or `uv run`. Everything else is the same.
+Same commands, through `uv run`. Two prerequisites: `uv`, and `git` on the PATH
+because project history is created by calling the `git` executable.
 
 ```powershell
-# install
-pip install test_generation_interface-0.1.0-py3-none-any.whl
+git clone <repo> ; cd test-generation-interface
+uv sync
 
-# configure
-$env:TGI_ICA_BASE_URL = "http://your-inference-server:8000/v1"
-$env:TGI_ICA_API_KEY  = "..."
-
-# validate a model
-tgi-validate --model Qwen/Qwen3.6-27B
-
-# run the web application on http://localhost:8080
-tgi
-# or explicitly
-python -m uvicorn tgi.tgi:app --host 0.0.0.0 --port 8080
-
-# statistics
-tgi-stats
+# put the configuration in .env, next to pyproject.toml
+uv run tgi-validate --model Qwen/Qwen3.6-27B
+uv run tgi                     # web application on http://localhost:8080
+uv run python -m tgi.stats
 ```
 
-Requirements and platform notes, all verified in the code:
+**Run the commands from the project directory.** `.env` is read from the current
+working directory, and so is the default `projects/` data directory. Launching from
+elsewhere silently leaves every default in place; `tgi-validate` now reports that as
+a problem rather than failing later with a 401.
 
-| Point | Windows behaviour |
-|---|---|
-| Python | 3.13 or newer, same as elsewhere |
-| **git on PATH** | required: project history is created by calling the `git` executable |
-| Log location | `%LOCALAPPDATA%\tgi\logs`, or `TGI_LOGS` when set |
-| Log files | `tgi.log` and `tgi-otel.log`, UTF-8, rotated at 10 MB, 5 kept |
-| `uvicorn[standard]` | installs fine, `uvloop` is skipped by its own `sys_platform != 'win32'` marker |
-| State writes | atomic rename, with a retry because Windows refuses to replace a file another handle holds open |
-| Paths | all resolved with `pathlib`, no POSIX separator assumed |
-| Runtime data | `projects\` under the working directory, or `TGI_PROJECTS_DIR` |
+Nothing else is Windows specific: paths go through `pathlib`, logs land in
+`%LOCALAPPDATA%\tgi\logs` (override with `TGI_LOGS`), state writes retry the atomic
+rename that Windows refuses while a reader holds the file, and `uvicorn[standard]`
+skips `uvloop` by its own platform marker.
 
-Set a directory a service can write to, rather than relying on the default:
-
-```powershell
-$env:TGI_LOGS         = "C:\ProgramData\tgi\logs"
-$env:TGI_PROJECTS_DIR = "C:\ProgramData\tgi\projects"
-```
-
-If installing Python and git on the target is not an option, the container carries
-everything, including git:
-
-```powershell
-docker build -t tgi:latest .
-docker run --rm -p 8080:8080 -e TGI_ICA_BASE_URL=... -e TGI_ICA_API_KEY=... tgi:latest
-docker run --rm -e TGI_ICA_BASE_URL=... -e TGI_ICA_API_KEY=... --entrypoint tgi-validate tgi:latest --model ...
-```
-
-**Not verified**: this repository has only been executed on macOS and Linux. The
-points above come from reading the code and the dependency metadata, not from a run
-on Windows. `tgi-validate` is the fastest way to confirm the whole chain works
-there, since it exercises parsing, git, state writes, logging and the LLM calls.
+**Not verified**: this repository has only been executed on macOS and Linux. Run
+`uv run tgi-validate` on the target to confirm the whole chain in one command.
 
 ## 7. Go further
 

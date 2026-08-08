@@ -79,3 +79,14 @@ def test_log_dir_default_matches_the_platform_helper() -> None:
 
     expected = default_log_dir("tgi", is_windows=os.name == "nt", local_app_data=os.environ.get("LOCALAPPDATA"))
     assert Settings(app_name="tgi", ica_api_key="k").log_dir == expected
+
+
+def test_configuration_problems_flags_the_placeholder_key() -> None:
+    """Launching outside the .env directory must not fail silently later on."""
+    problems = Settings(ica_api_key="changeme").configuration_problems()
+    assert len(problems) == 1
+    assert "TGI_ICA_API_KEY" in problems[0]
+
+
+def test_configuration_problems_empty_when_configured() -> None:
+    assert Settings(ica_api_key="sk-real-key").configuration_problems() == []

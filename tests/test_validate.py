@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tgi.validate import SAMPLE_PATH, ValidationResult, _judge_the_results, format_verdict
 
 if TYPE_CHECKING:
@@ -126,3 +128,22 @@ def test_verdict_reports_the_measurements() -> None:
     assert "22 rules, 59 tests" in report
     assert "2.7 tests per rule" in report
     assert "median 91%" in report
+
+
+def test_placeholder_key_is_reported_with_the_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The most likely user error: running uv run from the wrong directory."""
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "ica_api_key", "changeme")
+
+    async def _unreachable(self: object) -> list[dict[str, object]]:
+        raise RuntimeError("401 unauthorized")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unreachable)
+    result = asyncio.run(validate())
+    assert any("TGI_ICA_API_KEY" in p for p in result.problems)
+    assert any(".env" in a for a in result.advice)
+    assert result.ok is False

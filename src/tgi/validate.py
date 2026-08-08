@@ -262,6 +262,13 @@ async def validate(keep: bool = False) -> ValidationResult:
         model_judge=settings.model_judge,
         endpoint=settings.ica_base_url,
     )
+    for problem in settings.configuration_problems():
+        result.problems.append(problem)
+        result.advice.append(
+            "Run from the directory holding your .env (uv run reads it from the current directory), "
+            "or export TGI_ICA_BASE_URL and TGI_ICA_API_KEY"
+        )
+
     try:
         if await _check_endpoint(client, result):
             try:

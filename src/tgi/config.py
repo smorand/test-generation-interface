@@ -8,6 +8,9 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Value that means "nothing was configured", reported instead of failing silently.
+_PLACEHOLDER_API_KEY = "changeme"
+
 
 def default_log_dir(app_name: str, *, is_windows: bool, local_app_data: str | None) -> Path:
     """Conventional log directory for the platform.
@@ -38,7 +41,7 @@ class Settings(BaseSettings):
 
     app_name: str = "tgi"
     ica_base_url: str = "https://api.nextgen-beta.ica.ibm.com/ica/v1"
-    ica_api_key: str = "changeme"
+    ica_api_key: str = _PLACEHOLDER_API_KEY
     model_generator: str = "gemma-4-26b-a4b-it"
     model_judge: str = "gemma-4-26b-a4b-it"
     max_judge_passes: int = 3
@@ -85,6 +88,21 @@ class Settings(BaseSettings):
     logs: str | None = None
     otel_destination: str | None = None
     otel_api_key: str | None = None
+
+    def configuration_problems(self) -> list[str]:
+        """Settings that are still placeholders and will fail at the first call.
+
+        The .env file is read from the current working directory, so launching from
+        somewhere else silently leaves every default in place. Saying so beats a
+        confusing 401 later.
+        """
+        problems: list[str] = []
+        if self.ica_api_key == _PLACEHOLDER_API_KEY:
+            problems.append(
+                "TGI_ICA_API_KEY is still the placeholder: no .env was found in the current "
+                "directory, and no environment variable is set"
+            )
+        return problems
 
     @property
     def log_dir(self) -> Path:
