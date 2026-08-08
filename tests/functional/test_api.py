@@ -359,3 +359,104 @@ async def test_blocs_partial_shows_near_identical_rules(client: AsyncClient) -> 
     assert "pas Banquier Conseil" in html
     # And the warning is explicit that nothing was merged
     assert "jamais fusionnées" in html
+
+
+async def _project_with_rules(client: AsyncClient) -> str:
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _upload_sample(client)
+    state = await state_manager.load(project_id)
+    state["blocs"] = [
+        {
+            "id": "bloc-1",
+            "title": "Habilitations",
+            "chunk": "c",
+            "status": "done",
+            "score": 90,
+            "judge_passes": 1,
+            "rules": [
+                {"id": "R1", "source_ref": "VAL01.CU01.RM01", "description": "Le systeme cree une habilitation"},
+                {"id": "R2", "source_ref": "", "description": "Sans reference et sans test", "reviewed": True},
+            ],
+            "tests": [
+                {
+                    "id": "TEST-001",
+                    "bloc_id": "bloc-1",
+                    "business_rule": "R1",
+                    "name": "creation",
+                    "description": "d",
+                    "steps": [],
+                    "status": "draft",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "id": "TEST-002",
+                    "bloc_id": "bloc-1",
+                    "business_rule": "R1, R3",
+                    "name": "multi",
+                    "description": "d",
+                    "steps": [],
+                    "status": "draft",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                },
+            ],
+        },
+    ]
+    await state_manager.save(project_id, state)
+    return project_id
+
+
+async def test_rules_partial_lists_and_counts(client: AsyncClient) -> None:
+    """The rules tab is where a human reviews what drives everything else."""
+    project_id = await _project_with_rules(client)
+    resp = await client.get(f"/projects/{project_id}/partials/rules")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "VAL01.CU01.RM01" in html  # traceability to the specification
+    assert "2</strong> règles" in html or "<strong>2</strong>" in html
+    assert "1 avec référence document" in html
+    assert "badge-orange" in html  # R2 carries no test
+    # The panel is initialised with the reviewed count, not a Jinja expression in the JS
+    assert "rulesPanel('" in html and ", 1)" in html
+
+
+async def test_rule_can_be_edited_and_marked_reviewed(client: AsyncClient) -> None:
+    project_id = await _project_with_rules(client)
+    resp = await client.put(
+        f"/projects/{project_id}/blocs/bloc-1/rules/R1",
+        json={"description": "Formulation corrigee", "source_ref": "VAL01.CU01.RM09", "reviewed": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == "Formulation corrigee"
+
+    rules = (await client.get(f"/projects/{project_id}/rules")).json()["rules"]
+    edited = next(r for r in rules if r["id"] == "R1")
+    assert edited["source_ref"] == "VAL01.CU01.RM09"
+    assert edited["reviewed"] is True
+    assert edited["bloc_id"] == "bloc-1"
+
+
+async def test_rule_edit_is_scoped_to_its_bloc(client: AsyncClient) -> None:
+    """R1 exists in every bloc: the pair (bloc, rule) is the identity."""
+    project_id = await _project_with_rules(client)
+    missing = await client.put(f"/projects/{project_id}/blocs/bloc-99/rules/R1", json={"reviewed": True})
+    assert missing.status_code == 404
+    unknown = await client.put(f"/projects/{project_id}/blocs/bloc-1/rules/R404", json={"reviewed": True})
+    assert unknown.status_code == 404
+
+
+async def test_tests_partial_exposes_the_rule_filter(client: AsyncClient) -> None:
+    """A test can cover several rules, so the filter matches any of them."""
+    project_id = await _project_with_rules(client)
+    html = (await client.get(f"/projects/{project_id}/partials/tests")).text
+
+    assert "pour 2 règles" in html
+    assert 'data-rules="R1"' in html
+    assert 'data-rules="R1 R3"' in html  # multi rule test
+    assert '<option value="R1">' in html and '<option value="R3">' in html
+    # The JSON payload must live in a single quoted attribute, otherwise it closes it early
+    assert "x-data='testEditor(" in html
+    assert 'x-data="testEditor(' not in html

@@ -26,6 +26,7 @@ from tgi.services.doc_parser import doc_parser
 from tgi.services.git_service import git_service
 from tgi.services.llm import llm_client
 from tgi.services.state_manager import state_manager
+from tgi.testset import rule_ids_of
 from tgi.tracing import configure_tracing
 
 if TYPE_CHECKING:
@@ -36,6 +37,28 @@ logger = logging.getLogger(__name__)
 _MODULE_DIR = Path(__file__).parent
 _STATIC_DIR = _MODULE_DIR / "static"
 _TEMPLATES_DIR = _MODULE_DIR / "templates"
+
+
+def _tests_per_rule(tests: list[dict[str, Any]]) -> dict[str, int]:
+    """How many tests cover each rule, keyed by "bloc_id/rule_id".
+
+    A test can legitimately cover several rules, so it counts once per rule it cites.
+    """
+    counts: dict[str, int] = {}
+    for test in tests:
+        bloc_id = str(test.get("bloc_id", ""))
+        for rule_id in rule_ids_of(test):
+            key = f"{bloc_id}/{rule_id}"
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _rule_filter_options(tests: list[dict[str, Any]]) -> list[str]:
+    """Rule ids that actually appear in the tests, for the filter dropdown."""
+    seen: set[str] = set()
+    for test in tests:
+        seen.update(rule_ids_of(test))
+    return sorted(seen, key=lambda rid: (len(rid), rid))
 
 
 def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915
@@ -59,6 +82,8 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     Path(app_settings.projects_dir).mkdir(parents=True, exist_ok=True)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # A test can cite several rules: the template needs them as a list
+    templates.env.filters["rule_ids"] = lambda value: sorted(rule_ids_of({"business_rule": value or ""}))
     orchestrator = Orchestrator(state_manager, git_service, llm_client)
 
     @asynccontextmanager
@@ -252,6 +277,22 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         await git_service.commit(project_id, f"fix(test): human edit on {test_id}")
         return JSONResponse(updated)
 
+    @application.put("/projects/{project_id}/blocs/{bloc_id}/rules/{rule_id}")
+    async def update_rule(project_id: str, bloc_id: str, rule_id: str, request: Request) -> JSONResponse:
+        """Edit a rule: wording, document reference, or reviewed flag."""
+        await _load_or_404(project_id)
+        body = await request.json()
+        updated = await state_manager.update_rule(project_id, bloc_id, rule_id, body)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found in {bloc_id}")
+        await git_service.commit(project_id, f"fix(rule): human edit on {bloc_id}/{rule_id}")
+        return JSONResponse(updated)
+
+    @application.get("/projects/{project_id}/rules")
+    async def get_rules(project_id: str) -> JSONResponse:
+        await _load_or_404(project_id)
+        return JSONResponse({"rules": await state_manager.get_all_rules(project_id)})
+
     @application.post("/projects/{project_id}/chat")
     async def chat(project_id: str, request: Request) -> JSONResponse:
         state = await _load_or_404(project_id)
@@ -335,10 +376,36 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     async def partial_tests(request: Request, project_id: str) -> HTMLResponse:
         await _load_or_404(project_id)
         all_tests = await state_manager.get_all_tests(project_id)
+        all_rules = await state_manager.get_all_rules(project_id)
         return templates.TemplateResponse(
             request,
             "partials/tests.html",
-            {"tests": all_tests, "project_id": project_id},
+            {
+                "tests": all_tests,
+                "project_id": project_id,
+                "rules_count": len(all_rules),
+                "rule_options": _rule_filter_options(all_tests),
+            },
+        )
+
+    @application.get("/projects/{project_id}/partials/rules", response_class=HTMLResponse)
+    async def partial_rules(request: Request, project_id: str) -> HTMLResponse:
+        """Rules of the whole project, reviewable and editable."""
+        await _load_or_404(project_id)
+        all_rules = await state_manager.get_all_rules(project_id)
+        all_tests = await state_manager.get_all_tests(project_id)
+        tests_per_rule = _tests_per_rule(all_tests)
+        return templates.TemplateResponse(
+            request,
+            "partials/rules.html",
+            {
+                "rules": all_rules,
+                "project_id": project_id,
+                "tests_per_rule": tests_per_rule,
+                "tests_count": len(all_tests),
+                "reviewed_count": sum(1 for r in all_rules if r.get("reviewed")),
+                "traced_count": sum(1 for r in all_rules if r.get("source_ref")),
+            },
         )
 
     @application.get("/projects/{project_id}/partials/history", response_class=HTMLResponse)

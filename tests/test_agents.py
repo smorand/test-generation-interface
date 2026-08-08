@@ -32,7 +32,7 @@ async def test_extractor_accepts_plain_string_rules() -> None:
     agent = ExtractorAgent(fake)  # type: ignore[arg-type]
     rules = await agent.extract(model="m", chunk="text")
     assert len(rules) == 2
-    assert rules[0] == {"id": "R1", "description": "regle en texte"}
+    assert rules[0] == {"id": "R1", "source_ref": "", "description": "regle en texte"}
     assert rules[1]["id"] == "R9"
 
 
@@ -41,7 +41,7 @@ async def test_extractor_accepts_bare_list() -> None:
     fake = FakeLLMClient(chat_json_result=[{"id": "R1", "description": "d"}])
     agent = ExtractorAgent(fake)  # type: ignore[arg-type]
     rules = await agent.extract(model="m", chunk="text")
-    assert rules == [{"id": "R1", "description": "d"}]
+    assert rules == [{"id": "R1", "source_ref": "", "description": "d"}]
 
 
 async def test_extractor_deduplicates_rule_ids() -> None:
@@ -503,3 +503,19 @@ async def test_generator_regeneration_targets_only_gap_rules(monkeypatch: pytest
     # Only one call, holding only the targeted rule
     assert client.batch_count == 1
     assert client.rules_seen == [1]
+
+
+async def test_extractor_keeps_the_document_reference() -> None:
+    """Traceability to the specification numbering is what a test plan is reviewed against."""
+    fake = FakeLLMClient(
+        chat_json_result={
+            "rules": [
+                {"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "premiere"},
+                {"id": "R2", "ref": "F01.EU01.CU02.RM02", "description": "alias ref accepte"},
+                {"id": "R3", "description": "sans reference"},
+            ]
+        }
+    )
+    agent = ExtractorAgent(fake)  # type: ignore[arg-type]
+    rules = await agent.extract(model="m", chunk="text")
+    assert [r["source_ref"] for r in rules] == ["F01.EU01.CU02.RM01", "F01.EU01.CU02.RM02", ""]

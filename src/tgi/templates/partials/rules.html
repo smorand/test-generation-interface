@@ -1,0 +1,72 @@
+{% if rules %}
+<div x-data="rulesPanel('{{ project_id }}', {{ reviewed_count }})">
+
+  <div class="flex flex-wrap items-center gap-4 mb-3 text-sm">
+    <span class="text-gray-300"><strong>{{ rules|length }}</strong> règles</span>
+    <span class="text-gray-500">{{ tests_count }} tests générés</span>
+    <span class="text-gray-500">{{ traced_count }} avec référence document</span>
+    <span class="text-gray-500"><span x-text="reviewedCount">{{ reviewed_count }}</span> relues</span>
+    <div class="ml-auto flex items-center gap-2">
+      <input type="text" class="input text-xs" placeholder="Filtrer: texte, R12, F01.EU01…"
+        x-model="query" style="width:230px" />
+      <label class="text-xs text-gray-400 flex items-center gap-1">
+        <input type="checkbox" x-model="onlyUnreviewed" /> à relire seulement
+      </label>
+    </div>
+  </div>
+
+  <table class="w-full text-xs" style="border-collapse:collapse">
+    <thead>
+      <tr class="text-gray-400 text-left">
+        <th class="py-2 pr-2" style="width:70px">Bloc</th>
+        <th class="py-2 pr-2" style="width:52px">Règle</th>
+        <th class="py-2 pr-2" style="width:150px">Référence doc</th>
+        <th class="py-2 pr-2">Description</th>
+        <th class="py-2 pr-2" style="width:60px">Tests</th>
+        <th class="py-2" style="width:90px">Relue</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rule in rules %}
+      {% set key = rule.bloc_id ~ '/' ~ rule.id %}
+      <tr class="rule-row align-top" style="border-top:1px solid #374151"
+          data-search="{{ (rule.id ~ ' ' ~ (rule.source_ref or '') ~ ' ' ~ rule.description ~ ' ' ~ rule.bloc_id)|lower }}"
+          data-reviewed="{{ 'true' if rule.get('reviewed') else 'false' }}"
+          x-show="matches($el)">
+        <td class="py-2 pr-2 text-gray-500 font-mono">{{ rule.bloc_id }}</td>
+        <td class="py-2 pr-2 text-blue-400 font-mono">{{ rule.id }}</td>
+        <td class="py-2 pr-2">
+          <input type="text" class="input w-full text-xs font-mono"
+            value="{{ rule.source_ref or '' }}" placeholder="—"
+            @change="save('{{ rule.bloc_id }}', '{{ rule.id }}', { source_ref: $el.value }, $el)" />
+        </td>
+        <td class="py-2 pr-2">
+          <textarea class="input w-full text-xs resize-y" rows="2"
+            @change="save('{{ rule.bloc_id }}', '{{ rule.id }}', { description: $el.value }, $el)"
+          >{{ rule.description }}</textarea>
+        </td>
+        <td class="py-2 pr-2 text-center">
+          {% set n = tests_per_rule.get(key, 0) %}
+          <span class="badge {% if n == 0 %}badge-orange{% else %}badge-gray{% endif %}">{{ n }}</span>
+        </td>
+        <td class="py-2">
+          <label class="flex items-center gap-1 text-gray-400">
+            <input type="checkbox" {% if rule.get('reviewed') %}checked{% endif %}
+              @change="toggleReviewed('{{ rule.bloc_id }}', '{{ rule.id }}', $el)" />
+            <span class="text-xs">ok</span>
+          </label>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="text-xs text-gray-600 mt-3">
+    Une règle sans test est signalée en orange. Modifier une description est enregistré
+    immédiatement et commité dans l'historique du projet.
+  </div>
+</div>
+
+{% else %}
+<div class="text-gray-500 text-sm">Aucune règle extraite. Lancez le traitement pour commencer.</div>
+{% endif %}

@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extractor.md"
 
-_SHAPE_HINT = 'Return a JSON object shaped exactly like: {"rules": [{"id": "R1", "description": "..."}]}'
+_SHAPE_HINT = (
+    "Return a JSON object shaped exactly like: "
+    '{"rules": [{"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "..."}]}'
+)
 
 
 class ExtractorAgent:
@@ -76,7 +79,13 @@ class ExtractorAgent:
             if rule_id in seen_ids:
                 rule_id = f"{rule_id}-{i + 1}"
             seen_ids.add(rule_id)
-            validated.append({"id": rule_id, "description": str(description)})
+            # source_ref keeps the traceability to the specification's own numbering,
+            # which is what a test plan is reviewed against.
+            source_ref = ""
+            if isinstance(rule, dict):
+                source_ref = str(rule.get("source_ref") or rule.get("ref") or "").strip()
+            validated.append({"id": rule_id, "source_ref": source_ref, "description": str(description)})
 
-        logger.info("Extracted %d rules from chunk", len(validated))
+        traced = sum(1 for rule in validated if rule["source_ref"])
+        logger.info("Extracted %d rules from chunk (%d carry a document reference)", len(validated), traced)
         return validated

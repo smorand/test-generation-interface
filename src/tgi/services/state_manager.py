@@ -203,6 +203,49 @@ class StateManager:
                 await f.write(json.dumps(updated_test, indent=2, ensure_ascii=False))
         return updated_test
 
+    async def update_rule(
+        self,
+        project_id: str,
+        bloc_id: str,
+        rule_id: str,
+        updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Edit one rule of one bloc.
+
+        The key is the pair (bloc, rule): rule ids restart at R1 in every bloc, so a
+        rule id alone is ambiguous across a document.
+        """
+        allowed = {"description", "source_ref", "reviewed"}
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            updated: dict[str, Any] | None = None
+            for bloc in state["blocs"]:
+                if bloc["id"] != bloc_id:
+                    continue
+                for rule in bloc.get("rules", []):
+                    if str(rule.get("id")) == rule_id:
+                        rule.update({k: v for k, v in updates.items() if k in allowed})
+                        updated = rule
+                        break
+                break
+            if updated is not None:
+                await self.save(project_id, state)
+        return updated
+
+    async def get_all_rules(self, project_id: str) -> list[dict[str, Any]]:
+        """Every rule of the project, each carrying its bloc for identification."""
+        state = await self.load(project_id)
+        rules: list[dict[str, Any]] = []
+        for bloc in state["blocs"]:
+            for rule in bloc.get("rules", []):
+                if not isinstance(rule, dict):
+                    continue
+                enriched = dict(rule)
+                enriched["bloc_id"] = bloc["id"]
+                enriched["bloc_title"] = bloc.get("title", "")
+                rules.append(enriched)
+        return rules
+
     async def get_all_tests(self, project_id: str) -> list[dict[str, Any]]:
         state = await self.load(project_id)
         tests: list[dict[str, Any]] = []

@@ -325,3 +325,49 @@ And it said nothing about why the tables were empty. It now states whether each 
 is missing, empty, or holds no `llm.json_attempt` span, and tells the user to run the
 pipeline or a validation. The projects directory is printed resolved, since the default
 is relative to the working directory.
+
+## Rule granularity and traceability
+
+The extractor used to atomize every declared rule into its sub conditions. Measured on
+the reference specification, which numbers its own rules (F01.EU01.CU02.RM01):
+
+| | Before | After |
+|---|---|---|
+| Rules declared by the document (RM/EM/CA) | 377 | 377 |
+| Rules extracted | 1614 (4.3x) | about 1.6 to 1.7x |
+| Rules carrying the document reference | 4 (0%) | 70 to 81% |
+
+Two costs came with the inflation: an unreviewable deliverable, and no way to map a
+test back to `F01.EU01.CU02.RM01`, which is exactly what a test plan is reviewed
+against. The prompt now asks for one rule per declared identifier, forbids splitting a
+numbered rule, and requires that identifier in a `source_ref` field carried through the
+generator, the judge and the UI. Measured with claude-haiku-4-5 and
+llama-4-maverick-17b, both land at about 1.6x with 70 to 81 percent traced.
+
+## Rules are a first class object in the UI
+
+Rules drive the tests and the score, so they have their own tab: every rule of the
+project with its bloc, its document reference, its description, the number of tests
+covering it, and a reviewed flag. Description and reference are editable inline and
+saved immediately, each edit committed to the project history. A rule with no test is
+flagged. Editing is keyed on the pair (bloc, rule): rule ids restart at R1 in every
+bloc, so a rule id alone is ambiguous.
+
+The tests tab filters by rule and by free text. A test can legitimately cover several
+rules, so the filter matches any of the rules it cites, and each test shows its rules
+as chips.
+
+### Two front end traps met while building this
+
+`x-data="testEditor('{{ id }}', {{ test | tojson }})"` was broken from the start: Jinja
+`tojson` escapes `'` but not `"`, so the JSON closed the double quoted attribute early
+and the whole inline script failed with "missing ) after argument list". Alpine never
+initialised on the tests tab, meaning test editing had never worked. The attribute is
+now single quoted.
+
+Panel functions live in `project.html`, never in a partial. Alpine initialises the root
+of a swapped fragment before the fragment's trailing `<script>` runs, so a function
+defined in the partial is undefined exactly when the root needs it. And no Jinja
+expression may appear inside that shared script: it renders empty outside its partial
+and breaks the whole block. Both were verified by running `node --check` on the
+**rendered** page, not on the template.

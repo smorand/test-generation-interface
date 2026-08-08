@@ -144,6 +144,14 @@ Upload doc
     → Export ZIP
 ```
 
+### Rules as a reviewable object
+
+Rules carry a `source_ref`, the identifier the specification gives them, so a test can
+be traced back to the spec. The **Règles** tab lists every rule with its bloc, its
+reference, how many tests cover it and a reviewed flag; description and reference are
+editable inline. The **Tests** tab filters by rule or by text, and a test can cover
+several rules.
+
 ### Scoring
 
 The judge maps each rule id to the tests covering it. The score is computed

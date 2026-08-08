@@ -174,3 +174,57 @@ async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.Monkey
     manager = StateManager()
     with pytest.raises(PermissionError):
         await manager.save("p1", {"blocs": []})
+
+
+async def test_update_rule_is_scoped_to_the_bloc(manager: StateManager) -> None:
+    """R1 restarts at 1 in every bloc, so the rule id alone is ambiguous."""
+    pid = await _create_sample(manager)
+    await manager.update_blocs(
+        pid,
+        [
+            {"id": "bloc-1", "rules": [{"id": "R1", "description": "premiere"}], "tests": []},
+            {"id": "bloc-2", "rules": [{"id": "R1", "description": "seconde"}], "tests": []},
+        ],
+    )
+    updated = await manager.update_rule(pid, "bloc-2", "R1", {"description": "corrigee", "reviewed": True})
+    assert updated is not None
+    rules = await manager.get_all_rules(pid)
+    by_bloc = {r["bloc_id"]: r for r in rules}
+    assert by_bloc["bloc-2"]["description"] == "corrigee"
+    assert by_bloc["bloc-2"]["reviewed"] is True
+    assert by_bloc["bloc-1"]["description"] == "premiere"  # intact
+
+
+async def test_update_rule_ignores_unknown_fields(manager: StateManager) -> None:
+    pid = await _create_sample(manager)
+    await manager.update_blocs(pid, [{"id": "bloc-1", "rules": [{"id": "R1", "description": "d"}], "tests": []}])
+    updated = await manager.update_rule(pid, "bloc-1", "R1", {"description": "d2", "id": "PIRATE", "score": 99})
+    assert updated is not None
+    assert updated["id"] == "R1"
+    assert "score" not in updated
+
+
+async def test_update_rule_missing_returns_none(manager: StateManager) -> None:
+    pid = await _create_sample(manager)
+    await manager.update_blocs(pid, [{"id": "bloc-1", "rules": [], "tests": []}])
+    assert await manager.update_rule(pid, "bloc-1", "R404", {"reviewed": True}) is None
+    assert await manager.update_rule(pid, "bloc-404", "R1", {"reviewed": True}) is None
+
+
+async def test_get_all_rules_carries_the_bloc(manager: StateManager) -> None:
+    pid = await _create_sample(manager)
+    await manager.update_blocs(
+        pid,
+        [
+            {
+                "id": "bloc-1",
+                "title": "Titre A",
+                "rules": [{"id": "R1", "description": "a"}, "pas un dict"],
+                "tests": [],
+            },
+            {"id": "bloc-2", "title": "Titre B", "rules": [{"id": "R1", "description": "b"}], "tests": []},
+        ],
+    )
+    rules = await manager.get_all_rules(pid)
+    assert len(rules) == 2  # l'entree invalide est ignoree
+    assert {r["bloc_title"] for r in rules} == {"Titre A", "Titre B"}

@@ -75,6 +75,15 @@
     </div>
 
     <!-- TESTS tab -->
+    <div x-show="activeTab === 'rules'">
+      <div id="rules-container"
+        hx-get="/projects/{{ project_id }}/partials/rules"
+        hx-trigger="load, every 30s [document.visibilityState === 'visible' && activeTab === 'rules']"
+        hx-swap="innerHTML">
+        <div class="text-gray-500 text-sm">Chargement des règles…</div>
+      </div>
+    </div>
+
     <div x-show="activeTab === 'tests'">
       <div id="tests-container"
         hx-get="/projects/{{ project_id }}/partials/tests"
@@ -130,6 +139,93 @@
   </main>
 
   <script>
+  // Fonctions des partials definies ici, pas dans les fragments: Alpine initialise
+  // la racine du fragment avant que le <script> de fin de fragment ne soit execute.
+function testsPanel() {
+  return {
+    query: '',
+    ruleFilter: '',
+    get visible() {
+      return document.querySelectorAll('.test-wrap:not([style*="display: none"])').length;
+    },
+    matches(card) {
+      // Un test peut couvrir plusieurs regles: le filtre accepte si l'une correspond
+      if (this.ruleFilter && !card.dataset.rules.split(' ').includes(this.ruleFilter)) return false;
+      const q = this.query.trim().toLowerCase();
+      if (!q) return true;
+      return q.split(/\s+/).every(term => card.dataset.search.includes(term));
+    },
+  };
+}
+
+function testEditor(projectId, initialTest) {
+  return {
+    projectId,
+    test: initialTest,
+    draft: JSON.parse(JSON.stringify(initialTest)),
+    editing: false,
+    addStep() {
+      const next = this.draft.steps.length + 1;
+      this.draft.steps.push({ order: next, description: '', expected_result: '' });
+    },
+    async saveTest() {
+      try {
+        const r = await fetch(`/projects/${this.projectId}/tests/${this.test.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.draft),
+        });
+        if (r.ok) {
+          const updated = await r.json();
+          this.test = updated;
+          this.draft = JSON.parse(JSON.stringify(updated));
+          this.editing = false;
+        }
+      } catch (e) {
+        console.error('Save failed', e);
+      }
+    },
+  };
+}
+
+function rulesPanel(projectId, reviewedCount) {
+  return {
+    projectId,
+    reviewedCount,
+    query: '',
+    onlyUnreviewed: false,
+
+    matches(row) {
+      if (this.onlyUnreviewed && row.dataset.reviewed === 'true') return false;
+      const q = this.query.trim().toLowerCase();
+      if (!q) return true;
+      return q.split(/\s+/).every(term => row.dataset.search.includes(term));
+    },
+
+    async save(blocId, ruleId, payload, el) {
+      const previous = el.style.borderColor;
+      try {
+        const r = await fetch(`/projects/${this.projectId}/blocs/${blocId}/rules/${ruleId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        el.style.borderColor = r.ok ? '#4ade80' : '#f87171';
+      } catch (e) {
+        el.style.borderColor = '#f87171';
+      }
+      setTimeout(() => { el.style.borderColor = previous; }, 1200);
+    },
+
+    async toggleReviewed(blocId, ruleId, el) {
+      const reviewed = el.checked;
+      await this.save(blocId, ruleId, { reviewed }, el);
+      el.closest('tr').dataset.reviewed = reviewed ? 'true' : 'false';
+      this.reviewedCount += reviewed ? 1 : -1;
+    },
+  };
+}
+
     function projectApp(projectId) {
       return {
         projectId,
@@ -137,6 +233,7 @@
         tabs: [
           { id: 'doc', label: '📄 DOC' },
           { id: 'blocs', label: '📦 BLOCS' },
+          { id: 'rules', label: '📋 RÈGLES' },
           { id: 'tests', label: '✅ TESTS' },
           { id: 'chat', label: '💬 CHAT' },
           { id: 'history', label: '🕑 HISTORIQUE' },
@@ -174,6 +271,7 @@
             this.statusMessage = 'Pipeline terminé';
             htmx.trigger('#blocs-container', 'load');
             htmx.trigger('#tests-container', 'load');
+            htmx.trigger('#rules-container', 'load');
           } else if (evt.type === 'bloc_status') {
             const score = evt.data.score;
             const suffix = (score === null || score === undefined) ? '' : ` (score ${score}%)`;
@@ -181,6 +279,7 @@
             htmx.trigger('#blocs-container', 'load');
             if (evt.data.status === 'done' || evt.data.status === 'needs_human') {
               htmx.trigger('#tests-container', 'load');
+              htmx.trigger('#rules-container', 'load');
             }
           } else if (evt.type === 'bloc_step') {
             const score = evt.data.score;
