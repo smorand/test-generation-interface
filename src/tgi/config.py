@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,8 +31,23 @@ class Settings(BaseSettings):
     max_judge_passes: int = 3
     max_parallel_blocs: int = 5
     max_context_tokens: int = 128000
+    # Output budget per LLM call. Reasoning models (gemma) spend thousands of
+    # tokens thinking before answering, so a small budget truncates them mid
+    # thought and yields no JSON at all.
+    max_output_tokens: int = 16000
     llm_json_retries: int = 5
     projects_dir: str = "./projects"
+
+    # Judge scoring. score is a 0-100 coverage percentage.
+    # >= judge_pass_score: accepted (green). < judge_bad_score: poor (red).
+    # In between: kept but flagged for human review (yellow).
+    judge_score_mode: Literal["coverage", "llm"] = "coverage"
+    judge_pass_score: int = 80
+    judge_bad_score: int = 40
+    # Rules judged per LLM call. Judging many rules at once makes a reasoning
+    # model overshoot its output budget and return nothing usable; measured on
+    # gemma, 10 rules against 26 tests answers reliably. 0 disables batching.
+    judge_batch_rules: int = 10
 
     # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)
     logs: str | None = None

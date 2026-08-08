@@ -1,21 +1,39 @@
-{% set status_colors = {
-  'pending': 'badge-gray',
-  'running': 'badge-blue',
-  'done': 'badge-green',
-  'needs_human': 'badge-orange',
-  'error': 'badge-red'
-} %}
-
-{% set status_labels = {
-  'pending': '⏳ En attente',
-  'running': '🔄 En cours',
-  'done': '✅ Terminé',
-  'needs_human': '⚠ Revue humaine',
-  'error': '❌ Erreur'
-} %}
-
 <div class="space-y-3">
   {% for bloc in blocs %}
+  {% set score = bloc.get('score') %}
+  {% if bloc.status == 'error' %}
+    {% set color = 'badge-red' %}
+    {% set label = '❌ Erreur' %}
+  {% elif bloc.status == 'running' %}
+    {% set color = 'badge-blue' %}
+    {% set label = '🔄 En cours' %}
+  {% elif bloc.status == 'pending' %}
+    {% set color = 'badge-gray' %}
+    {% set label = '⏳ En attente' %}
+  {% elif bloc.status == 'done' %}
+    {% if score is none %}
+      {% set color = 'badge-gray' %}
+      {% set label = '➖ Aucune règle métier' %}
+    {% else %}
+      {% set color = 'badge-green' %}
+      {% set label = '✅ Terminé, score ' ~ score ~ '%' %}
+    {% endif %}
+  {% elif bloc.status == 'needs_human' %}
+    {% if score is none %}
+      {% set color = 'badge-orange' %}
+      {% set label = '⚠ Revue humaine, score non évalué' %}
+    {% elif score < bad_score %}
+      {% set color = 'badge-red' %}
+      {% set label = '⛔ Couverture faible, score ' ~ score ~ '%' %}
+    {% else %}
+      {% set color = 'badge-orange' %}
+      {% set label = '⚠ Revue humaine, score ' ~ score ~ '%' %}
+    {% endif %}
+  {% else %}
+    {% set color = 'badge-gray' %}
+    {% set label = bloc.status %}
+  {% endif %}
+
   <div class="card" id="bloc-{{ bloc.id }}">
     <div class="flex items-start justify-between mb-2">
       <div>
@@ -23,9 +41,7 @@
         <div class="text-xs text-gray-500 mt-0.5">{{ bloc.id }} &bull; {{ bloc.rules|length }} règles &bull; {{ bloc.tests|length }} tests</div>
       </div>
       <div class="flex items-center gap-2">
-        <span class="badge {{ status_colors.get(bloc.status, 'badge-gray') }}">
-          {{ status_labels.get(bloc.status, bloc.status) }}
-        </span>
+        <span class="badge {{ color }}">{{ label }}</span>
         <button
           class="btn-secondary text-xs"
           hx-post="/projects/{{ project_id }}/blocs/{{ bloc.id }}/rerun"
@@ -33,6 +49,19 @@
         >↺ Rejouer</button>
       </div>
     </div>
+
+    {% if score is not none and bloc.status in ['done', 'needs_human'] %}
+    <div class="mt-2">
+      <div class="h-1.5 w-full bg-gray-800 rounded overflow-hidden">
+        <div class="h-full rounded {% if score >= pass_score %}bg-green-500{% elif score < bad_score %}bg-red-500{% else %}bg-orange-500{% endif %}"
+             style="width: {{ score }}%"></div>
+      </div>
+      <div class="text-xs text-gray-500 mt-1">
+        Couverture des règles: {{ score }}% (seuil {{ pass_score }}%)
+        {%- if bloc.get('best_version') %} &bull; version retenue v{{ bloc.best_version }}{% endif %}
+      </div>
+    </div>
+    {% endif %}
 
     {% if bloc.status == 'running' %}
     <div class="flex items-center gap-2 text-blue-400 text-xs mt-2">
@@ -42,6 +71,21 @@
 
     {% if bloc.status == 'error' and bloc.get('error') %}
     <div class="text-red-400 text-xs mt-2 bg-red-900/20 rounded p-2">{{ bloc.error }}</div>
+    {% endif %}
+
+    {% if bloc.get('judge_history') %}
+    <details class="mt-2">
+      <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-200">Historique du juge ({{ bloc.judge_history|length }} passe(s))</summary>
+      <ul class="mt-2 space-y-1">
+        {% for entry in bloc.judge_history %}
+        <li class="text-xs text-gray-400 flex gap-2">
+          <span class="text-gray-600 font-mono">v{{ entry.version }}</span>
+          <span>score {{ entry.score if entry.score is not none else 'n/a' }}{% if entry.score is not none %}%{% endif %}, {{ entry.tests_count }} tests</span>
+          {% if bloc.get('best_version') == entry.version %}<span class="text-green-500">retenue</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
     {% endif %}
 
     {% if bloc.rules %}

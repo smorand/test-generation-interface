@@ -28,55 +28,153 @@ class LLMJSONError(RuntimeError):
     """
 
 
+class JSONShapeError(ValueError):
+    """Raised when the parsed JSON is valid but has the wrong shape.
+
+    Small models often return the right information in the wrong structure
+    (a list instead of an object, for instance). Subclassing ValueError makes
+    chat_json treat it like a parse failure, so it retries with a targeted hint.
+    """
+
+
+class TruncatedAnswerError(ValueError):
+    """Raised when the model ran out of output budget before answering.
+
+    Reasoning models can spend the whole budget thinking, so the reply is cut
+    off mid thought and contains no JSON. Subclassing ValueError lets chat_json
+    retry with an instruction to answer directly.
+    """
+
+
 def strip_code_fences(text: str) -> str:
-    """Remove markdown code fences from LLM JSON output."""
-    match = _CODE_FENCE_RE.search(text)
-    if match:
-        return match.group(1).strip()
+    """Remove markdown code fences from LLM JSON output.
+
+    Returns the last fenced block: a model that reasons before answering emits
+    its final payload last.
+    """
+    matches = _CODE_FENCE_RE.findall(text)
+    if matches:
+        return str(matches[-1]).strip()
     return text.strip()
 
 
-def _extract_balanced(text: str, open_ch: str, close_ch: str) -> str | None:
-    """Return the first balanced {..}/[..] substring, or None.
+def _all_balanced(text: str, open_ch: str, close_ch: str) -> list[str]:
+    """Return every top-level balanced {..}/[..] substring, in order.
 
-    Scans for the first opening char and tracks nesting depth so a full JSON
-    object/array embedded in surrounding prose is recovered.
+    Tracks nesting depth so a complete JSON value embedded in surrounding prose
+    is recovered, including several candidates in one reply.
     """
-    start = text.find(open_ch)
-    if start == -1:
-        return None
+    found: list[str] = []
     depth = 0
-    for i in range(start, len(text)):
-        ch = text[i]
+    start = -1
+    for i, ch in enumerate(text):
         if ch == open_ch:
-            depth += 1
-        elif ch == close_ch:
-            depth -= 1
             if depth == 0:
-                return text[start : i + 1]
-    return None
+                start = i
+            depth += 1
+        elif ch == close_ch and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                found.append(text[start : i + 1])
+                start = -1
+    return found
+
+
+def _type_label(expected: type | tuple[type, ...]) -> str:
+    """Human-readable name for an expected JSON type, used in retry hints."""
+    names: dict[type, str] = {dict: "object", list: "array"}
+    if isinstance(expected, tuple):
+        return " or ".join(names.get(t, t.__name__) for t in expected)
+    return names.get(expected, expected.__name__)
 
 
 def extract_json(raw: str) -> Any:
-    """Parse JSON from an LLM response, tolerating prose and code fences.
+    """Parse JSON from an LLM response, tolerating prose, fences and reasoning.
 
-    Order: strip fences and parse; else find an embedded {..} object; else an
-    embedded [..] array. Raises json.JSONDecodeError if nothing parses.
+    Candidates are tried last first, because a model that thinks out loud emits
+    its final answer at the end while earlier braces are often drafts or an echo
+    of the prompt. Raises json.JSONDecodeError if nothing parses.
     """
     cleaned = strip_code_fences(raw)
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
+    candidates: list[str] = [cleaned]
     for open_ch, close_ch in (("{", "}"), ("[", "]")):
-        candidate = _extract_balanced(cleaned, open_ch, close_ch)
-        if candidate is not None:
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-    # Nothing parsed: re-raise a clean decode error on the cleaned text.
-    return json.loads(cleaned)
+        candidates.extend(reversed(_all_balanced(cleaned, open_ch, close_ch)))
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("no JSON found", cleaned, 0)
+
+
+def _failure_kind(exc: Exception) -> str:
+    """Short label describing why an answer was rejected, for logs."""
+    if isinstance(exc, TruncatedAnswerError):
+        return "truncation"
+    if isinstance(exc, JSONShapeError):
+        return "shape"
+    return "parse"
+
+
+def _parse_answer(
+    raw: str,
+    *,
+    truncated: bool,
+    expected_type: type | tuple[type, ...] | None,
+) -> Any:
+    """Parse and shape check one answer.
+
+    A truncated reply is reported as such even when a fragment happened to parse:
+    the recovered value is part of an unfinished answer, so asking the model to
+    fix its JSON or its shape would miss the real cause (no output budget left).
+    """
+    try:
+        parsed = extract_json(raw)
+    except json.JSONDecodeError:
+        if truncated:
+            raise TruncatedAnswerError(
+                "answer was cut off by the output token limit before any JSON was produced"
+            ) from None
+        raise
+    if expected_type is not None and not isinstance(parsed, expected_type):
+        if truncated:
+            raise TruncatedAnswerError("answer was cut off by the output token limit, only a fragment was recovered")
+        raise JSONShapeError(f"expected a JSON {_type_label(expected_type)}, got {type(parsed).__name__}")
+    return parsed
+
+
+def _correction_prompt(
+    user_content: str,
+    *,
+    exc: Exception,
+    raw: str,
+    shape_hint: str | None,
+    truncated: bool,
+) -> str:
+    """Build the retry prompt aimed at the actual failure."""
+    hint = f"\n{shape_hint}" if shape_hint else ""
+    if truncated:
+        # Do not echo a half finished thought back: it would eat the budget again.
+        return (
+            f"{user_content}\n\n"
+            f"IMPORTANT: your previous answer was cut off because you spent the whole "
+            f"output budget reasoning. Do NOT reason, do NOT explain, do NOT repeat the "
+            f"instructions. Answer immediately with the JSON only.{hint}"
+        )
+    # Feed the model its own faulty reply so it can correct it, not just repeat
+    # the original request. Truncate to keep the correction prompt bounded.
+    faulty = raw.strip()[:2000]
+    return (
+        f"{user_content}\n\n"
+        f"IMPORTANT: your previous answer was rejected ({exc}). "
+        f"Here is what you returned:\n"
+        f"<<<\n{faulty}\n>>>{hint}\n"
+        f"Return ONLY the corrected JSON, no prose, no markdown fences, nothing else."
+    )
 
 
 class LLMClient:
@@ -97,10 +195,34 @@ class LLMClient:
         system_prompt: str,
         user_content: str,
         temperature: float = 0.2,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> str:
         """Send a fresh-context chat request. Returns the raw content string."""
-        with trace_span("llm.chat", {"model": model, "max_tokens": max_tokens}):
+        text, _ = await self._chat_raw(
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return text
+
+    async def _chat_raw(
+        self,
+        model: str,
+        system_prompt: str,
+        user_content: str,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> tuple[str, str | None]:
+        """Send a chat request, returning (text, finish_reason).
+
+        finish_reason lets the caller tell a real answer apart from a reply the
+        model never finished, which is the usual failure mode of reasoning models
+        on a tight output budget.
+        """
+        budget = max_tokens if max_tokens is not None else settings.max_output_tokens
+        with trace_span("llm.chat", {"model": model, "max_tokens": budget}):
             response = await self._client.chat.completions.create(
                 model=model,
                 messages=[
@@ -108,15 +230,23 @@ class LLMClient:
                     {"role": "user", "content": user_content},
                 ],
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=budget,
             )
-        msg = response.choices[0].message
+        choice = response.choices[0]
+        msg = choice.message
         # Gemma 4 (and other reasoning models via ICA) may return content=None
         # and put the actual reply in reasoning_content (thinking blocks).
         content = msg.content
         if not content:
             content = getattr(msg, "reasoning_content", None) or ""
-        return content
+        finish_reason: str | None = getattr(choice, "finish_reason", None)
+        if finish_reason == "length":
+            logger.warning(
+                "Model %s hit the %d token output budget before finishing its answer",
+                model,
+                budget,
+            )
+        return content, finish_reason
 
     async def chat_json(
         self,
@@ -124,16 +254,20 @@ class LLMClient:
         system_prompt: str,
         user_content: str,
         temperature: float = 0.2,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         retries: int | None = None,
+        expected_type: type | tuple[type, ...] | None = None,
+        shape_hint: str | None = None,
     ) -> Any:
-        """Send request, parse JSON response, retrying on non-JSON output.
+        """Send request, parse JSON response, retrying on non-JSON or ill-shaped output.
 
-        On each parse failure the model's own faulty reply is fed back with an
-        explicit correction instruction, which is far more effective than only
-        repeating the request. Prose wrapping a JSON object/array is tolerated
-        via extract_json. After all attempts, raises LLMJSONError (expected,
-        not a bug).
+        On each failure the model's own faulty reply is fed back with an explicit
+        correction instruction, which is far more effective than only repeating
+        the request. Prose wrapping a JSON object/array is tolerated via
+        extract_json. When expected_type is given, a valid JSON of the wrong type
+        (a list where an object is required) is also retried, using shape_hint to
+        tell the model the exact structure wanted. After all attempts, raises
+        LLMJSONError (expected, not a bug).
         """
         max_attempts = retries if retries is not None else settings.llm_json_retries
         max_attempts = max(1, max_attempts)
@@ -142,35 +276,34 @@ class LLMClient:
 
         for attempt in range(max_attempts):
             raw = ""
+            truncated = False
             try:
-                raw = await self.chat(
+                raw, finish_reason = await self._chat_raw(
                     model=model,
                     system_prompt=system_prompt,
                     user_content=current_user_content,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                return extract_json(raw)
+                truncated = finish_reason == "length"
+                return _parse_answer(raw, truncated=truncated, expected_type=expected_type)
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
                 logger.warning(
-                    "JSON parse failed on attempt %d/%d for model %s: %s",
+                    "JSON %s failed on attempt %d/%d for model %s: %s",
+                    _failure_kind(exc),
                     attempt + 1,
                     max_attempts,
                     model,
                     exc,
                 )
                 if attempt < max_attempts - 1:
-                    # Feed the model its own faulty reply so it can correct it,
-                    # not just repeat the original request. Truncate to keep the
-                    # correction prompt bounded.
-                    faulty = raw.strip()[:2000]
-                    current_user_content = (
-                        f"{user_content}\n\n"
-                        f"IMPORTANT: your previous answer was NOT valid JSON and could not be parsed "
-                        f"(error: {exc}). Here is what you returned:\n"
-                        f"<<<\n{faulty}\n>>>\n"
-                        f"Return ONLY the corrected JSON, no prose, no markdown fences, nothing else."
+                    current_user_content = _correction_prompt(
+                        user_content,
+                        exc=exc,
+                        raw=raw,
+                        shape_hint=shape_hint,
+                        truncated=truncated,
                     )
             except Exception as exc:
                 # Transport / API error: retry silently up to the limit.

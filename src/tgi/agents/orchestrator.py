@@ -106,6 +106,43 @@ def split_document(text: str, chunk_size: int = _CHUNK_SIZE) -> list[dict[str, A
     return result
 
 
+def _targeted_gaps(verdict: dict[str, Any], rules: list[dict[str, Any]]) -> list[str]:
+    """Build the regeneration brief: judge gaps plus each uncovered rule.
+
+    Naming the uncovered rules explicitly gives the generator something concrete
+    to aim at, which is what actually moves the coverage score up.
+    """
+    descriptions = {
+        str(rule["id"]): str(rule.get("description", "")) for rule in rules if isinstance(rule, dict) and rule.get("id")
+    }
+    gaps: list[str] = list(verdict.get("gaps") or [])
+    for rule_id in verdict.get("uncovered_rules") or []:
+        description = descriptions.get(str(rule_id))
+        if description:
+            gaps.append(f"{rule_id}: {description}")
+    return gaps
+
+
+def _version_history(versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Summarize versions for persistence (full test sets live in git history)."""
+    return [{"version": v["version"], "score": v["score"], "tests_count": len(v["tests"])} for v in versions]
+
+
+def _best_version(versions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the highest scoring version, preferring the earliest on a tie.
+
+    An earlier version reaching the same score does it with fewer tests, so it is
+    the leaner answer. Versions the judge could not score (score None) are only
+    used as a last resort.
+    """
+    if not versions:
+        return None
+    scored = [v for v in versions if isinstance(v.get("score"), int)]
+    if not scored:
+        return versions[-1]
+    return max(scored, key=lambda v: (v["score"], -v["version"]))
+
+
 class Orchestrator:
     """Main pipeline coordinator."""
 
@@ -188,9 +225,42 @@ class Orchestrator:
             await self._emit(project_id, "pipeline_done", {"project_id": project_id})
 
     async def rerun_bloc(self, project_id: str, bloc_id: str) -> None:
-        """Rerun pipeline for a single bloc."""
-        await self._state.update_bloc(project_id, bloc_id, {"status": "pending", "judge_passes": 0})
+        """Rerun pipeline for a single bloc, clearing its previous verdict."""
+        await self._state.update_bloc(
+            project_id,
+            bloc_id,
+            {"status": "pending", "judge_passes": 0, "score": None, "judge_history": [], "error": None},
+        )
         await self._process_bloc(project_id, bloc_id)
+
+    async def _finalize(
+        self,
+        project_id: str,
+        bloc_id: str,
+        *,
+        status: str,
+        score: int | None,
+        passes: int,
+        history: list[dict[str, Any]],
+        best_version: int | None = None,
+    ) -> None:
+        """Persist the final verdict for a bloc, commit it, and notify the UI."""
+        updates: dict[str, Any] = {
+            "status": status,
+            "score": score,
+            "judge_passes": passes,
+            "judge_history": history,
+            "best_version": best_version,
+            "error": None,
+        }
+        await self._state.update_bloc(project_id, bloc_id, updates)
+        score_label = "n/a" if score is None else f"{score}%"
+        await self._git.commit(project_id, f"feat({bloc_id}): {status} with score {score_label}")
+        await self._emit(
+            project_id,
+            "bloc_status",
+            {"bloc_id": bloc_id, "status": status, "score": score, "judge_passes": passes},
+        )
 
     async def _process_bloc(self, project_id: str, bloc_id: str) -> None:
         """Extract rules, generate tests, run judge loop for one bloc."""
@@ -215,6 +285,13 @@ class Orchestrator:
                 project_id, "bloc_step", {"bloc_id": bloc_id, "step": "rules_extracted", "count": len(rules)}
             )
 
+            # No business rule in this chunk (table of contents, diagram caption).
+            # Nothing to test: skip generation and judging instead of burning
+            # several LLM calls per pass on an empty bloc.
+            if not rules:
+                await self._finalize(project_id, bloc_id, status="done", score=None, passes=0, history=[])
+                return
+
             # Step 2: Generate initial tests
             await self._emit(project_id, "bloc_step", {"bloc_id": bloc_id, "step": "generating"})
             tests = await self._generator.generate(
@@ -230,55 +307,15 @@ class Orchestrator:
                 project_id, "bloc_step", {"bloc_id": bloc_id, "step": "tests_generated", "count": len(tests)}
             )
 
-            # Step 3: Judge loop
-            max_passes = settings.max_judge_passes
-            for pass_num in range(1, max_passes + 1):
-                await self._emit(project_id, "bloc_step", {"bloc_id": bloc_id, "step": "judging", "pass": pass_num})
-
-                # Reload current tests from state
-                current_bloc = await self._state.get_bloc(project_id, bloc_id)
-                current_tests = current_bloc.get("tests", []) if current_bloc else tests
-
-                verdict = await self._judge.evaluate(
-                    model=model_judge,
-                    rules=rules,
-                    tests=current_tests,
-                )
-
-                if verdict["status"] == "ok":
-                    await self._state.update_bloc(project_id, bloc_id, {"status": "done", "judge_passes": pass_num})
-                    await self._git.commit(project_id, f"feat({bloc_id}): judge iteration pass {pass_num}")
-                    await self._emit(
-                        project_id, "bloc_status", {"bloc_id": bloc_id, "status": "done", "judge_passes": pass_num}
-                    )
-                    return
-
-                # Incomplete: regenerate targeting gaps
-                if pass_num < max_passes:
-                    await self._emit(
-                        project_id,
-                        "bloc_step",
-                        {
-                            "bloc_id": bloc_id,
-                            "step": "regenerating",
-                            "pass": pass_num,
-                            "gaps": verdict["gaps"],
-                        },
-                    )
-                    new_tests = await self._generator.generate(
-                        model=model_gen,
-                        bloc_id=bloc_id,
-                        rules=rules,
-                        existing_tests=current_tests,
-                        gaps=verdict["gaps"],
-                        test_id_offset=len(current_tests),
-                    )
-                    await self._state.add_or_update_tests(project_id, bloc_id, new_tests)
-                    await self._git.commit(project_id, f"feat({bloc_id}): judge iteration pass {pass_num}")
-
-            # Exhausted judge passes
-            await self._state.update_bloc(project_id, bloc_id, {"status": "needs_human", "judge_passes": max_passes})
-            await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "needs_human"})
+            # Step 3: judge loop, in its own method to keep this one readable.
+            await self._run_judge_loop(
+                project_id,
+                bloc_id,
+                rules=rules,
+                initial_tests=tests,
+                model_gen=model_gen,
+                model_judge=model_judge,
+            )
 
         except LLMJSONError as exc:
             # Expected, recoverable: the model did not return JSON after all
@@ -294,6 +331,102 @@ class Orchestrator:
             logger.exception("Pipeline failed for bloc %s: %s", bloc_id, exc)
             await self._state.update_bloc(project_id, bloc_id, {"status": "error", "error": str(exc)})
             await self._emit(project_id, "bloc_status", {"bloc_id": bloc_id, "status": "error", "error": str(exc)})
+
+    async def _run_judge_loop(
+        self,
+        project_id: str,
+        bloc_id: str,
+        *,
+        rules: list[dict[str, Any]],
+        initial_tests: list[dict[str, Any]],
+        model_gen: str,
+        model_judge: str,
+    ) -> None:
+        """Score the tests, regenerate against the gaps, keep the best version.
+
+        Every pass is a scored version, so a later pass that made coverage worse
+        cannot overwrite a better earlier one.
+        """
+        tests = initial_tests
+        max_passes = settings.max_judge_passes
+        versions: list[dict[str, Any]] = []
+        for pass_num in range(1, max_passes + 1):
+            await self._emit(project_id, "bloc_step", {"bloc_id": bloc_id, "step": "judging", "pass": pass_num})
+
+            # Reload current tests from state
+            current_bloc = await self._state.get_bloc(project_id, bloc_id)
+            current_tests = current_bloc.get("tests", []) if current_bloc else tests
+
+            verdict = await self._judge.evaluate(
+                model=model_judge,
+                rules=rules,
+                tests=current_tests,
+            )
+            score = verdict.get("score")
+            versions.append(
+                {
+                    "version": pass_num,
+                    "score": score,
+                    "tests": current_tests,
+                    "gaps": verdict.get("gaps") or [],
+                    "uncovered_rules": verdict.get("uncovered_rules") or [],
+                }
+            )
+            await self._emit(
+                project_id,
+                "bloc_step",
+                {"bloc_id": bloc_id, "step": "judged", "pass": pass_num, "score": score},
+            )
+
+            if verdict.get("status") == "ok":
+                await self._finalize(
+                    project_id,
+                    bloc_id,
+                    status="done",
+                    score=score,
+                    passes=pass_num,
+                    history=_version_history(versions),
+                    best_version=pass_num,
+                )
+                return
+
+            # Below threshold: regenerate, targeting the uncovered rules
+            if pass_num < max_passes:
+                gaps = _targeted_gaps(verdict, rules)
+                await self._emit(
+                    project_id,
+                    "bloc_step",
+                    {
+                        "bloc_id": bloc_id,
+                        "step": "regenerating",
+                        "pass": pass_num,
+                        "gaps": gaps,
+                    },
+                )
+                new_tests = await self._generator.generate(
+                    model=model_gen,
+                    bloc_id=bloc_id,
+                    rules=rules,
+                    existing_tests=current_tests,
+                    gaps=gaps,
+                    test_id_offset=len(current_tests),
+                )
+                await self._state.add_or_update_tests(project_id, bloc_id, new_tests)
+                await self._git.commit(project_id, f"feat({bloc_id}): tests regenerated after pass {pass_num}")
+
+        # Threshold never reached: keep the best scoring version, not the last.
+        best = _best_version(versions)
+        if best is not None:
+            await self._state.replace_tests(project_id, bloc_id, best["tests"])
+        await self._finalize(
+            project_id,
+            bloc_id,
+            status="needs_human",
+            score=best["score"] if best else None,
+            passes=max_passes,
+            history=_version_history(versions),
+            best_version=best["version"] if best else None,
+        )
 
     async def handle_chat(self, project_id: str, message: str, model: str) -> str:
         """Process a chat message. May trigger planner for complex instructions."""
@@ -344,7 +477,6 @@ class Orchestrator:
             system_prompt=chat_system,
             user_content=user_content,
             temperature=0.4,
-            max_tokens=2048,
         )
 
         await self._git.commit(project_id, "fix(chat): human modification via chat")

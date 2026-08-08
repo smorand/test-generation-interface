@@ -135,6 +135,32 @@ class StateManager:
             async with aiofiles.open(test_path, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(test, indent=2, ensure_ascii=False))
 
+    async def replace_tests(self, project_id: str, bloc_id: str, tests: list[dict[str, Any]]) -> None:
+        """Replace a bloc's test list wholesale, dropping tests that are gone.
+
+        Needed to restore a previous (best scoring) version, which can hold fewer
+        tests than the currently accumulated set.
+        """
+        kept_ids = {t["id"] for t in tests if isinstance(t, dict) and "id" in t}
+        removed_ids: set[str] = set()
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            for bloc in state["blocs"]:
+                if bloc["id"] == bloc_id:
+                    previous_ids = {t["id"] for t in bloc.get("tests", []) if isinstance(t, dict) and "id" in t}
+                    removed_ids = previous_ids - kept_ids
+                    bloc["tests"] = tests
+                    break
+            await self.save(project_id, state)
+
+        tests_dir = self.tests_dir(project_id)
+        for test in tests:
+            test_path = tests_dir / f"{test['id']}.json"
+            async with aiofiles.open(test_path, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(test, indent=2, ensure_ascii=False))
+        for test_id in removed_ids:
+            (tests_dir / f"{test_id}.json").unlink(missing_ok=True)
+
     async def update_test(self, project_id: str, test_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         async with _state_lock(project_id):
             state = await self.load(project_id)

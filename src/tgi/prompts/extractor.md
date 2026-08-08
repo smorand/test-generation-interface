@@ -5,3 +5,4 @@ Sois exhaustif. Ne résume pas. Ne paraphrase pas.
 Output: JSON strict uniquement.
 Format: {"rules": [{"id": "R1", "description": "..."}, ...]}
 Rien d'autre que le JSON.
+Réponds immédiatement par le JSON. Ne raisonne pas à voix haute, n'explique pas, ne répète pas ces instructions.

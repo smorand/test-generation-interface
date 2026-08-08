@@ -34,14 +34,39 @@ class _StubAgent:
     def __init__(self, method: str, result: Any) -> None:
         self._method = method
         self._result = result
+        self.calls = 0
 
     def __getattr__(self, name: str) -> Any:
         if name == self._method:
 
             async def _call(**kwargs: Any) -> Any:
+                self.calls += 1
                 if isinstance(self._result, Exception):
                     raise self._result
                 return self._result
+
+            return _call
+        raise AttributeError(name)
+
+
+class _SequenceAgent:
+    """Stub returning a different canned value on each successive call."""
+
+    def __init__(self, method: str, results: list[Any]) -> None:
+        self._method = method
+        self._results = results
+        self.calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        if name == self._method:
+
+            async def _call(**kwargs: Any) -> Any:
+                index = min(self.calls, len(self._results) - 1)
+                self.calls += 1
+                result = self._results[index]
+                if isinstance(result, Exception):
+                    raise result
+                return result
 
             return _call
         raise AttributeError(name)
@@ -99,12 +124,16 @@ async def test_run_pipeline_full(orchestrator: Orchestrator) -> None:
     }
     orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
     orchestrator._generator = _StubAgent("generate", [test_dict])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent("evaluate", {"status": "ok", "gaps": [], "redundancies": []})  # type: ignore[assignment]
+    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
+        "evaluate", {"status": "ok", "score": 100, "gaps": [], "uncovered_rules": [], "redundancies": []}
+    )
 
     await orchestrator.run_pipeline(pid)
 
     state = await orchestrator._state.load(pid)
     assert all(b["status"] == "done" for b in state["blocs"])
+    assert all(b["score"] == 100 for b in state["blocs"])
+    assert all(b["judge_passes"] == 1 for b in state["blocs"])
 
 
 async def test_run_pipeline_needs_human_when_gaps_persist(orchestrator: Orchestrator) -> None:
@@ -114,12 +143,97 @@ async def test_run_pipeline_needs_human_when_gaps_persist(orchestrator: Orchestr
     orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
     orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
     orchestrator._judge = _StubAgent(  # type: ignore[assignment]
-        "evaluate", {"status": "incomplete", "gaps": ["missing"], "redundancies": []}
+        "evaluate",
+        {"status": "incomplete", "score": 50, "gaps": ["missing"], "uncovered_rules": ["R1"], "redundancies": []},
     )
 
     await orchestrator.run_pipeline(pid)
     state = await orchestrator._state.load(pid)
     assert all(b["status"] == "needs_human" for b in state["blocs"])
+    assert all(b["score"] == 50 for b in state["blocs"])
+    # One entry per judge pass
+    assert all(len(b["judge_history"]) == 3 for b in state["blocs"])
+
+
+async def test_bloc_without_rules_is_done_without_generating(orchestrator: Orchestrator) -> None:
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+
+    orchestrator._extractor = _StubAgent("extract", [])  # type: ignore[assignment]
+    generator = _StubAgent("generate", [])
+    judge = _StubAgent("evaluate", {"status": "ok", "score": 100})
+    orchestrator._generator = generator  # type: ignore[assignment]
+    orchestrator._judge = judge  # type: ignore[assignment]
+
+    await orchestrator.run_pipeline(pid)
+
+    state = await orchestrator._state.load(pid)
+    bloc = state["blocs"][0]
+    assert bloc["status"] == "done"
+    # No rule to cover: no score, and neither generator nor judge was called.
+    assert bloc["score"] is None
+    assert generator.calls == 0
+    assert judge.calls == 0
+
+
+async def test_best_scoring_version_is_kept(orchestrator: Orchestrator) -> None:
+    """A later pass that scores worse must not overwrite the better earlier one."""
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+
+    def _test(test_id: str) -> dict[str, Any]:
+        return {
+            "id": test_id,
+            "bloc_id": "bloc-1",
+            "business_rule": "br",
+            "name": test_id,
+            "description": "d",
+            "steps": [{"order": 1, "description": "s", "expected_result": "e"}],
+            "status": "draft",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z",
+        }
+
+    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
+    # v1 has TEST-001 only; regeneration adds TEST-002.
+    orchestrator._generator = _SequenceAgent("generate", [[_test("TEST-001")], [_test("TEST-002")]])  # type: ignore[assignment]
+    # Pass 1 scores 70, pass 2 scores 30, pass 3 scores 10: best is pass 1.
+    orchestrator._judge = _SequenceAgent(  # type: ignore[assignment]
+        "evaluate",
+        [
+            {"status": "incomplete", "score": 70, "gaps": ["g"], "uncovered_rules": ["R1"]},
+            {"status": "incomplete", "score": 30, "gaps": ["g"], "uncovered_rules": ["R1"]},
+            {"status": "incomplete", "score": 10, "gaps": ["g"], "uncovered_rules": ["R1"]},
+        ],
+    )
+
+    await orchestrator._process_bloc(pid, "bloc-1")
+
+    state = await orchestrator._state.load(pid)
+    bloc = state["blocs"][0]
+    assert bloc["status"] == "needs_human"
+    assert bloc["score"] == 70
+    assert bloc["best_version"] == 1
+    # The v1 test set is restored, so the extra test from v2 is dropped.
+    assert [t["id"] for t in bloc["tests"]] == ["TEST-001"]
+
+
+async def test_unscored_judge_keeps_tests_for_human(orchestrator: Orchestrator) -> None:
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+
+    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
+    orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
+    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
+        "evaluate", {"status": "unknown", "score": None, "gaps": [], "uncovered_rules": ["R1"]}
+    )
+
+    await orchestrator._process_bloc(pid, "bloc-1")
+
+    state = await orchestrator._state.load(pid)
+    bloc = state["blocs"][0]
+    assert bloc["status"] == "needs_human"
+    assert bloc["score"] is None
 
 
 async def test_process_bloc_error_status(orchestrator: Orchestrator) -> None:
@@ -193,7 +307,9 @@ async def test_rerun_bloc(orchestrator: Orchestrator) -> None:
 
     orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
     orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent("evaluate", {"status": "ok", "gaps": [], "redundancies": []})  # type: ignore[assignment]
+    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
+        "evaluate", {"status": "ok", "score": 88, "gaps": [], "uncovered_rules": [], "redundancies": []}
+    )
 
     state = await orchestrator._state.load(pid)
     bloc_id = state["blocs"][0]["id"]
@@ -201,6 +317,38 @@ async def test_rerun_bloc(orchestrator: Orchestrator) -> None:
     bloc = await orchestrator._state.get_bloc(pid, bloc_id)
     assert bloc is not None
     assert bloc["status"] == "done"
+    assert bloc["score"] == 88
+
+
+async def test_rerun_clears_previous_verdict_and_error(orchestrator: Orchestrator) -> None:
+    """Rerunning a failed bloc from the UI must not keep its stale score or error."""
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+    state = await orchestrator._state.load(pid)
+    bloc_id = state["blocs"][0]["id"]
+
+    # Simulate a previous failed run with a stale verdict
+    await orchestrator._state.update_bloc(
+        pid,
+        bloc_id,
+        {
+            "status": "error",
+            "error": "boom",
+            "score": 12,
+            "judge_passes": 3,
+            "judge_history": [{"version": 1, "score": 12, "tests_count": 1}],
+        },
+    )
+
+    orchestrator._extractor = _StubAgent("extract", [])  # type: ignore[assignment]
+    await orchestrator.rerun_bloc(pid, bloc_id)
+
+    bloc = await orchestrator._state.get_bloc(pid, bloc_id)
+    assert bloc is not None
+    assert bloc["status"] == "done"  # no rules to cover
+    assert bloc["error"] is None
+    assert bloc["score"] is None
+    assert bloc["judge_history"] == []
 
 
 def test_get_project_lock_singleton() -> None:

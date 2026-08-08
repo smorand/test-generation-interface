@@ -175,13 +175,17 @@
             htmx.trigger('#blocs-container', 'load');
             htmx.trigger('#tests-container', 'load');
           } else if (evt.type === 'bloc_status') {
-            this.statusMessage = `Bloc ${evt.data.bloc_id}: ${evt.data.status}`;
+            const score = evt.data.score;
+            const suffix = (score === null || score === undefined) ? '' : ` (score ${score}%)`;
+            this.statusMessage = `Bloc ${evt.data.bloc_id}: ${evt.data.status}${suffix}`;
             htmx.trigger('#blocs-container', 'load');
-            if (evt.data.status === 'done') {
+            if (evt.data.status === 'done' || evt.data.status === 'needs_human') {
               htmx.trigger('#tests-container', 'load');
             }
           } else if (evt.type === 'bloc_step') {
-            this.statusMessage = `${evt.data.bloc_id}: ${evt.data.step}`;
+            const score = evt.data.score;
+            const suffix = (score === null || score === undefined) ? '' : ` score ${score}%`;
+            this.statusMessage = `${evt.data.bloc_id}: ${evt.data.step}${suffix}`;
           }
         },
 

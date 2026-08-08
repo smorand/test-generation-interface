@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extractor.md"
 
+_SHAPE_HINT = 'Return a JSON object shaped exactly like: {"rules": [{"id": "R1", "description": "..."}]}'
+
 
 class ExtractorAgent:
     """Extract business rules from a text chunk (fresh context per call)."""
@@ -40,27 +42,40 @@ class ExtractorAgent:
                 system_prompt=self._system_prompt,
                 user_content=user_content,
                 temperature=0.1,
-                max_tokens=4096,
+                expected_type=(dict, list),
+                shape_hint=_SHAPE_HINT,
             )
         except RuntimeError as exc:
-            logger.error("Extractor failed: %s", exc)
+            logger.warning("Extractor failed: %s", exc)
             raise
 
-        rules = result.get("rules", [])
+        # Tolerate a bare array of rules instead of {"rules": [...]}.
+        rules = result if isinstance(result, list) else result.get("rules", [])
         if not isinstance(rules, list):
-            raise ValueError(f"Expected list of rules, got: {type(rules)}")
+            logger.warning("Extractor returned a non-list rules field (%s), ignoring", type(rules).__name__)
+            rules = []
 
-        # Validate each rule has id and description
+        # Validate each rule has id and description, tolerating plain strings.
+        # Ids are deduplicated: the judge scores coverage per id, so duplicates
+        # would silently distort the percentage.
         validated: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
         for i, rule in enumerate(rules):
-            if not isinstance(rule, dict):
+            if isinstance(rule, str):
+                description: str | None = rule
+                raw_id: Any = None
+            elif isinstance(rule, dict):
+                description = rule.get("description") or rule.get("rule") or rule.get("text")
+                raw_id = rule.get("id")
+            else:
                 continue
-            validated.append(
-                {
-                    "id": rule.get("id", f"R{i + 1}"),
-                    "description": rule.get("description", str(rule)),
-                }
-            )
+            if not description:
+                continue
+            rule_id = str(raw_id or f"R{i + 1}")
+            if rule_id in seen_ids:
+                rule_id = f"{rule_id}-{i + 1}"
+            seen_ids.add(rule_id)
+            validated.append({"id": rule_id, "description": str(description)})
 
         logger.info("Extracted %d rules from chunk", len(validated))
         return validated

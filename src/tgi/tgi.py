@@ -315,7 +315,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return templates.TemplateResponse(
             request,
             "partials/blocs.html",
-            {"blocs": state["blocs"], "project_id": project_id},
+            {
+                "blocs": state["blocs"],
+                "project_id": project_id,
+                "pass_score": app_settings.judge_pass_score,
+                "bad_score": app_settings.judge_bad_score,
+            },
         )
 
     @application.get("/projects/{project_id}/partials/tests", response_class=HTMLResponse)

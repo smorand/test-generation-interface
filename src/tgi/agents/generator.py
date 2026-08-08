@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "generator.md"
 _SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "test_schema.json"
 
+_SHAPE_HINT = 'Return a JSON object shaped exactly like: {"tests": [{"id": "TEST-001", "name": "...", "steps": []}]}'
+
 
 class GeneratorAgent:
     """Generate functional tests (fresh context per call)."""
@@ -72,15 +74,18 @@ class GeneratorAgent:
                 system_prompt=self._system_prompt,
                 user_content=user_content,
                 temperature=0.3,
-                max_tokens=8192,
+                expected_type=(dict, list),
+                shape_hint=_SHAPE_HINT,
             )
         except RuntimeError as exc:
-            logger.error("Generator failed: %s", exc)
+            logger.warning("Generator failed: %s", exc)
             raise
 
-        raw_tests = result.get("tests", [])
+        # Tolerate a bare array of tests instead of {"tests": [...]}.
+        raw_tests = result if isinstance(result, list) else result.get("tests", [])
         if not isinstance(raw_tests, list):
-            raise ValueError(f"Expected list of tests, got: {type(raw_tests)}")
+            logger.warning("Generator returned a non-list tests field (%s), ignoring", type(raw_tests).__name__)
+            raw_tests = []
 
         validated: list[dict[str, Any]] = []
         for i, test in enumerate(raw_tests):

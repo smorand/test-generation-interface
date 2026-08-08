@@ -5,3 +5,4 @@ Ne génère pas de doublons avec les tests existants.
 Si des gaps spécifiques sont fournis, concentre-toi sur eux.
 Output: JSON strict uniquement selon le schéma fourni.
 Rien d'autre que le JSON.
+Réponds immédiatement par le JSON. Ne raisonne pas à voix haute, n'explique pas, ne répète pas ces instructions.

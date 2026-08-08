@@ -16,6 +16,8 @@ _COMPLEX_INSTRUCTION_LENGTH = 200
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "planner.md"
 
+_SHAPE_HINT = 'Return a JSON object shaped exactly like: {"steps": [{"order": 1, "action": "...", "target": "all"}]}'
+
 
 class PlannerAgent:
     """Decompose a human instruction into ordered steps (fresh context per call)."""
@@ -50,18 +52,24 @@ class PlannerAgent:
                 system_prompt=self._system_prompt,
                 user_content=user_content,
                 temperature=0.2,
-                max_tokens=2048,
+                expected_type=(dict, list),
+                shape_hint=_SHAPE_HINT,
             )
         except RuntimeError as exc:
-            logger.error("Planner failed: %s", exc)
+            logger.warning("Planner failed: %s", exc)
             raise
 
-        steps = result.get("steps", [])
+        # Tolerate a bare array of steps instead of {"steps": [...]}.
+        steps = result if isinstance(result, list) else result.get("steps", [])
         if not isinstance(steps, list):
-            raise ValueError(f"Expected list of steps, got: {type(steps)}")
+            logger.warning("Planner returned a non-list steps field (%s), ignoring", type(steps).__name__)
+            steps = []
 
         validated: list[dict[str, Any]] = []
         for i, step in enumerate(steps):
+            if isinstance(step, str):
+                validated.append({"order": i + 1, "action": step, "target": "all", "clarification_needed": False})
+                continue
             if not isinstance(step, dict):
                 continue
             validated.append(

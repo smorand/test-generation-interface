@@ -214,3 +214,113 @@ async def test_partials_tests_and_history(client: AsyncClient) -> None:
     assert resp_tests.status_code == 200
     resp_hist = await client.get(f"/projects/{pid}/partials/history")
     assert resp_hist.status_code == 200
+
+
+async def test_blocs_partial_colour_codes_scores(client: AsyncClient) -> None:
+    """The blocs partial must show the score and the right colour per outcome."""
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _upload_sample(client)
+    state = await state_manager.load(project_id)
+    state["blocs"] = [
+        {
+            "id": "b-green",
+            "title": "Passe",
+            "chunk": "c",
+            "rules": [{"id": "R1", "description": "d"}],
+            "tests": [],
+            "status": "done",
+            "score": 97,
+            "judge_passes": 1,
+            "best_version": 1,
+            "judge_history": [{"version": 1, "score": 97, "tests_count": 3}],
+        },
+        {
+            "id": "b-yellow",
+            "title": "Revue",
+            "chunk": "c",
+            "rules": [{"id": "R1", "description": "d"}],
+            "tests": [],
+            "status": "needs_human",
+            "score": 60,
+            "judge_passes": 3,
+            "best_version": 2,
+            "judge_history": [
+                {"version": 1, "score": 40, "tests_count": 2},
+                {"version": 2, "score": 60, "tests_count": 4},
+            ],
+        },
+        {
+            "id": "b-red",
+            "title": "Faible",
+            "chunk": "c",
+            "rules": [{"id": "R1", "description": "d"}],
+            "tests": [],
+            "status": "needs_human",
+            "score": 12,
+            "judge_passes": 3,
+            "judge_history": [],
+        },
+        {
+            "id": "b-unscored",
+            "title": "Non evalue",
+            "chunk": "c",
+            "rules": [{"id": "R1", "description": "d"}],
+            "tests": [],
+            "status": "needs_human",
+            "score": None,
+            "judge_passes": 3,
+            "judge_history": [],
+        },
+        {
+            "id": "b-norules",
+            "title": "Sans regle",
+            "chunk": "c",
+            "rules": [],
+            "tests": [],
+            "status": "done",
+            "score": None,
+            "judge_passes": 0,
+            "judge_history": [],
+        },
+        {
+            "id": "b-error",
+            "title": "Casse",
+            "chunk": "c",
+            "rules": [],
+            "tests": [],
+            "status": "error",
+            "error": "Le modele n'a pas renvoye de JSON exploitable.",
+            "judge_passes": 0,
+        },
+    ]
+    await state_manager.save(project_id, state)
+
+    resp = await client.get(f"/projects/{project_id}/partials/blocs")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # Green: passed the threshold, score shown
+    assert "badge-green" in html
+    assert "Terminé, score 97%" in html
+    # Yellow: kept but flagged, best version reported
+    assert "badge-orange" in html
+    assert "Revue humaine, score 60%" in html
+    assert "version retenue v2" in html
+    # Red: score below the bad threshold
+    assert "badge-red" in html
+    assert "Couverture faible, score 12%" in html
+    # Unscored judge and rule-less bloc must not claim a percentage
+    assert "score non évalué" in html
+    assert "Aucune règle métier" in html
+    # Error stays rerunnable
+    assert "renvoye de JSON exploitable" in html  # apostrophes are HTML escaped
+    assert html.count("↺ Rejouer") == 6
+    # The score bar reflects the configured threshold
+    assert f"seuil {app_settings_pass_score()}%" in html
+
+
+def app_settings_pass_score() -> int:
+    from tgi.config import Settings
+
+    return Settings().judge_pass_score

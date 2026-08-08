@@ -53,6 +53,21 @@ def test_extract_json_pure_prose_raises() -> None:
         extract_json("Expert Functional Analyst. Extract all rules from the text.")
 
 
+def test_extract_json_prefers_the_last_object() -> None:
+    # A reasoning model echoes the prompt template, drafts, then answers last.
+    raw = (
+        'Instructions were: `{"rules": [{"id": "R1", "description": "..."}, ...]}`\n'
+        'Draft: {"rules": []}\n'
+        'Final answer:\n{"rules": [{"id": "R1", "description": "la vraie regle"}]}'
+    )
+    assert extract_json(raw) == {"rules": [{"id": "R1", "description": "la vraie regle"}]}
+
+
+def test_strip_code_fences_returns_last_fence() -> None:
+    raw = '```json\n{"draft": true}\n```\nthen after thinking:\n```json\n{"final": true}\n```'
+    assert strip_code_fences(raw) == '{"final": true}'
+
+
 class _FakeMessage:
     def __init__(self, content: str | None, reasoning: str | None = None) -> None:
         self.content = content
@@ -61,13 +76,14 @@ class _FakeMessage:
 
 
 class _FakeChoice:
-    def __init__(self, message: _FakeMessage) -> None:
+    def __init__(self, message: _FakeMessage, finish_reason: str = "stop") -> None:
         self.message = message
+        self.finish_reason = finish_reason
 
 
 class _FakeResponse:
-    def __init__(self, message: _FakeMessage) -> None:
-        self.choices = [_FakeChoice(message)]
+    def __init__(self, message: _FakeMessage, finish_reason: str = "stop") -> None:
+        self.choices = [_FakeChoice(message, finish_reason)]
 
 
 class _FakeCompletions:
@@ -154,7 +170,7 @@ async def test_chat_json_reinjects_faulty_reply() -> None:
     assert len(seen) == 2
     # Second attempt must contain the correction and the faulty reply.
     assert "garbage prose one" in seen[1]
-    assert "NOT valid JSON" in seen[1]
+    assert "rejected" in seen[1]
     assert "ORIGINAL" in seen[1]
 
 
@@ -164,6 +180,100 @@ async def test_chat_json_exhausts_retries_raises_llmjsonerror() -> None:
         await client.chat_json(model="m", system_prompt="s", user_content="u", retries=2)
     # LLMJSONError must remain a RuntimeError so existing handlers keep working.
     assert issubclass(LLMJSONError, RuntimeError)
+
+
+async def test_chat_json_retries_when_shape_is_wrong() -> None:
+    # Valid JSON of the wrong type must be retried, then accepted once fixed.
+    seen: list[str] = []
+    responses = [_FakeResponse(_FakeMessage("[1, 2, 3]")), _FakeResponse(_FakeMessage('{"ok": true}'))]
+
+    class _CapturingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs["messages"][-1]["content"])
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _CapturingCompletions(responses)
+    client._client = fake  # type: ignore[assignment]
+
+    result = await client.chat_json(
+        model="m",
+        system_prompt="s",
+        user_content="u",
+        retries=3,
+        expected_type=dict,
+        shape_hint="Return a JSON object with keys a and b",
+    )
+    assert result == {"ok": True}
+    assert "expected a JSON object, got list" in seen[1]
+    assert "Return a JSON object with keys a and b" in seen[1]
+
+
+async def test_chat_json_wrong_shape_exhausts_retries() -> None:
+    client = _make_client([_FakeMessage('["always a list"]')])
+    with pytest.raises(LLMJSONError, match="no valid JSON after 2 attempts"):
+        await client.chat_json(model="m", system_prompt="s", user_content="u", retries=2, expected_type=dict)
+
+
+async def test_chat_json_accepts_either_shape() -> None:
+    client = _make_client([_FakeMessage('["a list is fine"]')])
+    result = await client.chat_json(model="m", system_prompt="s", user_content="u", expected_type=(dict, list))
+    assert result == ["a list is fine"]
+
+
+async def test_chat_uses_configured_output_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "max_output_tokens", 12345)
+    seen: list[int] = []
+
+    class _RecordingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs["max_tokens"])
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _RecordingCompletions([_FakeResponse(_FakeMessage("hi"))])
+    client._client = fake  # type: ignore[assignment]
+
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen == [12345]
+
+
+async def test_chat_json_truncated_answer_asks_for_direct_reply() -> None:
+    """A reasoning model cut off mid thought must be told to skip the reasoning."""
+    seen: list[str] = []
+    responses = [
+        # Budget exhausted while thinking: no JSON at all.
+        _FakeResponse(_FakeMessage(None, reasoning="Let me think step by step about R1, R2"), "length"),
+        _FakeResponse(_FakeMessage('{"rules": []}')),
+    ]
+
+    class _CapturingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs["messages"][-1]["content"])
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _CapturingCompletions(responses)
+    client._client = fake  # type: ignore[assignment]
+
+    result = await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3)
+    assert result == {"rules": []}
+    # The retry must demand a direct answer, and must not echo the truncated thought.
+    assert "cut off" in seen[1]
+    assert "Do NOT reason" in seen[1]
+    assert "step by step" not in seen[1]
+
+
+async def test_chat_json_truncated_but_json_present_is_accepted() -> None:
+    # Truncation only matters when it prevented a parseable answer.
+    client = _make_client([_FakeMessage('{"ok": true}')])
+    client._client.chat.completions._responses[0].choices[0].finish_reason = "length"  # type: ignore[attr-defined]
+    assert await client.chat_json(model="m", system_prompt="s", user_content="u") == {"ok": True}
 
 
 async def test_chat_json_default_retries_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,3 +318,39 @@ async def test_check_context_window_found() -> None:
     ok, ctx = await client.check_context_window("m1", 128000)
     assert ok is True
     assert ctx == 200000
+
+
+async def test_truncation_wins_over_shape_error() -> None:
+    """A cut off answer must be reported as truncation, not as a shape problem.
+
+    Telling the model to fix its shape is useless when the real cause is that it
+    ran out of budget mid answer and only an inner fragment was recovered.
+    """
+    seen: list[str] = []
+    responses = [
+        # Cut off while writing the object: only the inner array survives.
+        _FakeResponse(_FakeMessage('{"covered_rules": ["R1", "R2"'), "length"),
+        _FakeResponse(_FakeMessage('{"covered_rules": ["R1"]}')),
+    ]
+
+    class _CapturingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs["messages"][-1]["content"])
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _CapturingCompletions(responses)
+    client._client = fake  # type: ignore[assignment]
+
+    result = await client.chat_json(
+        model="m",
+        system_prompt="s",
+        user_content="u",
+        retries=3,
+        expected_type=dict,
+        shape_hint="Return a JSON object",
+    )
+    assert result == {"covered_rules": ["R1"]}
+    assert "cut off" in seen[1]
+    assert "Do NOT reason" in seen[1]
