@@ -324,3 +324,38 @@ def app_settings_pass_score() -> int:
     from tgi.config import Settings
 
     return Settings().judge_pass_score
+
+
+async def test_blocs_partial_shows_near_identical_rules(client: AsyncClient) -> None:
+    """A reviewer must see the close rules, with both texts, to arbitrate."""
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _upload_sample(client)
+    state = await state_manager.load(project_id)
+    state["blocs"] = [
+        {
+            "id": "bloc-1",
+            "title": "Regles proches",
+            "chunk": "c",
+            "rules": [
+                {"id": "R3", "description": "Si le CDC est Banquier Conseil, supprimer la relation"},
+                {"id": "R9", "description": "Si le CDC n'est pas Banquier Conseil, supprimer la relation"},
+            ],
+            "tests": [],
+            "status": "done",
+            "score": 100,
+            "judge_passes": 1,
+            "similar_rules": [{"a": "R3", "b": "R9", "ratio": 0.907}],
+        }
+    ]
+    await state_manager.save(project_id, state)
+
+    resp = await client.get(f"/projects/{project_id}/partials/blocs")
+    html = resp.text
+    assert "paire(s) de règles très proches" in html
+    assert "R3 ~ R9 (91%)" in html
+    # Both wordings are shown so the difference is visible
+    assert "Si le CDC est Banquier Conseil" in html
+    assert "pas Banquier Conseil" in html
+    # And the warning is explicit that nothing was merged
+    assert "jamais fusionnées" in html

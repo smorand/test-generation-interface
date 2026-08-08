@@ -236,3 +236,28 @@ one bloc scored worse on a later pass and its earlier version was restored.
 Event queue: with no browser attached the SSE queue saturates. The oldest event is
 dropped rather than the newest, so a client connecting later still gets the current
 state, and the warning is logged once per project instead of on every event.
+
+## Near identical rules: reported, never merged
+
+The extractor sometimes states the same rule twice, which suggested deduplicating
+rules the way tests are deduplicated. Measuring the 112 pairs above ratio 0.9 on the
+reference specification showed that would have been a data destroying bug:
+
+| Pair | Ratio | What they actually are |
+|---|---|---|
+| "est un Banquier Conseil" vs "n'est pas Banquier Conseil et n'est pas CAGE" | 0.907 | a rule and **its own negation** |
+| "notification de suppression de relation" vs "notification d'ajout de relation" | 0.901 | opposite actions |
+| "le CDC gestionnaire a changé" vs "le manager du CDC gestionnaire a changé" | 0.946 | different subjects |
+| "Quand le RRC se connecte" vs "Quand le binôme se connecte" | 0.964 | different actors |
+| "Le lien Supprimer ouvre une Lightbox" vs "Le lien Supprimer dans la colonne Action ouvre une Lightbox" | high | genuinely the same rule restated |
+
+Zero pairs were identical after normalization. A functional specification is written
+as parametric variants of the same sentence, so the differing fragment is short but
+semantically decisive, and similarity cannot tell a restatement from a variant.
+Distinguishing them needs semantics, which means another LLM call with its own error
+rate, to delete business rules.
+
+`similar_rule_pairs` therefore only reports: the bloc carries a `similar_rules` list
+and the UI shows both wordings side by side, stating that nothing was merged. Rules,
+scores and generation are untouched. On the reference specification that flags 112
+pairs across 42 of 88 blocs, capped at 20 per bloc, closest first.

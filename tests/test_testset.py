@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tgi.testset import merge_tests, normalize_label, rule_ids_of, saturated_rule_ids
+from tgi.testset import merge_tests, normalize_label, rule_ids_of, saturated_rule_ids, similar_rule_pairs
 
 
 def _test(test_id: str, rule: str, name: str, description: str = "d") -> dict[str, Any]:
@@ -130,3 +130,65 @@ def test_merge_on_real_bloc_shape_cuts_the_explosion() -> None:
     assert len(kept) <= 49 * 4
     # Naive appending would have produced 49 rules x 4 scenarios x 3 passes
     assert len(kept) < 49 * 4 * 3
+
+
+# ---------------------------------------------------------------------------
+# Near identical rules: flagged, never merged
+# ---------------------------------------------------------------------------
+
+
+def _rule(rule_id: str, description: str) -> dict[str, Any]:
+    return {"id": rule_id, "description": description}
+
+
+def test_similar_rule_pairs_flags_close_wording() -> None:
+    rules = [
+        _rule("R1", "Le lien Supprimer ouvre une Lightbox de confirmation"),
+        _rule("R2", "Le lien Supprimer dans la colonne Action ouvre une Lightbox de confirmation"),
+        _rule("R3", "Le systeme envoie un courriel au gestionnaire"),
+    ]
+    pairs = similar_rule_pairs(rules, threshold=0.8)
+    assert len(pairs) == 1
+    assert {pairs[0]["a"], pairs[0]["b"]} == {"R1", "R2"}
+    assert 0.8 <= pairs[0]["ratio"] <= 1.0
+
+
+def test_similar_rule_pairs_never_removes_a_rule() -> None:
+    """The whole point: reporting only. A negation reads like its own rule."""
+    # Verbatim from the reference specification, where this pair scored 0.907
+    rules = [
+        _rule(
+            "R3",
+            "Si le nouveau CDC gestionnaire est un Banquier Conseil, le système doit "
+            "supprimer la relation du portefeuille de l'ancien RRC",
+        ),
+        _rule(
+            "R9",
+            "Si le nouveau CDC gestionnaire n'est pas Banquier Conseil et n'est pas « CAGE », "
+            "le système doit supprimer la relation du portefeuille de l'ancien RRC",
+        ),
+    ]
+    pairs = similar_rule_pairs(rules, threshold=0.9)
+    # Flagged for a human, and both rules are still there for the caller
+    assert len(pairs) == 1
+    assert len(rules) == 2
+
+
+def test_similar_rule_pairs_ignores_distinct_rules() -> None:
+    rules = [
+        _rule("R1", "Le systeme cree une habilitation"),
+        _rule("R2", "Le rapport quotidien liste les cloturs"),
+    ]
+    assert similar_rule_pairs(rules, threshold=0.9) == []
+
+
+def test_similar_rule_pairs_sorted_and_capped() -> None:
+    rules = [_rule(f"R{i}", f"Le systeme traite la demande numero {i}") for i in range(12)]
+    pairs = similar_rule_pairs(rules, threshold=0.5, limit=5)
+    assert len(pairs) == 5
+    assert pairs == sorted(pairs, key=lambda p: p["ratio"], reverse=True)
+
+
+def test_similar_rule_pairs_skips_incomplete_entries() -> None:
+    rules = [_rule("R1", "texte"), {"id": "R2"}, {"description": "sans id"}, "pas un dict"]
+    assert similar_rule_pairs(rules, threshold=0.1) == []  # type: ignore[arg-type]

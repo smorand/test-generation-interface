@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     max_tests_per_rule: int = 4
     test_similarity_threshold: float = 0.9
+    # Rules worded almost the same are only flagged for the reviewer, never
+    # merged: similarity cannot tell a restated rule from its own negation.
+    rule_similarity_threshold: float = 0.9
 
     # Logging / tracing (overridable via TGI_LOGS, TGI_OTEL_DESTINATION, TGI_OTEL_API_KEY)
     logs: str | None = None

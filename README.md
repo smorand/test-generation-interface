@@ -81,6 +81,7 @@ All variables use the `TGI_` prefix.
 | `TGI_GENERATOR_BATCH_RULES` | `8` | Rules per generation call (`0` disables batching) |
 | `TGI_MAX_TESTS_PER_RULE` | `4` | Cap on tests kept per rule (`0` disables the cap) |
 | `TGI_TEST_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two tests of the same rule are duplicates |
+| `TGI_RULE_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two rules are flagged for review, never merged |
 | `TGI_CHUNK_SIZE` | `4000` | Characters per bloc when splitting |
 | `TGI_CHUNK_OVERLAP` | `200` | Overlap, applied only when a section must be cut |
 | `TGI_MAX_CONTEXT_TOKENS` | `128000` | Minimum required context window |

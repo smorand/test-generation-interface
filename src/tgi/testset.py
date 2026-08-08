@@ -136,6 +136,37 @@ def merge_tests(
     return report
 
 
+def similar_rule_pairs(
+    rules: list[dict[str, Any]],
+    threshold: float = 0.9,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Rule pairs worded almost the same, for a human to arbitrate.
+
+    These are reported, never merged. Measured on a real specification, similarity
+    cannot tell a restated rule from a parametric variant: at ratio 0.907 one pair
+    was a rule and its own negation ("est un Banquier Conseil" against "n'est pas
+    Banquier Conseil et n'est pas CAGE"), and others differed only by the actor or
+    by the action. Merging any of those would delete real business rules, so the
+    decision belongs to the reviewer.
+
+    Returns at most limit pairs, worst first.
+    """
+    labelled = [
+        (str(rule["id"]), normalize_label(rule.get("description")))
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("id") and rule.get("description")
+    ]
+    pairs: list[dict[str, Any]] = []
+    for index, (left_id, left_text) in enumerate(labelled):
+        for right_id, right_text in labelled[index + 1 :]:
+            ratio = SequenceMatcher(None, left_text, right_text).ratio()
+            if ratio >= threshold:
+                pairs.append({"a": left_id, "b": right_id, "ratio": round(ratio, 3)})
+    pairs.sort(key=lambda pair: pair["ratio"], reverse=True)
+    return pairs[:limit]
+
+
 def saturated_rule_ids(tests: list[dict[str, Any]], max_per_rule: int) -> set[str]:
     """Rules that already carry max_per_rule tests.
 

@@ -15,7 +15,7 @@ from tgi.agents.judge import JudgeAgent
 from tgi.agents.planner import PlannerAgent
 from tgi.config import settings
 from tgi.services.llm import LLMJSONError
-from tgi.testset import merge_tests, saturated_rule_ids
+from tgi.testset import merge_tests, saturated_rule_ids, similar_rule_pairs
 
 if TYPE_CHECKING:
     from tgi.services.git_service import GitService
@@ -368,7 +368,11 @@ class Orchestrator:
             # Step 1: Extract business rules
             await self._emit(project_id, "bloc_step", {"bloc_id": bloc_id, "step": "extracting"})
             rules = await self._extractor.extract(model=model_gen, chunk=bloc["chunk"])
-            await self._state.update_bloc(project_id, bloc_id, {"rules": rules})
+            # Near identical rules are surfaced for the reviewer, never merged.
+            similar = similar_rule_pairs(rules, settings.rule_similarity_threshold)
+            if similar:
+                logger.info("Bloc %s: %d pair(s) of near identical rules to review", bloc_id, len(similar))
+            await self._state.update_bloc(project_id, bloc_id, {"rules": rules, "similar_rules": similar})
             await self._git.commit(project_id, f"feat({bloc_id}): business rules extracted")
             await self._emit(
                 project_id, "bloc_step", {"bloc_id": bloc_id, "step": "rules_extracted", "count": len(rules)}
