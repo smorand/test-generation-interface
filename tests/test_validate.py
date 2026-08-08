@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
 from tgi.validate import SAMPLE_PATH, ValidationResult, _judge_the_results, format_verdict
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 
@@ -147,3 +147,82 @@ def test_placeholder_key_is_reported_with_the_fix(monkeypatch: pytest.MonkeyPatc
     assert any("TGI_LLM_API_KEY" in p for p in result.problems)
     assert any(".env" in a for a in result.advice)
     assert result.ok is False
+
+
+def test_logs_go_to_the_configured_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """TGI_LOGS must be honoured: those files are what diagnoses a failing endpoint."""
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    target = tmp_path / "mes-logs"
+    monkeypatch.setattr(settings, "logs", str(target))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    async def _unreachable(self: object) -> list[dict[str, object]]:
+        raise RuntimeError("Connection error.")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unreachable)
+    result = asyncio.run(validate())
+
+    assert result.log_dir == target
+    assert (target / "tgi-validate.log").exists()
+    # The verdict tells the user where to look, even on failure
+    report = format_verdict(result)
+    assert str(target / "tgi-validate.log") in report
+
+
+def test_connection_error_blames_transport_not_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "logs", str(tmp_path))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    async def _unreachable(self: object) -> list[dict[str, object]]:
+        raise RuntimeError("APIConnectionError: Connection error.")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unreachable)
+    result = asyncio.run(validate())
+
+    advice = " ".join(result.advice)
+    assert "transport, not credentials" in advice
+    assert "HTTPS_PROXY" in advice
+    assert "SSL_CERT_FILE" in advice
+
+
+def test_tls_error_puts_the_certificate_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "logs", str(tmp_path))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    async def _tls_failure(self: object) -> list[dict[str, object]]:
+        raise RuntimeError("SSLCertVerificationError: certificate verify failed")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _tls_failure)
+    result = asyncio.run(validate())
+    assert "certificate authority is the first thing to check" in result.advice[0]
+
+
+def test_authentication_error_still_blames_the_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import asyncio
+
+    from tgi.config import settings
+    from tgi.validate import validate
+
+    monkeypatch.setattr(settings, "logs", str(tmp_path))
+    monkeypatch.setattr(settings, "llm_api_key", "sk-configured")
+
+    async def _unauthorized(self: object) -> list[dict[str, object]]:
+        raise RuntimeError("AuthenticationError: 401 invalid api key")
+
+    monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _unauthorized)
+    result = asyncio.run(validate())
+    assert result.advice == ["Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY"]

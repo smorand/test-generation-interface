@@ -68,6 +68,7 @@ VERDICT: USABLE
 | `Wasted` | share of calls that produced nothing usable, and how many were cut off by the output budget |
 | `Coverage` | rule coverage the judge measured, compared against `TGI_JUDGE_PASS_SCORE` |
 | `Per role` | which of extractor, generator or judge is the slow or wasteful one |
+| `Logs` / `Traces` | where the run wrote them, always inside `TGI_LOGS`, kept even when the verdict fails |
 
 ## 5. Fix the usual failures
 
@@ -95,6 +96,22 @@ TGI_MAX_OUTPUT_TOKENS=32000 TGI_GENERATOR_BATCH_RULES=4 tgi-validate --model ...
 
 Note for reasoning models: Qwen documents 32768 output tokens as the floor for
 thinking mode, so the 16000 default is not enough if reasoning stays on.
+
+**`Connection error`, the request never reached the service.** This is transport, not
+credentials. On a managed workstation the two usual causes are the outbound proxy and
+TLS interception:
+
+```powershell
+$env:HTTPS_PROXY = "http://proxy.entreprise:8080"
+$env:NO_PROXY    = "localhost,127.0.0.1,.entreprise.local"
+$env:SSL_CERT_FILE = "C:\chemin\vers\ca-entreprise.pem"   # httpx uses this bundle
+```
+
+Quick check outside the application, same machine:
+
+```powershell
+curl.exe -v "$env:TGI_LLM_BASE_URL/models" -H "Authorization: Bearer $env:TGI_LLM_API_KEY"
+```
 
 **Judge returns no score.** The model cannot hold the judging contract. Lower
 `TGI_JUDGE_BATCH_RULES` (default 10) so each call covers fewer rules, or use a

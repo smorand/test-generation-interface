@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_PATH = Path(__file__).parent / "samples" / "sample_spec.md"
 
+# Own app name so validation logs never overwrite the application ones.
+_VALIDATE_APP_NAME = "tgi-validate"
+
 # Blocs of a typical specification, used to extrapolate a full run.
 _REFERENCE_DOCUMENT_BLOCS = 90
 # Beyond this, processing a whole specification stops being practical.
@@ -61,6 +64,8 @@ class ValidationResult:
     tests: int = 0
     duration_s: float = 0.0
     switch_line: str = ""
+    log_dir: Path | None = None
+    project_dir: Path | None = None
     role_lines: list[str] = field(default_factory=list)
     waste_percent: float = 0.0
     truncations: int = 0
@@ -89,7 +94,7 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
     except Exception as exc:  # reported in the verdict, not raised
         result.error = f"{type(exc).__name__}: {exc}"
         result.problems.append("Endpoint unreachable or credentials refused")
-        result.advice.append("Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY")
+        result.advice.extend(_connection_advice(exc, result.endpoint))
         return False
     result.reachable = True
     result.models_visible = len(models)
@@ -98,6 +103,32 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
         if known and model not in known:
             result.advice.append(f"The {label} model {model} is not listed by the endpoint, check its exact id")
     return True
+
+
+def _connection_advice(exc: Exception, endpoint: str) -> list[str]:
+    """Advice matching the failure: transport problems differ from credential ones.
+
+    A connection error never reached the service, so the credentials are not the
+    suspect; on a managed workstation the usual causes are the outbound proxy and
+    the corporate certificate authority.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    transport = any(
+        marker in text
+        for marker in ("connection error", "connecterror", "timeout", "ssl", "certificate", "getaddrinfo")
+    )
+    if not transport:
+        return ["Check TGI_LLM_BASE_URL and TGI_LLM_API_KEY"]
+
+    advice = [
+        f"The request never reached the service, so this is transport, not credentials. Check {endpoint} "
+        "is reachable from this machine",
+        "Behind a corporate proxy, export HTTPS_PROXY and NO_PROXY (httpx honours them)",
+        "With TLS interception, point SSL_CERT_FILE at the corporate root certificate bundle",
+    ]
+    if "ssl" in text or "certificate" in text:
+        advice.insert(0, "The error mentions TLS: the corporate certificate authority is the first thing to check")
+    return advice
 
 
 async def _run_sample(projects_dir: Path, client: LLMClient) -> tuple[dict[str, Any], float]:
@@ -241,6 +272,13 @@ def format_verdict(result: ValidationResult) -> str:
         lines.extend(f"  - {item}" for item in result.advice)
         lines.append("")
 
+    if result.log_dir:
+        lines.append(f"Logs       : {result.log_dir / (_VALIDATE_APP_NAME + '.log')}")
+        lines.append(f"Traces     : {result.log_dir / (_VALIDATE_APP_NAME + '-otel.log')}")
+    if result.project_dir:
+        lines.append(f"Project    : {result.project_dir}")
+    lines.append("")
+
     lines.append("=" * 72)
     lines.append("VERDICT: USABLE" if result.ok else "VERDICT: NOT USABLE AS CONFIGURED")
     lines.append("=" * 72)
@@ -248,24 +286,30 @@ def format_verdict(result: ValidationResult) -> str:
 
 
 async def validate(keep: bool = False) -> ValidationResult:
-    """Run the whole validation and return its result."""
-    workdir = Path(tempfile.mkdtemp(prefix="tgi-validate-"))
-    log_dir = workdir / "logs"
+    """Run the whole validation and return its result.
+
+    Logs and traces go to the configured log directory (TGI_LOGS), because they are
+    exactly what is needed to diagnose a failing endpoint. Only the throwaway
+    project data lives in a temporary directory.
+    """
+    log_dir = settings.log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
-    setup_logging(app_name="tgi-validate", log_dir=log_dir)
+    setup_logging(app_name=_VALIDATE_APP_NAME, log_dir=log_dir)
     configure_tracing(
-        app_name="tgi-validate",
+        app_name=_VALIDATE_APP_NAME,
         log_dir=log_dir,
         destination=settings.otel_destination,
         api_key=settings.otel_api_key,
     )
-    otel_path = log_dir / "tgi-validate-otel.log"
+    otel_path = log_dir / f"{_VALIDATE_APP_NAME}-otel.log"
 
+    workdir = Path(tempfile.mkdtemp(prefix="tgi-validate-"))
     client = LLMClient()
     result = ValidationResult(
         model_generator=settings.model_generator,
         model_judge=settings.model_judge,
         endpoint=settings.llm_base_url,
+        log_dir=log_dir,
     )
     for problem in settings.configuration_problems():
         result.problems.append(problem)
@@ -286,7 +330,8 @@ async def validate(keep: bool = False) -> ValidationResult:
             _judge_the_results(result)
     finally:
         if keep:
-            logger.info("Validation artefacts kept in %s", workdir)
+            result.project_dir = workdir
+            logger.info("Validation project kept in %s", workdir)
         else:
             shutil.rmtree(workdir, ignore_errors=True)
     return result
