@@ -62,7 +62,29 @@ real structural gap.
 untested, and so is whether the 16 000 token output budget holds for a use case carrying 24
 rules.
 
-## 2. Tests per use case as a parameter
+## 2. The document numbers four axes, the pipeline recognised one
+
+Measured on the identifier population, with no hardcoded convention:
+
+| Axis | Grammar | Volume | What it is |
+|---|---|---|---|
+| Functional | `F` then `EU` then `CU` then `RM` or `EM` | 590 refs | functionality, user step, use case, requirement |
+| Screens | `E` then `M` or `N` | 205 refs | a screen, its messages, its notifications |
+| Batch | `T` | 103 mentions | a batch process, "T02: Lire les lignes GAC/GN" |
+| Free text | none | rest | genuinely unnumbered prose |
+
+The 404 rules parked in « Hors numérotation » are mostly the screen and batch axes, so they
+were never noise: `E01.N02` is a notification of screen `E01`, `T02` is a named process. This
+is also what the measured **38 percent of tests on screen detail** really are, and it is exactly
+the material for one parameterised test per screen, its messages and notifications as rows.
+
+**The grammar is inferrable, so stop hardcoding it.** Counting prefixes by position gives
+position 0 as `F` or `E`, position 1 as `EU`, `M`, `N` or `T`, position 2 as `CU`, position 3 as
+`RM` or `EM`. The level that dominates position 2 is the use case, whatever it is called in the
+next document. `parse_source_ref` currently hardcodes `CU`, which is an overfit to this
+specification and will silently mislabel any document that writes `UC` or `CDU`.
+
+## 3. Tests per use case as a parameter
 
 **Decided.** The number of tests per use case must be a parameter, exposed in the interface and
 honoured by generation. At 5 tests per use case this specification yields **255 tests against
@@ -78,7 +100,7 @@ added to the interface in the meantime: a field wired to nothing is worse than n
   and the synthesis pass is what enforces the ceiling.
 - Likely replaces `TGI_MAX_TESTS_PER_RULE`, which caps at the wrong level.
 
-## 3. Non functional requirements
+## 4. Non functional requirements
 
 **Measured before deferring.** This specification carries almost none: **zero** occurrence of
 performance, response time, accessibility or browser compatibility, and only sécurité (21) and
@@ -100,14 +122,14 @@ Open when it is picked up: whether they are classified during the global pass, w
 their own chapter in the deliverable next to the functionalities, and whether a test is the
 right artefact for them at all.
 
-## 4. Use cases that inherit their rules
+## 5. Use cases that inherit their rules
 
 The document says "Reprise des règles précédentes" for **3 use cases**, all in the notification
 step: they declare no rule of their own and reuse the previous ones. The model reported them as
 absent, which was true about rules and misleading about the use case. The map needs a way to say
 "this use case inherits the rules of that one", otherwise those 3 look uncovered forever.
 
-## 5. Preconditions belong in fixtures, not in steps
+## 6. Preconditions belong in fixtures, not in steps
 
 Step reuse across the 7102 steps is only 1.4 (5202 distinct), so a general step library would earn
 little. The repetition is concentrated at the start of tests: "accéder à la liste des relations
@@ -115,7 +137,33 @@ coverage" 41 times, "se connecter en tant que RRC" 29, "accéder à l'écran E01
 portefeuille" 29. Those are preconditions written as steps. Naming them as fixtures cuts review
 volume without losing a single assertion.
 
-## 6. Smaller items
+## 7. Chat that writes, not only reads
+
+Asked for explicitly. Today the chat answers about the document, the requirements, the tests and
+the run, and it modifies nothing. To honour "génère moi deux ou trois tests de plus sur ce
+scénario ou cette exigence", it needs tools: generate tests for a target, attach them, and commit.
+
+Constraints that already exist and must hold: every write goes through the state lock and produces
+a git commit, the deduplication and the volume target apply to what the chat adds as much as to a
+run, and the answer must say what it changed and where to look. The read only contract stays the
+default: writing happens only on an explicit request naming a scenario or a requirement.
+
+## 8. A discard log, because no filter may be silent
+
+Distillation drops what is not useful: out of scope items, features deferred to a later version,
+versioning cartouches, prose that helps nobody test. Measured on this specification, that noise is
+**almost absent**: zero "hors périmètre", one deferral, two "optionnel", one cartouche. So the
+filter cannot be validated here, which makes a silent filter dangerous: it would drop the wrong
+things with no way to notice.
+
+Every removal is therefore recorded and shown: what was dropped, and on which ground. The same
+screen carries the human arbitration of contradictions, since both produce the same object, a
+decision that removes something from the corpus of truth. One feature, not two.
+
+The arbitrations must survive a re distillation, so they are keyed on the document's own
+identifiers. Open risk: a specification reissued as v6 with renumbered identifiers loses them.
+
+## 9. Smaller items
 
 - **Bloc number alignment.** Sorting is fixed and numeric everywhere. Padding the display to
   `bloc-0009` was proposed and not done, because the identifier is used in the routes, the chat
