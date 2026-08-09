@@ -688,25 +688,40 @@ _BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 app = create_app()
 
 
-def main() -> None:
-    """Launch the ASGI server via uvicorn, and explain the one failure a user will hit.
+def port_is_free(host: str, port: int) -> bool:
+    """Whether the launcher can take this port.
 
-    A port already taken is the ordinary case on a work laptop, and uvicorn's message about
-    binding an address tells a non technical user nothing they can act on.
+    Checked before starting, because uvicorn logs its own bind failure and exits without
+    raising, so wrapping the call caught nothing and the user was left with an English line
+    about binding an address.
     """
+    import socket  # noqa: PLC0415
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+        return True
+
+
+def main() -> None:
+    """Launch the ASGI server via uvicorn."""
     import uvicorn  # noqa: PLC0415
 
-    try:
-        uvicorn.run("tgi.tgi:app", host=settings.host, port=settings.port)
-    except OSError as exc:
-        # A traceback would bury the one line that helps, so no exception info here
+    if not port_is_free(settings.host, settings.port):
+        # A port already taken is the ordinary case on a work laptop, and the message has to
+        # say what to change rather than what failed.
         logger.error(
-            "Impossible de démarrer sur le port %d (%s). Un autre programme l'utilise déjà. "
-            "Ajoutez une ligne TGI_PORT=8081 dans le fichier .env, puis relancez.",
+            "Le port %d est déjà utilisé par un autre programme, le serveur ne peut pas démarrer. "
+            "Ajoutez une ligne TGI_PORT=%d dans le fichier .env, puis relancez.",
             settings.port,
-            exc.strerror or exc,
+            settings.port + 1,
         )
-        raise SystemExit(1) from exc
+        raise SystemExit(1)
+
+    logger.info("Ouvrez http://%s:%d dans votre navigateur", settings.host, settings.port)
+    uvicorn.run("tgi.tgi:app", host=settings.host, port=settings.port)
 
 
 if __name__ == "__main__":

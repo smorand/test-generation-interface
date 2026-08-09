@@ -644,3 +644,19 @@ async def test_rereading_warns_that_it_replaces_the_tests_already_generated(clie
     assert "hx-confirm" in warned
     assert "seront remplacés" in warned
     assert "hx-confirm" not in quiet
+
+
+def test_a_port_already_taken_is_detected_before_starting() -> None:
+    """uvicorn logs its own bind failure and exits without raising, so the check has to happen
+    first: otherwise the user gets an English line about binding an address."""
+    import socket
+
+    from tgi.tgi import port_is_free
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", 0))
+        taken = held.getsockname()[1]
+
+        assert port_is_free("127.0.0.1", taken) is False
+
+    assert port_is_free("127.0.0.1", taken) is True
