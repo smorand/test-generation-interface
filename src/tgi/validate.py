@@ -46,6 +46,10 @@ _REFERENCE_DOCUMENT_SCENARIOS = 90
 _SLOW_HOURS_PER_DOCUMENT = 3.0
 # Above this share of unusable calls the model is fighting the JSON contract.
 _LOW_COVERAGE_PERCENT = 80
+# Below this share of the target volume, the run is worth a word in the verdict
+_THIN_OUTPUT_SHARE = 0.5
+# Above this many minutes, hours read better than minutes
+_MINUTES_BEFORE_HOURS = 90
 _HIGH_WASTE_PERCENT = 25.0
 
 
@@ -86,6 +90,20 @@ class ValidationResult:
         """Wall clock for a typical specification at the measured rate."""
         parallel = max(1, settings.max_parallel_blocs)
         return _REFERENCE_DOCUMENT_SCENARIOS * self.seconds_per_scenario / parallel / 3600
+
+    @property
+    def projected_label(self) -> str:
+        """The projection in the unit that carries information.
+
+        Measured on the target endpoint: a fast model gave "about 0.0 h", which reads like a
+        bug rather than like good news.
+        """
+        minutes = self.projected_hours * 60
+        if minutes < 1:
+            return "less than a minute"
+        if minutes < _MINUTES_BEFORE_HOURS:
+            return f"about {minutes:.0f} min"
+        return f"about {self.projected_hours:.1f} h"
 
     @property
     def ok(self) -> bool:
@@ -252,6 +270,20 @@ def _judge_the_results(result: ValidationResult) -> None:
     elif result.scenarios and not result.tests:
         result.problems.append("The run produced no test at all, so nothing could be measured")
 
+    target = max(1, settings.tests_per_scenario)
+    produced = result.tests / result.scenarios if result.scenarios else 0.0
+    if result.scenarios and produced < target * _THIN_OUTPUT_SHARE:
+        # Volume is a target and not a cap, so this is not a failure: measured on the target
+        # endpoint, Qwen3.6-27B wrote 1.6 tests per scenario against a target of 5 while
+        # covering every requirement. Fewer tests each proving more is the goal; fewer tests
+        # proving less is not, and only the requirement axis tells them apart.
+        result.advice.append(
+            f"This model writes {produced:.1f} tests per scenario against a target of {target}. "
+            "That is fine as long as coverage holds: check the requirement axis on a real "
+            "document before trusting the volume, and raise TGI_TESTS_PER_SCENARIO if the tests "
+            "read thin"
+        )
+
     if "never sent" in result.switch_line and (result.truncations or result.projected_hours > _SLOW_HOURS_PER_DOCUMENT):
         result.advice.append(
             "Try TGI_DISABLE_THINKING=true: a reasoning model spends its output budget thinking. "
@@ -297,7 +329,7 @@ def _measurement_lines(result: ValidationResult) -> list[str]:
         "",
         f"Sample run : {result.scenarios} scenario(s) in {result.duration_s:.0f} s "
         f"({result.seconds_per_scenario:.0f} s per scenario)",
-        f"Projection : about {result.projected_hours:.1f} h for a {_REFERENCE_DOCUMENT_SCENARIOS} scenario "
+        f"Projection : {result.projected_label} for a {_REFERENCE_DOCUMENT_SCENARIOS} scenario "
         f"document at {settings.max_parallel_blocs} in parallel",
         "Statuses   : " + ", ".join(f"{k}={v}" for k, v in sorted(result.statuses.items())),
         f"Coverage   : {result.covered}/{result.requirements} requirements ({result.coverage_percent}%)",

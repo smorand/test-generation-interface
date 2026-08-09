@@ -343,3 +343,32 @@ def test_measurements_ignore_a_previous_run(monkeypatch: pytest.MonkeyPatch, tmp
     assert result.truncations == 0
     assert result.waste_percent == 0.0
     assert not any("extractor" in line for line in result.role_lines)
+
+
+def test_a_fast_model_is_not_reported_as_taking_zero_hours() -> None:
+    """Measured on the target endpoint: "about 0.0 h" reads like a bug, not like good news."""
+    result = _healthy()
+    result.duration_s = 19.0
+    result.scenarios = 13
+
+    assert result.projected_label == "less than a minute"
+
+    result.duration_s = 13 * 60.0
+    assert "min" in result.projected_label
+
+    result.duration_s = 13 * 900.0
+    assert result.projected_label.endswith(" h")
+
+
+def test_a_model_writing_far_less_than_the_target_is_flagged_without_failing() -> None:
+    """Volume is a target and not a cap: Qwen3.6-27B wrote 1.6 tests per scenario against a
+    target of 5 while covering every requirement, which is the goal, not a failure."""
+    result = _healthy()
+    result.scenarios = 13
+    result.tests = 21
+    result.steps = 57
+
+    _judge_the_results(result)
+
+    assert result.ok
+    assert any("tests per scenario against a target" in advice for advice in result.advice)

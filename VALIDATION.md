@@ -3,6 +3,38 @@
 One page runbook to decide whether a model and an endpoint are usable, without any
 customer document. A synthetic specification ships inside the package.
 
+## Measured on the target infrastructure, Qwen3.6-27B
+
+First run on the endpoint this is meant for, `iagen-proxy-api-r-wdep` behind the corporate
+proxy, both roles on `Qwen3.6-27B`:
+
+| | Value | Read |
+|---|---|---|
+| Verdict | **USABLE** | the chain runs end to end on the target |
+| Coverage | 16/16, 100 % | every requirement of the sample covered |
+| Volume | 21 tests, 57 steps, **1.6 per scenario** | a third of the target of 5, see below |
+| Duration | 13 scenarios in 19 s, 1 s each | faster than the reference model |
+| Waste | 0 % of calls, 0 truncated | no retry, nothing cut off |
+| Coverage pass | not called | the generator covered everything on its own |
+| Reasoning switch | sent on all 14 calls | the endpoint accepts it, so `TGI_DISABLE_THINKING=true` works |
+| `/models` | 404 | model ids cannot be checked, they must match exactly |
+| TLS | verification disabled | see below, this one is worth fixing |
+
+**The volume is the one thing to watch.** 1.6 tests per scenario against a target of 5 is not a
+failure by itself, since the whole point of this pipeline is fewer tests each proving more, and
+here coverage held at 100 percent with no gap to close. But fewer tests proving *less* looks
+exactly the same from the outside, and only the requirement axis on a real document tells them
+apart. `tgi-validate` now says so rather than staying silent.
+
+**TLS verification is disabled.** `TGI_LLM_VERIFY_SSL=false` makes the corporate proxy work and
+gives up on checking who answers, which is not a setting to keep for a client's functional
+specification. Ask the network team for the proxy certificate and swap it for:
+
+```
+TGI_LLM_CA_BUNDLE=C:\chemin\vers\certificat.pem
+```
+
+
 ## 1. Install
 
 Any of the three, whichever fits the target infrastructure.
