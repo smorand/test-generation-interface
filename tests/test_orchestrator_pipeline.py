@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tgi.agents.orchestrator import Orchestrator
+from tgi.coverage_report import coverage_summary
 from tgi.events import subscribe, subscriber_count
 from tgi.services.git_service import GitService
 from tgi.services.state_manager import StateManager
@@ -376,3 +377,64 @@ async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestr
     assert "contexte_du_document" in captured["user"]
     assert "ne modifies rien" in captured["system"]
     assert len(await orchestrator._git.log(project_id)) == before  # nothing was written
+
+
+# Long enough for the grammar to infer its levels: with two references it cannot tell that
+# CU is a container, and the container itself came out as a requirement.
+DOC_WITH_A_DANGLING_REFERENCE = """
+### F01.EU01.CU01 Visualiser son portefeuille
+F01.EU01.CU01.RM01 : Le système affiche les relations et notifie l'utilisateur (E01.N0x).
+F01.EU01.CU01.RM02 : Le système masque les inactives.
+
+### F01.EU01.CU02 Supprimer une relation
+F01.EU01.CU02.RM01 : La suppression demande confirmation.
+F01.EU01.CU02.RM02 : Une suppression est journalisée.
+
+### F01.EU01.CU03 Déléguer une relation
+F01.EU01.CU03.RM01 : La délégation porte une date de fin.
+"""
+
+
+async def test_a_reference_the_document_never_states_is_proposed_for_discard(
+    orchestrator: Orchestrator,
+) -> None:
+    """The preparation step proposes it, and only proposes: nothing leaves silently."""
+    project_id = await _new_project(orchestrator, DOC_WITH_A_DANGLING_REFERENCE)
+
+    await orchestrator.distil(project_id)
+    state = await orchestrator._state.load(project_id)
+
+    unstated = [d for d in state["discards"] if d["reason"] == "sans_enonce"]
+    assert [d["refs"] for d in unstated] == [["E01.N0X"]]
+    assert unstated[0]["decision"] == "proposed"
+    # It is still a requirement of the document until a human decides otherwise
+    assert "E01.N0X" in {r["ref"] for r in state["requirements"]}
+
+
+async def test_an_accepted_discard_is_not_generated_for_and_leaves_the_denominator(
+    orchestrator: Orchestrator,
+) -> None:
+    """Accepting used to change the number and not the work: the reference left the coverage
+    denominator and was still handed to the model, which then spent a call declaring it
+    untestable."""
+    project_id = await _new_project(orchestrator, DOC_WITH_A_DANGLING_REFERENCE)
+    await orchestrator.distil(project_id)
+    state = await orchestrator._state.load(project_id)
+    before = coverage_summary(state)
+    index = next(i for i, d in enumerate(state["discards"]) if d["reason"] == "sans_enonce")
+
+    await orchestrator._state.decide_discard(project_id, index, "accepted")
+    await orchestrator.validate_map(project_id)
+    await orchestrator.run_pipeline(project_id)
+
+    state = await orchestrator._state.load(project_id)
+    summary = state["summary"]
+    assert "E01.N0X" in before["missing"]
+    assert summary["requirements"] == before["requirements"] - 1
+    assert "E01.N0X" not in summary["missing"]
+    assert summary["discarded"] == 1
+    # And nothing was generated for it: no gap to close, no untestable verdict to write
+    assert not [s for s in state["scenarios"] if "E01.N0X" in (s.get("uncovered_refs") or [])]
+    assert not [
+        u for s in state["scenarios"] for u in (s.get("untestable") or []) if u.get("ref") == "E01.N0X"
+    ]

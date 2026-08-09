@@ -136,6 +136,34 @@ cartridge. A filter that cannot be validated must be visible, so every removal i
 its ground and a human accepts or keeps it. Accepting one takes its references out of the
 corpus of truth and is recorded.
 
+### What the document never states is proposed for discard, not dropped
+
+A reference the document cites and never states cannot be tested, so the preparation step
+proposes discarding it. Three things make that safe rather than convenient.
+
+**Code proposes it, not a model.** An empty statement is arithmetic on the document, so the
+discard carries `source: grammaire` and a reviewer knows who claimed what. The model's own
+discards stay marked as the model's.
+
+**It is proposed, never applied.** Silence is what broke the previous version: a judge scoring
+its own chunks reported a median of 100 percent on a deliverable nobody could review, and a
+number that cannot be wrong is a number nobody can trust. An unstated requirement is a defect
+of the specification, and hiding it means the author never hears about it and the next version
+carries the same hole.
+
+**Accepting has to cost something real.** It used to change the number and not the work: the
+reference left the coverage denominator and was still handed to the generator, which then
+spent a call declaring it untestable. An accepted discard is now excluded from generation
+input, so the human decision is what stops the work.
+
+Measured on the reference document, accepting the three: denominator 468 to 465, the three gone
+from the missing list, **0 calls spent on them**, and the three requirements left missing are
+real ones with wordings, which a reviewer can act on.
+
+One more trap closed at the same time: the progress bar counted requirements from the scenarios
+and the summary counted them from the corpus, so the same screen showed 464 of 468 next to 461
+of 465. Two numbers that contradict each other cost more trust than a missing feature.
+
 ## Phase 2: generate per scenario
 
 The unit of work is the scenario. Each call gets the context, the scenario, its requirements

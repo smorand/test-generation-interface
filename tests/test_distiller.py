@@ -12,8 +12,9 @@ from tgi.agents.distiller import (
     attach_requirements,
     reading_budget_chars,
     split_for_reading,
+    unstated_discards,
 )
-from tgi.grammar import containers, extract_requirements
+from tgi.grammar import Requirement, containers, extract_requirements
 
 DOC = """
 # Cadrage
@@ -221,3 +222,22 @@ def test_completion_is_idempotent() -> None:
     count = len(once)
     twice = attach_requirements(once, requirements, titles)
     assert len(twice) == count
+
+
+def test_a_reference_the_document_never_states_is_proposed_for_discard() -> None:
+    """Measured: 3 of 468. Left as plain gaps they are indistinguishable from work left
+    undone, so coverage never reaches 100 percent and nobody can tell why."""
+    requirements = [
+        Requirement(ref="F01.CU01.RM01", kind="RM", statement="Le système crée.", parent="F01.CU01", axis="F"),
+        Requirement(ref="E01.N0X", kind="N", statement="", parent="E01", axis="E"),
+    ]
+
+    proposed = unstated_discards(requirements)
+
+    assert len(proposed) == 1
+    assert proposed[0]["refs"] == ["E01.N0X"]
+    assert proposed[0]["reason"] == "sans_enonce"
+    # Proposed, never applied: silence is what made the previous version unreviewable
+    assert proposed[0]["decision"] == "proposed"
+    # And the ground is attributable: code found it, not a model
+    assert proposed[0]["source"] == "grammaire"

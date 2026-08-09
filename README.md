@@ -216,6 +216,12 @@ grouped under its use case, with the statement as the document writes it, its st
 (covered, uncovered, untestable, discarded) and the tests that cover it. This is the
 traceability matrix, and it is the first sheet a reviewer opens in the export.
 
+A reference the document cites and never states is proposed for discard by code rather than by
+a model, with `source: grammaire`, and accepting it excludes it from generation as well as from
+the denominator. It is proposed and never applied: an unstated requirement is a defect of the
+specification, and a coverage figure that reaches 100 percent by hiding one is the mistake the
+first version made.
+
 A statement is read from the line that declares a reference, not from the first place it
 appears, since a specification cites an identifier long before it states it. Measured: 20 of
 468 requirements had no statement at all, all of them screen messages declared in tables, and

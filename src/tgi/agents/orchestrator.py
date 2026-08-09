@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.agents.coverage import CoverageAgent, uncovered_refs
-from tgi.agents.distiller import DistillerAgent, attach_requirements
+from tgi.agents.distiller import DistillerAgent, attach_requirements, unstated_discards
 from tgi.agents.scenario_generator import ScenarioGeneratorAgent
 from tgi.config import settings
-from tgi.coverage_report import coverage_summary
+from tgi.coverage_report import coverage_summary, discarded_refs
 from tgi.events import publish
 from tgi.grammar import Requirement, containers, extract_requirements, infer_grammar, section_of
 from tgi.locks import lock_for
@@ -116,7 +116,10 @@ class Orchestrator:
             fresh["scenarios"] = scenarios
             fresh["requirements"] = [asdict(requirement) for requirement in requirements]
             fresh["containers"] = container_titles
-            fresh["discards"] = distilled["discards"]
+            # The document's own defects are proposed for discard by code, ahead of what the
+            # model proposed: a reference cited and never stated cannot be tested, and left as
+            # a plain gap it is indistinguishable from work left undone.
+            fresh["discards"] = unstated_discards(requirements) + distilled["discards"]
             fresh["axes"] = {
                 axis.prefix: {
                     "leaf_prefixes": list(axis.leaf_prefixes),
@@ -219,10 +222,14 @@ class Orchestrator:
         model = state.get("model_generator", "")
         target = int(state.get("tests_per_scenario") or settings.tests_per_scenario)
         by_ref = {str(r["ref"]): r for r in state.get("requirements") or []}
+        # An accepted discard has to cost nothing: it used to leave the coverage denominator
+        # and still be handed to the model, so a human decision changed the number and not the
+        # work. Accepting is the one place where a requirement stops being generated for.
+        discarded = discarded_refs(state)
         requirements = [
             Requirement(**{k: v for k, v in by_ref[ref].items() if k in _REQUIREMENT_FIELDS})
             for ref in scenario.get("requirement_refs") or []
-            if ref in by_ref
+            if ref in by_ref and ref not in discarded
         ]
         evidence = section_of(text, str(scenario.get("container") or "")) if scenario.get("container") else ""
 

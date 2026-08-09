@@ -39,7 +39,9 @@ CHARS_PER_TOKEN = 3.6
 # Room left for the prompt itself and for the answer
 _PROMPT_OVERHEAD_TOKENS = 2000
 _VALID_KINDS = ("nominal", "limite", "erreur")
-_VALID_REASONS = ("hors_perimetre", "sans_valeur_test", "incomprehensible", "contradiction")
+# sans_enonce is never proposed by the model: it is arithmetic on the document, so it is
+# proposed by code and only decided by a human.
+_VALID_REASONS = ("hors_perimetre", "sans_valeur_test", "incomprehensible", "contradiction", "sans_enonce")
 
 
 def reading_budget_chars(max_context_tokens: int, max_output_tokens: int) -> int:
@@ -180,6 +182,35 @@ class DistillerAgent:
             "Distilled %d scenario(s) and %d discard(s) from %d part(s)", len(scenarios), len(discards), len(parts)
         )
         return {"context": "\n\n".join(contexts), "scenarios": scenarios, "discards": discards}
+
+
+
+def unstated_discards(requirements: list[Requirement]) -> list[dict[str, Any]]:
+    """Propose discarding every reference the document cites and never states.
+
+    Measured on the reference document: 3 of 468. A notification whose number the author never
+    decided, and two cited in a cross reference column and stated nowhere. They cannot be
+    tested, and left as plain gaps they are indistinguishable from work left undone, so
+    coverage never reaches 100 percent and nobody can tell why.
+
+    Proposed, not applied. Silence is what broke the previous version: a judge scoring its own
+    chunks reported a median of 100 percent on a deliverable nobody could review, and a number
+    that cannot be wrong is a number nobody can trust. An unstated requirement is a defect of
+    the specification, so it is shown once, with its ground, and a human decides in one click:
+    accept, and it leaves the corpus of truth on the record, or keep it, and it stays visible
+    until the author states it.
+    """
+    return [
+        {
+            "what": f"{requirement.ref} est cité dans le document sans jamais être énoncé",
+            "reason": "sans_enonce",
+            "refs": [requirement.ref],
+            "decision": "proposed",
+            "source": "grammaire",
+        }
+        for requirement in requirements
+        if not requirement.statement.strip()
+    ]
 
 
 def attach_requirements(

@@ -152,6 +152,11 @@ d'entreprise (voir la fin de ce document).
    lister: ce sont des trous de la spécification, pas des oublis de l'outil, et rien ne peut
    être testé tant que le document ne les énonce pas.
 
+   L'étape 2 vous les propose d'ailleurs en écart, avec l'étiquette **sans énoncé**. Cliquer
+   sur **écarter** les sort du décompte et de la génération, en gardant la trace de votre
+   décision; **garder** les laisse visibles, par exemple le temps de faire corriger le
+   document. Rien n'est retiré sans votre clic: c'est aussi la liste à renvoyer à l'auteur.
+
 7. **Onglet RECHERCHE** : chercher un test, le corriger à la main.
 
 8. **Onglet CHAT** : poser des questions sur le document, les tests, la couverture. Le chat

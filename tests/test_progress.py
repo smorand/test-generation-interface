@@ -123,3 +123,27 @@ def test_naive_timestamp_is_read_as_utc() -> None:
         now=datetime(2026, 1, 1, 12, 3, tzinfo=UTC),
     )
     assert p["elapsed_label"] == "3 min"
+
+
+def test_the_bar_counts_the_same_requirements_as_the_coverage_summary() -> None:
+    """Measured on a real run: the bar said 464 of 468 and the summary 461 of 465 on the same
+    screen, because an accepted discard left one denominator and not the other."""
+    state = {
+        "run_started_at": "2026-01-01T00:00:00+00:00",
+        "discards": [{"what": "cité jamais énoncé", "reason": "sans_enonce", "refs": ["E01.N0X"], "decision": "accepted"}],
+        "scenarios": [
+            {
+                "id": "SC-001",
+                "status": "done",
+                "requirement_refs": ["F01.CU01.RM01", "E01.N0X"],
+                "uncovered_refs": ["E01.N0X"],
+                "tests": [{"id": "T1", "steps": [{"order": 1}]}],
+            }
+        ],
+    }
+
+    progress = compute_progress(state)
+
+    assert progress["requirements"] == 1
+    assert progress["covered"] == 1
+    assert progress["coverage_percent"] == 100

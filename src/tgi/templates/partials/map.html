@@ -67,12 +67,21 @@
   {% if discards %}
   <div class="card mb-4">
     <div class="text-xs uppercase text-gray-500 mb-2">
-      Écarts proposés · accepter retire l'élément du corpus de vérité
+      Écarts proposés · écarter retire l'élément du corpus de vérité, et de la génération
+    </div>
+    <div class="text-xs text-gray-600 mb-2">
+      Rien n'est retiré sans vous. « sans énoncé » est relevé par la grammaire, pas par le
+      modèle: le document cite la référence et ne l'écrit jamais, donc rien n'est testable
+      tant qu'il ne l'énonce pas. L'écarter la sort du dénominateur, en le consignant.
     </div>
     <div class="space-y-1">
       {% for index, discard in discards %}
         <div class="flex items-start gap-2 text-sm py-1" x-data="discardRow('{{ project_id }}', {{ index }})">
-          <span class="badge badge-gray shrink-0 text-xs">{{ discard.reason }}</span>
+          <span class="badge shrink-0 text-xs {{ 'badge-orange' if discard.reason == 'sans_enonce' else 'badge-gray' }}"
+            title="{{ 'Relevé par la grammaire du document' if discard.source == 'grammaire' else 'Proposé par le modèle' }}">{{
+            {'sans_enonce': 'sans énoncé', 'hors_perimetre': 'hors périmètre',
+             'sans_valeur_test': 'sans valeur de test', 'incomprehensible': 'incompréhensible',
+             'contradiction': 'contradiction'}.get(discard.reason, discard.reason) }}</span>
           <span class="text-gray-300 flex-1">{{ discard.what }}
             {% if discard.refs %}<span class="font-mono text-xs text-blue-400">{{ discard.refs|join(', ') }}</span>{% endif %}
           </span>

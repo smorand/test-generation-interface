@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from tgi.coverage_report import discarded_refs
 from tgi.deliverable import coverage_percent
 
 _FINAL_STATUSES = ("done", "needs_human", "error")
@@ -44,6 +45,10 @@ def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict
     scenarios run in parallel.
     """
     scenarios = [s for s in state.get("scenarios") or [] if isinstance(s, dict)]
+    # The bar and the coverage summary sit on the same screen, so they must count the same
+    # thing: an accepted discard left the summary denominator and not this one, and 464/468
+    # next to 461/465 is the kind of contradiction that costs a user their trust.
+    discarded = discarded_refs(state)
     total = len(scenarios)
     counts = {"pending": 0, "running": 0, "done": 0, "needs_human": 0, "error": 0}
     requirements: set[str] = set()
@@ -53,7 +58,7 @@ def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict
     for scenario in scenarios:
         status = str(scenario.get("status", "pending"))
         counts[status] = counts.get(status, 0) + 1
-        refs = {str(ref) for ref in scenario.get("requirement_refs") or []}
+        refs = {str(ref) for ref in scenario.get("requirement_refs") or []} - discarded
         requirements |= refs
         covered |= refs - {str(ref) for ref in scenario.get("uncovered_refs") or []}
         scenario_tests = [test for test in scenario.get("tests") or [] if isinstance(test, dict)]
