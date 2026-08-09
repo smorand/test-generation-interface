@@ -307,9 +307,13 @@ function testEditor(projectId, initialTest) {
   };
 }
 
+// Les trois etats d'un ecart, dans la langue de l'interface
+const DISCARD_LABELS = { proposed: 'proposé', accepted: 'écarté', rejected: 'gardé' };
+
 function discardRow(projectId, index) {
   return {
     label: '',
+    text(decision) { return DISCARD_LABELS[decision] || decision; },
     // Accepter un ecart retire l'element du corpus de verite: la decision est envoyee, pas devinee
     async decide(decision) {
       const r = await fetch(`/projects/${projectId}/discards/${index}`, {

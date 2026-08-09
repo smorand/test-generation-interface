@@ -85,7 +85,7 @@
           <span class="text-gray-300 flex-1">{{ discard.what }}
             {% if discard.refs %}<span class="font-mono text-xs text-blue-400">{{ discard.refs|join(', ') }}</span>{% endif %}
           </span>
-          <span class="shrink-0" x-text="label || '{{ discard.decision }}'"
+          <span class="shrink-0" x-text="text(label || '{{ discard.decision }}')"
             :class="(label || '{{ discard.decision }}') === 'accepted' ? 'badge badge-red' : ((label || '{{ discard.decision }}') === 'rejected' ? 'badge badge-green' : 'badge badge-gray')"></span>
           <button class="btn-secondary text-xs shrink-0" @click="decide('accepted')">écarter</button>
           <button class="btn-secondary text-xs shrink-0" @click="decide('rejected')">garder</button>
