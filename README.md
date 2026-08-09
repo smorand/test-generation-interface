@@ -16,7 +16,10 @@ test-generation-interface/
 │   │   ├── extractor.py        # Business rule extraction
 │   │   ├── generator.py        # Test JSON generation
 │   │   ├── judge.py            # Coverage validation
-│   │   └── planner.py          # Complex instruction decomposition
+│   ├── deliverable.py         # Functionality / use case / rule hierarchy
+│   ├── progress.py            # Run progress and remaining time estimate
+│   ├── workbook.py            # Reviewable xlsx workbook (openpyxl)
+│   ├── testset.py             # Test deduplication, rule ids, similarity
 │   ├── services/
 │   │   ├── llm.py              # OpenAI compatible async client (traced)
 │   │   ├── doc_parser.py       # Word/PDF/text parsing
@@ -144,13 +147,67 @@ Upload doc
     → Export ZIP
 ```
 
-### Rules as a reviewable object
+### Reading the deliverable
 
-Rules carry a `source_ref`, the identifier the specification gives them, so a test can
-be traced back to the spec. The **Règles** tab lists every rule with its bloc, its
-reference, how many tests cover it and a reviewed flag; description and reference are
-editable inline. The **Tests** tab filters by rule or by text, and a test can cover
-several rules.
+A flat list of two thousand tests cannot be reviewed. The **Règles & tests** tab
+follows the numbering of the specification itself:
+
+```
+F01 Synchronisation des relations        24 règles · 22 couvertes (92 %) · 47 tests
+  F01.EU01.CU02 Supprimer les relations   6 règles · 6 couvertes · 13 tests
+    RM01 Le système supprime la relation…  3 tests
+       TEST-014  Suppression d'un GAC puis contrôle   [couvre aussi RM02]
+```
+
+- The hierarchy comes from `source_ref` (`F01.EU01.CU02.RM01` splits into functionality,
+  use case, rule). Malformed or absent references land in **Hors numérotation**, grouped
+  by bloc so they stay findable. That group is a real chapter, not a bin: it holds 1 to
+  30 % of the rules depending on the model.
+- The bloc is provenance only. It never becomes a level of the tree.
+- A rule identity is the pair (bloc, rule id), because ids restart at `R1` in every bloc.
+  `R1` of `bloc-3` is never confused with `R1` of `bloc-4`.
+- A test covering several rules appears under each, flagged **couvre aussi**, so it is
+  not counted twice by a reader.
+- A test citing only rules that do not exist in its bloc goes to **Tests non rattachés**:
+  a quality signal, shown rather than silently dropped.
+- A rule with no test is flagged at every level of aggregation.
+
+Tests are fetched when a rule is expanded (`GET /projects/{id}/blocs/{b}/rules/{r}/tests`),
+so a 600 rule page stays light. Filters run on the server: text, uncovered only,
+unreviewed only. Description, reference and the reviewed flag stay editable in place.
+
+The **Tests** tab remains the search and single test editing view, with server side
+filtering and pagination (`q`, `rule`, `bloc`, `status`, `page`, `per_page`). This is not
+a preference: one test card renders about 4.8 kB of HTML, so 1938 tests would send more
+than 9 MB to the browser.
+
+### Progress
+
+The sticky control bar shows a bar segmented by outcome (done, needs review, error,
+running), so a run going wrong is visible immediately, from any tab. The remaining time
+is a naive estimate, `elapsed / processed × remaining`, shown only once a first bloc has
+finished. `run_started_at` is written to the state when the pipeline starts.
+
+### Export
+
+`GET /projects/{id}/export` returns a ZIP with the JSON for tooling plus `tests.xlsx`
+for review: a **Synthèse** sheet (rules, covered, coverage, tests per use case), then one
+sheet per functionality plus `Hors numérotation` and `Tests non rattachés` when they are
+not empty. One row per test step, frozen header, autofilter, no merged cells, since
+merged cells break sorting and filtering.
+
+### Chat
+
+The chat answers, it never writes. It receives a permanent run summary (statuses, totals,
+ratio, median, min and max score, judge passes, per bloc detail with errors, coverage per
+use case), plus at most 3 blocs in full for the question asked, with their rules, their
+references and a document excerpt capped at 1500 characters.
+
+Bloc selection is deterministic and costs no extra LLM call: an explicit `bloc-N` wins,
+then a rule id or a document reference, then word overlap weighted title x3, rules x2,
+chunk x1; with no signal at all, the blocs needing attention (error, then lowest score).
+Answers are rendered as markdown client side, escaping HTML first so a model reply cannot
+inject anything.
 
 ### Scoring
 
@@ -252,7 +309,6 @@ All agents use **fresh context** (no conversation history). Context is reconstru
 | EXTRACTOR | generator | Extract explicit + implicit business rules from a text chunk |
 | GENERATOR | generator | Generate functional tests covering all rules |
 | JUDGE | judge | Find gaps and missing coverage (never validates if in doubt) |
-| PLANNER | generator | Decompose complex human chat instructions into steps |
 
 ## API Routes
 
@@ -267,6 +323,12 @@ All agents use **fresh context** (no conversation history). Context is reconstru
 | `POST` | `/projects/{id}/blocs/{bloc_id}/rerun` | Rerun one bloc |
 | `GET` | `/projects/{id}/tests` | All tests JSON |
 | `PUT` | `/projects/{id}/tests/{test_id}` | Update one test |
+| `GET` | `/projects/{id}/rules` | All rules JSON |
+| `PUT` | `/projects/{id}/blocs/{b}/rules/{r}` | Update one rule (description, reference, reviewed) |
+| `GET` | `/projects/{id}/partials/rules` | Deliverable tree (`q`, `uncovered`, `unreviewed`) |
+| `GET` | `/projects/{id}/blocs/{b}/rules/{r}/tests` | Tests of one rule, loaded on expansion |
+| `GET` | `/projects/{id}/partials/tests` | Tests page (`q`, `rule`, `bloc`, `status`, `page`, `per_page`) |
+| `GET` | `/projects/{id}/partials/progress` | Run progress fragment |
 | `POST` | `/projects/{id}/chat` | Chat with QA agent |
 | `GET` | `/projects/{id}/history` | Git log |
 | `POST` | `/projects/{id}/rollback` | Rollback to commit hash |

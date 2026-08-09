@@ -30,7 +30,10 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 - `src/tgi/logging_config.py` : rich console + file logging (`setup_logging`)
 - `src/tgi/tracing.py` : OpenTelemetry tracing, JSONL export (`configure_tracing`, `trace_span`)
 - `src/tgi/agents/orchestrator.py` : pipeline coordinator, `split_document`, SSE queues
-- `src/tgi/agents/{extractor,generator,judge,planner}.py` : LLM sub-agents (fresh context per call)
+- `src/tgi/agents/{extractor,generator,judge}.py` : LLM sub-agents (fresh context per call)
+- `src/tgi/deliverable.py` : functionality / use case / rule hierarchy built from `source_ref`
+- `src/tgi/progress.py` : run progress, elapsed time, naive remaining estimate
+- `src/tgi/workbook.py` : xlsx export (one sheet per functionality, one row per test step)
 - `src/tgi/services/llm.py` : async OpenAI compatible client with JSON extraction, retry, tracing
 - `src/tgi/services/doc_parser.py` : Word/PDF/text parsing
 - `src/tgi/services/git_service.py` : async git per project (asyncio.Lock)

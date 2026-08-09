@@ -344,6 +344,66 @@ numbered rule, and requires that identifier in a `source_ref` field carried thro
 generator, the judge and the UI. Measured with claude-haiku-4-5 and
 llama-4-maverick-17b, both land at about 1.6x with 70 to 81 percent traced.
 
+## The deliverable has a shape: functionality, use case, rule, tests
+
+A filterable flat list of 1938 tests is not reviewable. `deliverable.py` rebuilds the
+tree from `source_ref` only, with no guessing: `_SOURCE_REF_RE` accepts dot joined
+`[A-Z]{1,6}\d+` segments, the last segment is the rule label, the one before closes the
+use case, the first is the functionality. `VAL01.CU01.RM03` therefore yields
+functionality `VAL01`, use case `VAL01.CU01`, label `RM03`.
+
+Load bearing invariants, each covered by a test:
+
+- **Rule identity is the pair (bloc, rule id)**, key `"bloc-3/R1"`. Ids restart at `R1`
+  in every bloc, so a global index by rule id would merge unrelated rules. This is the
+  single most dangerous mistake in this module.
+- **No reference, or a malformed one, means « Hors numérotation »**, sub grouped by bloc.
+  Never an exception, never a silent drop. That group carried 100 % of the rules on the
+  reference run (extractor before the rewrite) and 1 % after, so it must stay a first
+  class chapter.
+- **A test citing only unknown rules becomes an orphan** and is displayed. Attaching it
+  by guesswork would hide a generation defect.
+- **A test covering several rules appears under each**, flagged « couvre aussi ».
+
+`build_deliverable` returns counters at every level (rules, covered, tests, coverage
+percent, has_uncovered) so no template has to compute anything.
+
+## HTML weight decides where filtering happens
+
+Measured: one test card renders about **4.8 kB** of HTML (146 tests gave 698 kB). At 1938
+tests the tests tab would push past **9 MB**. Browser side filtering is therefore not an
+option: `partials/tests` takes `q`, `rule`, `bloc`, `status`, `page`, `per_page` (default
+50, capped at `_MAX_PER_PAGE = 200`) and `page` is clamped into range rather than
+returning an empty page.
+
+Same reason in the rules tab: the tree renders counters only, and the tests of a rule are
+fetched on expansion with `hx-trigger="toggle once"`. Consequence accepted: expanding 600
+rules fires 600 requests, so no « expand everything » button is offered.
+
+## What the chat is allowed to know, and to do
+
+The chat is **read only**. It used to call a planner and announce an execution plan it
+could not carry out, and it committed an empty git commit on every message. Both are
+gone, `agents/planner.py` and `prompts/planner.md` deleted.
+
+`_chat_context` sends a permanent run summary (statuses, totals, ratio, median, min, max,
+judge pass distribution, per bloc line with its error) plus **at most 3 blocs** in full,
+excerpt capped at 1500 characters. Bloc selection is deterministic and free, in order:
+explicit `bloc-N`, then a rule id or document reference, then word overlap weighted title
+x3, rules x2, chunk x1, then the blocs needing attention (error first, then lowest score).
+No embeddings: a question sharing no word with the document finds nothing, and the prompt
+requires saying so instead of inventing.
+
+Markdown is rendered client side with **HTML escaped first**, then the markup applied, so
+a model reply cannot inject anything.
+
+## A tab must show the state at activation
+
+The rules and tests fragments poll every 30 s while their tab is visible. Switching tabs
+alone left stale content on screen for up to 30 s, and a Playwright walkthrough read
+« 0 règles » on a project that had 71. `refreshTab(tab)` now triggers an htmx load when a
+tab becomes active.
+
 ## Rules are a first class object in the UI
 
 Rules drive the tests and the score, so they have their own tab: every rule of the

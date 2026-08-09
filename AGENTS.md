@@ -25,8 +25,11 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/tgi.py` : `create_app()` factory, module-level `app`, `main()`
 - `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`
 - `src/tgi/logging_config.py`, `src/tgi/tracing.py` : logging + OpenTelemetry
-- `src/tgi/agents/` : orchestrator + extractor/generator/judge/planner
+- `src/tgi/agents/` : orchestrator + extractor/generator/judge
 - `src/tgi/services/` : llm, doc_parser, git_service, state_manager
+- `src/tgi/deliverable.py` : functionality / use case / rule hierarchy from `source_ref`
+- `src/tgi/progress.py` : run progress, elapsed and naive remaining estimate
+- `src/tgi/workbook.py` : reviewable xlsx (one sheet per functionality, one row per step)
 - `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel)
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
 
@@ -40,6 +43,12 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
 
 ## Pipeline essentials
+
+The deliverable is read as functionality, use case, rule, tests, driven by `source_ref`;
+rules without a reference fall into « Hors numérotation ». Rule identity is (bloc, rule id).
+The rules and tests tabs filter and paginate **server side**: a test card is about 4.8 kB of
+HTML. The chat is read only, receives a run summary plus at most 3 relevant blocs, and is
+rendered as markdown with HTML escaped first.
 
 Judge scores rule coverage (0 to 100, computed locally). Each pass is a scored
 version; the best one wins. Tests are deduplicated and capped per rule, and the
