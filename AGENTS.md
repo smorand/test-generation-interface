@@ -65,8 +65,9 @@ sees it returned 250 with none invented. **Filter every identifier against the d
 case insensitively; the letter suffix form `RM07a` broke that comparison twice.
 
 There is no judge. Coverage is arithmetic, because a model judging its own chunks reported a
-median of 100 percent on a deliverable nobody could review. Result on the reference document:
-284 tests instead of 2199, 1029 steps instead of 7102, 463 of 468 requirements covered.
+median of 100 percent on a deliverable nobody could review. Result on the reference document: **313 tests instead of 2199**, 1130 steps instead of 7102,
+464 of 468 requirements covered with none missing, and **83 LLM calls instead of 382**, 0 percent
+wasted.
 Full details and the measured numbers: `.agent_docs/pipeline.md` (read it before touching
 the distiller, the generator or coverage).
 

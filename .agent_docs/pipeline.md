@@ -13,13 +13,16 @@ That tests paragraphs, not an application.
 
 | Measure | Chunk pipeline | Scenario pipeline |
 |---|---|---|
-| Tests | 2199 | **284** |
-| Steps | 7102 | **1029** |
+| Tests | 2199 | **313** |
+| Steps | 7102 | **1130** |
 | Review at 2 min per step | about 34 person-days | about **5** |
-| Requirements covered | not measurable | **463 of 468, 99 percent** |
-| Uncovered | unknown | **2**, plus 10 declared untestable |
+| Requirements covered | not measurable | **464 of 468, 99 percent** |
+| Uncovered | unknown | **0**, plus 9 declared untestable |
+| Scenarios | none | 64: 53 nominal, 9 error, 2 limit |
+| Failed units | 0 of 88 blocs | **0 of 64 scenarios**, 1 for human review |
+| LLM calls | 382 to 691 | **83**: 1 distiller, 64 generator, 18 coverage |
+| Waste | 0 to 1 percent | **0 percent**, 1.00 attempt per success |
 | Tests on screen detail | **38 percent** | parameterised into data rows |
-| Reading cost | 88 calls | **2** |
 | Coverage figure | median 100 percent, and wrong | counted, no model involved |
 
 That median of 100 percent is the important one. Each bloc scored coverage of the rules it
@@ -163,5 +166,6 @@ speed measurement. Change the document, or say so.
 explicitly outside the app factory, otherwise no `llm.json_attempt` span is written and
 `tgi-stats` reports an empty table on a run that worked.
 
-Span level measurement of the run that did have tracing: **382 calls, 0 percent wasted, one
-attempt per success, every finish_reason stop, nothing truncated.**
+Span level measurement of the final control run: **83 calls, 0 percent wasted, one attempt per
+success, every finish_reason stop, nothing truncated**, medians 56 s for the single distillation
+call, 10 s per scenario, 6 s per coverage pass.

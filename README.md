@@ -187,14 +187,18 @@ claim stays visible: it counts against coverage until a human accepts it as a di
 
 | Measure | Chunk pipeline | Scenario pipeline |
 |---|---|---|
-| Tests | 2199 | **284** |
-| Steps | 7102 | **1029** |
-| Review effort at 2 min per step | about 34 person-days | about **5** |
-| Requirements covered | not measurable | **463 of 468, 99 percent** |
-| Uncovered | unknown | **2**, plus 10 declared untestable |
-| Coverage score reported | median 100 percent, and wrong | counted, no model involved |
-| Tests on screen detail | 38 percent | parameterised into data rows |
-| Reading cost | 88 calls | **2** |
+| Tests | 2199 | **313** |
+| Steps | 7102 | **1130** |
+| Review at 2 min per step | about 34 person-days | about **5** |
+| Requirements covered | not measurable | **464 of 468, 99 percent** |
+| Uncovered | unknown | **0**, plus 9 declared untestable |
+| Scenarios | none | 64: 53 nominal, 9 error, 2 limit |
+| Failed units | 0 of 88 blocs | **0 of 64 scenarios**, 1 for human review |
+| LLM calls | 382 to 691 | **83**: 1 distiller, 64 generator, 18 coverage |
+| Waste | 0 to 1 percent | **0 percent**, 1.00 attempt per success |
+| Tests on screen detail | **38 percent** | parameterised into data rows |
+| Coverage figure | median 100 percent, and wrong | counted, no model involved |
+| Reading cost | 88 calls | **1** |
 
 The first version reported a median score of 100 percent because each chunk scored coverage
 of the rules it had invented for itself. It validated a deliverable nobody could review.
