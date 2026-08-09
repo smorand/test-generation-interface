@@ -110,8 +110,8 @@
             <div
               :class="msg.role === 'user'
                 ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-lg text-sm'
-                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm px-4 py-2 max-w-xl text-sm'"
-              x-text="msg.content"
+                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm px-4 py-2 max-w-xl text-sm chat-md'"
+              x-html="msg.role === 'user' ? escapeText(msg.content) : renderMarkdown(msg.content)"
             ></div>
           </div>
         </template>
@@ -125,7 +125,7 @@
         <input
           type="text"
           class="input flex-1"
-          placeholder="Instruction ou question sur ce document…"
+          placeholder="Question sur le document, les règles, les tests ou ce run…"
           x-model="chatInput"
           @keydown.enter="sendChat()"
         />
@@ -147,7 +147,84 @@
   </main>
 
   <script>
-  // Fonctions des partials definies ici, pas dans les fragments: Alpine initialise
+  // ── Rendu markdown des reponses du chat ──────────────────────────────────
+  // L'echappement HTML vient EN PREMIER: aucune reponse de modele ne peut injecter
+  // de balise. Le markdown est ensuite applique sur du texte deja neutralise.
+  function escapeText(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function renderMarkdown(text) {
+    let src = escapeText(text);
+    const blocks = [];
+    // Blocs de code mis de cote pour que leur contenu ne soit pas reinterprete
+    src = src.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, (m, code) => {
+      blocks.push('<pre class="md-pre"><code>' + code.replace(/\n$/, '') + '</code></pre>');
+      return '\u0000BLOCK' + (blocks.length - 1) + '\u0000';
+    });
+
+    const inline = (s) => s
+      .replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+               '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    const lines = src.split('\n');
+    const out = [];
+    let list = null;      // 'ul' ou 'ol'
+    let table = null;     // lignes du tableau en cours
+
+    const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
+    const closeTable = () => {
+      if (!table) return;
+      const cells = (row) => row.replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
+      const head = cells(table[0]);
+      const body = table.slice(table.length > 1 && /^[\s|:-]+$/.test(table[1]) ? 2 : 1);
+      out.push('<table class="md-table"><thead><tr>' + head.map(c => '<th>' + c + '</th>').join('') + '</tr></thead><tbody>');
+      body.forEach(row => out.push('<tr>' + cells(row).map(c => '<td>' + c + '</td>').join('') + '</tr>'));
+      out.push('</tbody></table>');
+      table = null;
+    };
+
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (/^\u0000BLOCK\d+\u0000$/.test(line.trim())) { closeList(); closeTable(); out.push(line.trim()); continue; }
+      if (/^\s*\|.*\|\s*$/.test(line)) { closeList(); (table = table || []).push(line.trim()); continue; }
+      closeTable();
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        closeList();
+        const level = Math.min(6, heading[1].length + 2);  // # devient h3, pour rester sous le titre de page
+        out.push('<h' + level + '>' + inline(heading[2]) + '</h' + level + '>');
+        continue;
+      }
+      const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+      if (bullet) {
+        if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+        out.push('<li>' + inline(bullet[1]) + '</li>');
+        continue;
+      }
+      const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (numbered) {
+        if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+        out.push('<li>' + inline(numbered[1]) + '</li>');
+        continue;
+      }
+      if (!line.trim()) { closeList(); continue; }
+      closeList();
+      out.push('<p>' + inline(line) + '</p>');
+    }
+    closeList(); closeTable();
+
+    let html = out.join('\n');
+    blocks.forEach((block, i) => { html = html.replace('\u0000BLOCK' + i + '\u0000', block); });
+    return html;
+  }
+
+    // Fonctions des partials definies ici, pas dans les fragments: Alpine initialise
   // la racine du fragment avant que le <script> de fin de fragment ne soit execute.
 function testsPanel() {
   return {

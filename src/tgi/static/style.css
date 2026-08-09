@@ -234,6 +234,40 @@ body {
 .hover\:bg-gray-700:hover { background: #374151; }
 .hover\:bg-gray-500:hover { background: #6b7280; }
 .flex-col { flex-direction: column; }
+
+/* ── Rendu markdown des reponses du chat ───────────────────────────────── */
+.chat-md > *:first-child { margin-top: 0; }
+.chat-md > *:last-child { margin-bottom: 0; }
+.chat-md p { margin: 0.4rem 0; line-height: 1.5; }
+.chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 {
+  margin: 0.7rem 0 0.3rem; font-weight: 600; color: #93c5fd;
+}
+.chat-md h3 { font-size: 0.95rem; }
+.chat-md h4, .chat-md h5, .chat-md h6 { font-size: 0.875rem; }
+.chat-md ul, .chat-md ol { margin: 0.35rem 0 0.35rem 1.1rem; }
+.chat-md ul { list-style: disc; }
+.chat-md ol { list-style: decimal; }
+.chat-md li { margin: 0.15rem 0; line-height: 1.45; }
+.chat-md strong { color: #fff; font-weight: 600; }
+.chat-md em { font-style: italic; }
+.chat-md a { color: #60a5fa; text-decoration: underline; }
+.chat-md .md-code {
+  background: #111827; border: 1px solid #374151; border-radius: 3px;
+  padding: 0.05rem 0.3rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.8rem;
+}
+.chat-md .md-pre {
+  background: #111827; border: 1px solid #374151; border-radius: 4px;
+  padding: 0.5rem 0.65rem; margin: 0.5rem 0; overflow-x: auto;
+}
+.chat-md .md-pre code {
+  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.78rem; color: #e5e7eb;
+}
+.chat-md .md-table { border-collapse: collapse; margin: 0.5rem 0; font-size: 0.78rem; width: 100%; }
+.chat-md .md-table th, .chat-md .md-table td {
+  border: 1px solid #374151; padding: 0.25rem 0.45rem; text-align: left; vertical-align: top;
+}
+.chat-md .md-table th { background: #1f2937; color: #93c5fd; font-weight: 600; }
+
 /* Arborescence du livrable */
 details.rule-node > summary::marker, details.use-case > summary::marker { color: #6b7280; }
 details.rule-node[open] > summary { color: #fff; }

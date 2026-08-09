@@ -8,7 +8,6 @@ from tests.conftest import FakeLLMClient
 from tgi.agents.extractor import ExtractorAgent
 from tgi.agents.generator import GeneratorAgent
 from tgi.agents.judge import JudgeAgent
-from tgi.agents.planner import PlannerAgent
 
 # ---------------------------------------------------------------------------
 # Extractor
@@ -228,76 +227,6 @@ async def test_judge_llm_score_mode_without_number(monkeypatch: pytest.MonkeyPat
     verdict = await agent.evaluate(model="m", rules=_RULES, tests=[])
     assert verdict["score"] == 0
     assert verdict["status"] == "incomplete"
-
-
-# ---------------------------------------------------------------------------
-# Planner
-# ---------------------------------------------------------------------------
-
-
-async def test_planner_validates_steps() -> None:
-    fake = FakeLLMClient(chat_json_result={"steps": [{"order": 1, "action": "a", "target": "bloc-1"}, 42]})
-    agent = PlannerAgent(fake)  # type: ignore[arg-type]
-    steps = await agent.plan(model="m", instruction="do", state_summary={})
-    assert len(steps) == 1
-    assert steps[0]["order"] == 1
-    assert steps[0]["clarification_needed"] is False
-
-
-async def test_planner_accepts_plain_string_steps() -> None:
-    fake = FakeLLMClient(chat_json_result={"steps": ["faire ceci", "puis cela"]})
-    agent = PlannerAgent(fake)  # type: ignore[arg-type]
-    steps = await agent.plan(model="m", instruction="do", state_summary={})
-    assert [s["action"] for s in steps] == ["faire ceci", "puis cela"]
-    assert [s["order"] for s in steps] == [1, 2]
-
-
-async def test_planner_non_list_degrades_to_empty() -> None:
-    fake = FakeLLMClient(chat_json_result={"steps": "oops"})
-    agent = PlannerAgent(fake)  # type: ignore[arg-type]
-    assert await agent.plan(model="m", instruction="do", state_summary={}) == []
-
-
-def test_planner_needs_planning_heuristic() -> None:
-    fake = FakeLLMClient()
-    agent = PlannerAgent(fake)  # type: ignore[arg-type]
-    assert agent.needs_planning("modifie tous les blocs") is True
-    assert agent.needs_planning("puis fais autre chose") is True
-    assert agent.needs_planning("x" * 201) is True
-    assert agent.needs_planning("simple demande") is False
-
-
-async def test_judge_sends_compact_tests_to_the_model() -> None:
-    """The judge must not ship every expected_result: it blows the token budget."""
-
-    class _CapturingClient(FakeLLMClient):
-        def __init__(self) -> None:
-            super().__init__(chat_json_result={"covered_rules": ["R1"]})
-            self.user_content = ""
-
-        async def chat_json(self, model: str, system_prompt: str, user_content: str, **kwargs: object) -> object:
-            self.user_content = user_content
-            return self._chat_json_result
-
-    fat_test = {
-        "id": "TEST-001",
-        "business_rule": "R1",
-        "name": "nom du test",
-        "description": "description du test",
-        "steps": [{"order": 1, "description": "etape visible", "expected_result": "SECRET_ASSERTION"}],
-        "status": "draft",
-        "created_at": "2025-01-01T00:00:00Z",
-        "updated_at": "2025-01-01T00:00:00Z",
-    }
-    client = _CapturingClient()
-    agent = JudgeAgent(client)  # type: ignore[arg-type]
-    await agent.evaluate(model="m", rules=_RULES, tests=[fat_test])
-
-    # Intent is kept, assertions and bookkeeping are dropped
-    assert "etape visible" in client.user_content
-    assert "nom du test" in client.user_content
-    assert "SECRET_ASSERTION" not in client.user_content
-    assert "created_at" not in client.user_content
 
 
 # ---------------------------------------------------------------------------

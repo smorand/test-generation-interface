@@ -6,16 +6,17 @@ import asyncio
 import json
 import logging
 import re
+import statistics
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.agents.extractor import ExtractorAgent
 from tgi.agents.generator import GeneratorAgent
 from tgi.agents.judge import JudgeAgent
-from tgi.agents.planner import PlannerAgent
 from tgi.config import settings
+from tgi.deliverable import build_deliverable, use_case_coverage
 from tgi.services.llm import LLMJSONError
-from tgi.testset import merge_tests, saturated_rule_ids, similar_rule_pairs
+from tgi.testset import merge_tests, normalize_label, saturated_rule_ids, similar_rule_pairs
 
 if TYPE_CHECKING:
     from tgi.services.git_service import GitService
@@ -220,7 +221,6 @@ class Orchestrator:
         "_git",
         "_judge",
         "_llm",
-        "_planner",
         "_state",
     )
 
@@ -236,7 +236,6 @@ class Orchestrator:
         self._extractor = ExtractorAgent(llm_client)
         self._generator = GeneratorAgent(llm_client)
         self._judge = JudgeAgent(llm_client)
-        self._planner = PlannerAgent(llm_client)
 
     async def _emit(self, project_id: str, event_type: str, data: dict[str, Any]) -> None:
         """Publish a UI event, keeping the most recent state when nobody listens.
@@ -557,55 +556,290 @@ class Orchestrator:
         )
 
     async def handle_chat(self, project_id: str, message: str, model: str) -> str:
-        """Process a chat message. May trigger planner for complex instructions."""
+        """Answer a question about this document, its rules, its tests and this run.
+
+        Read only by design: nothing here modifies the project. Editing happens in the
+        rules and tests tabs, where a human sees what changes.
+        """
         chat_prompt_path = Path(__file__).parent.parent / "prompts" / "chat.md"
         chat_system = chat_prompt_path.read_text(encoding="utf-8").strip()
 
         state = await self._state.load(project_id)
-
-        # Build state summary for context
-        state_summary = {
-            "project_id": project_id,
-            "blocs": [
-                {
-                    "id": b["id"],
-                    "title": b["title"],
-                    "status": b["status"],
-                    "rules_count": len(b.get("rules", [])),
-                    "tests_count": len(b.get("tests", [])),
-                    "test_ids": [t["id"] for t in b.get("tests", [])],
-                }
-                for b in state["blocs"]
-            ],
-        }
-
-        # Check if planning is needed
-        if self._planner.needs_planning(message):
-            try:
-                steps = await self._planner.plan(
-                    model=model,
-                    instruction=message,
-                    state_summary=state_summary,
-                )
-                plan_text = "\n".join(f"{s['order']}. [{s['target']}] {s['action']}" for s in steps)
-                response_prefix = f"Plan d'exécution:\n{plan_text}\n\nExécution:\n"
-            except Exception as exc:
-                logger.warning("Planner failed, continuing without plan: %s", exc)
-                response_prefix = ""
-                steps = []
-        else:
-            response_prefix = ""
-            steps = []
-
+        context = _chat_context(state, message)
         user_content = (
-            f"État du projet:\n{json.dumps(state_summary, ensure_ascii=False, indent=2)}\n\nInstruction: {message}"
+            f"Contexte du projet:\n{json.dumps(context, ensure_ascii=False, indent=2)}\n\nQuestion: {message}"
         )
-        response = await self._llm.chat(
+        return await self._llm.chat(
             model=model,
             system_prompt=chat_system,
             user_content=user_content,
             temperature=0.4,
         )
 
-        await self._git.commit(project_id, "fix(chat): human modification via chat")
-        return response_prefix + response
+
+_STOPWORDS = frozenset(
+    [
+        "le",
+        "la",
+        "les",
+        "un",
+        "une",
+        "des",
+        "du",
+        "de",
+        "au",
+        "aux",
+        "et",
+        "ou",
+        "mais",
+        "donc",
+        "or",
+        "ni",
+        "car",
+        "que",
+        "qui",
+        "quoi",
+        "dont",
+        "ou",
+        "pour",
+        "par",
+        "sur",
+        "sous",
+        "dans",
+        "avec",
+        "sans",
+        "vers",
+        "chez",
+        "entre",
+        "est",
+        "sont",
+        "ete",
+        "etre",
+        "avoir",
+        "a",
+        "ai",
+        "as",
+        "ont",
+        "fait",
+        "quel",
+        "quelle",
+        "quels",
+        "quelles",
+        "combien",
+        "pourquoi",
+        "comment",
+        "est-ce",
+        "ce",
+        "cet",
+        "cette",
+        "ces",
+        "il",
+        "elle",
+        "ils",
+        "elles",
+        "on",
+        "nous",
+        "vous",
+        "je",
+        "tu",
+        "me",
+        "te",
+        "se",
+        "leur",
+        "leurs",
+        "son",
+        "sa",
+        "ses",
+        "mon",
+        "ma",
+        "mes",
+        "plus",
+        "moins",
+        "tres",
+        "tout",
+        "tous",
+        "toute",
+        "toutes",
+        "autre",
+        "autres",
+        "meme",
+        "aussi",
+        "alors",
+        "si",
+        "non",
+        "oui",
+    ]
+)
+# Enough context to answer without shipping the whole document
+_CHAT_MAX_BLOCS = 3
+# Below this length a word carries no signal for the bloc selection
+_MIN_TERM_LENGTH = 4
+_CHAT_EXCERPT_CHARS = 1500
+_BLOC_MENTION_RE = re.compile(r"\bbloc[-\s]?(\d+)\b", re.IGNORECASE)
+_RULE_MENTION_RE = re.compile(r"\b(R\d+(?:-\d+)?)\b")
+_REF_MENTION_RE = re.compile(r"\b[A-Z]{1,6}\d+(?:\.[A-Z]{1,3}\d+)+\b", re.IGNORECASE)
+
+
+def _question_terms(message: str) -> set[str]:
+    """Meaningful words of a question, accents and stopwords removed."""
+    normalized = normalize_label(message)
+    return {word for word in normalized.split() if len(word) >= _MIN_TERM_LENGTH and word not in _STOPWORDS}
+
+
+def _chat_summary(state: dict[str, Any]) -> dict[str, Any]:
+    """What the run did: statuses, totals, scores, and one line per bloc."""
+    blocs = state.get("blocs") or []
+    statuses: dict[str, int] = {}
+    passes: dict[str, int] = {}
+    scores: list[int] = []
+    rules_total = tests_total = 0
+    bloc_lines: list[dict[str, Any]] = []
+
+    for bloc in blocs:
+        status = str(bloc.get("status", "pending"))
+        statuses[status] = statuses.get(status, 0) + 1
+        used = bloc.get("judge_passes")
+        if isinstance(used, int):
+            passes[str(used)] = passes.get(str(used), 0) + 1
+        if isinstance(bloc.get("score"), int):
+            scores.append(int(bloc["score"]))
+        rules = bloc.get("rules") or []
+        tests = bloc.get("tests") or []
+        rules_total += len(rules)
+        tests_total += len(tests)
+        line: dict[str, Any] = {
+            "id": bloc.get("id"),
+            "titre": bloc.get("title"),
+            "statut": status,
+            "score": bloc.get("score"),
+            "passes_juge": bloc.get("judge_passes"),
+            "regles": len(rules),
+            "tests": len(tests),
+        }
+        if bloc.get("error"):
+            line["erreur"] = bloc["error"]
+        bloc_lines.append(line)
+
+    summary: dict[str, Any] = {
+        "document": state.get("doc_path"),
+        "modele_generateur": state.get("model_generator"),
+        "modele_juge": state.get("model_judge"),
+        "blocs_total": len(blocs),
+        "statuts": statuses,
+        "regles_total": rules_total,
+        "tests_total": tests_total,
+        "tests_par_regle": round(tests_total / rules_total, 2) if rules_total else 0,
+        "passes_juge": passes,
+        "blocs": bloc_lines,
+    }
+    if scores:
+        scores.sort()
+        summary["score"] = {
+            "median": round(statistics.median(scores)),
+            "min": scores[0],
+            "max": scores[-1],
+            "nombre_evalues": len(scores),
+        }
+    return summary
+
+
+def _relevant_blocs(blocs: list[dict[str, Any]], message: str, limit: int = _CHAT_MAX_BLOCS) -> list[dict[str, Any]]:
+    """Blocs worth sending in full for this question.
+
+    Deterministic and free: an explicit bloc number wins, then a rule id or a document
+    reference, then word overlap weighted title x3, rules x2, chunk x1. With no signal
+    at all, the blocs that need attention (lowest score, or in error).
+    """
+    if not blocs:
+        return []
+
+    mentioned = {f"bloc-{number}" for number in _BLOC_MENTION_RE.findall(message)}
+    if mentioned:
+        explicit = [b for b in blocs if str(b.get("id")) in mentioned]
+        if explicit:
+            return explicit[:limit]
+
+    rule_ids = {rid.upper() for rid in _RULE_MENTION_RE.findall(message)}
+    refs = {ref.upper() for ref in _REF_MENTION_RE.findall(message)}
+    if rule_ids or refs:
+        matching = [
+            bloc
+            for bloc in blocs
+            if any(
+                str(rule.get("id", "")).upper() in rule_ids or str(rule.get("source_ref", "")).upper() in refs
+                for rule in (bloc.get("rules") or [])
+                if isinstance(rule, dict)
+            )
+        ]
+        if matching:
+            return matching[:limit]
+
+    terms = _question_terms(message)
+    if terms:
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for bloc in blocs:
+            title = normalize_label(bloc.get("title"))
+            rules_text = normalize_label(
+                " ".join(str(r.get("description", "")) for r in (bloc.get("rules") or []) if isinstance(r, dict))
+            )
+            chunk = normalize_label(bloc.get("chunk"))
+            score = sum(3 * title.count(term) + 2 * rules_text.count(term) + chunk.count(term) for term in terms)
+            if score:
+                scored.append((score, bloc))
+        if scored:
+            scored.sort(key=lambda pair: pair[0], reverse=True)
+            return [bloc for _, bloc in scored[:limit]]
+
+    def attention(bloc: dict[str, Any]) -> tuple[int, int]:
+        status_rank = 0 if bloc.get("status") == "error" else 1
+        score = bloc.get("score")
+        return status_rank, score if isinstance(score, int) else 101
+
+    return sorted(blocs, key=attention)[:limit]
+
+
+def _chat_context(state: dict[str, Any], message: str) -> dict[str, Any]:
+    """Permanent run summary, plus the blocs this question is actually about."""
+    blocs = state.get("blocs") or []
+    rules = [
+        {**rule, "bloc_id": bloc["id"], "bloc_title": bloc.get("title", "")}
+        for bloc in blocs
+        for rule in (bloc.get("rules") or [])
+        if isinstance(rule, dict)
+    ]
+    tests = [test for bloc in blocs for test in (bloc.get("tests") or [])]
+
+    details = []
+    for bloc in _relevant_blocs(blocs, message):
+        chunk = str(bloc.get("chunk") or "")
+        details.append(
+            {
+                "id": bloc.get("id"),
+                "titre": bloc.get("title"),
+                "statut": bloc.get("status"),
+                "score": bloc.get("score"),
+                "regles": [
+                    {
+                        "id": rule.get("id"),
+                        "reference_document": rule.get("source_ref") or None,
+                        "description": rule.get("description"),
+                        "relue": bool(rule.get("reviewed")),
+                    }
+                    for rule in (bloc.get("rules") or [])
+                    if isinstance(rule, dict)
+                ],
+                "tests": [
+                    {"id": test.get("id"), "regles": test.get("business_rule"), "nom": test.get("name")}
+                    for test in (bloc.get("tests") or [])
+                    if isinstance(test, dict)
+                ],
+                "extrait_document": chunk[:_CHAT_EXCERPT_CHARS]
+                + ("… (tronqué)" if len(chunk) > _CHAT_EXCERPT_CHARS else ""),
+            }
+        )
+
+    return {
+        "synthese_du_run": _chat_summary(state),
+        "couverture_par_cas_utilisation": use_case_coverage(build_deliverable(rules, tests)),
+        "blocs_detailles_pour_cette_question": details,
+    }

@@ -287,20 +287,6 @@ async def test_handle_chat_simple(orchestrator: Orchestrator) -> None:
     assert "chat reponse" in resp
 
 
-async def test_handle_chat_with_planning(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-
-    orchestrator._planner = _StubAgent(  # type: ignore[assignment]
-        "plan", [{"order": 1, "action": "faire", "target": "all", "clarification_needed": False}]
-    )
-    # needs_planning is looked up on the stub too; provide it
-    orchestrator._planner.needs_planning = lambda _msg: True  # type: ignore[attr-defined]
-    # "tous les blocs" triggers needs_planning
-    resp = await orchestrator.handle_chat(pid, "modifie tous les blocs puis exporte", "gen")
-    assert "Plan" in resp
-
-
 async def test_rerun_bloc(orchestrator: Orchestrator) -> None:
     pid = await _new_project(orchestrator)
     await orchestrator.split_and_propose(pid)
@@ -395,3 +381,46 @@ async def test_emit_keeps_the_freshest_events_when_nobody_listens(orchestrator: 
     finally:
         logger.removeHandler(handler)
     assert [r for r in records if r.levelno >= logging.WARNING] == []
+
+
+async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestrator) -> None:
+    """The chat answers with real numbers, and never writes anything."""
+    pid = await _new_project(orchestrator)
+    await orchestrator.split_and_propose(pid)
+    state = await orchestrator._state.load(pid)
+    bloc_id = state["blocs"][0]["id"]
+    await orchestrator._state.update_bloc(
+        pid,
+        bloc_id,
+        {
+            "status": "needs_human",
+            "score": 62,
+            "judge_passes": 3,
+            "rules": [{"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "notifie le RRC"}],
+        },
+    )
+
+    captured: dict[str, str] = {}
+
+    class _CapturingLLM(_ScriptedLLM):
+        async def chat(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> str:
+            captured["user"] = user_content
+            captured["system"] = system_prompt
+            return "## Réponse\n- **62 %** de couverture"
+
+    orchestrator._llm = _CapturingLLM()  # type: ignore[assignment]
+    before = len(await orchestrator._git.log(pid))
+
+    answer = await orchestrator.handle_chat(pid, "pourquoi le score est de 62 ?", model="m")
+
+    assert answer.startswith("## Réponse")  # markdown returned as is, rendered client side
+    # The run reached the model: score, passes, statuses and the document reference
+    assert "62" in captured["user"]
+    assert "needs_human" in captured["user"]
+    assert "F01.EU01.CU02.RM01" in captured["user"]
+    assert "synthese_du_run" in captured["user"]
+    assert "extrait_document" in captured["user"]
+    # The prompt states it modifies nothing
+    assert "ne modifies rien" in captured["system"]
+    # And nothing was written: no empty commit any more
+    assert len(await orchestrator._git.log(pid)) == before
