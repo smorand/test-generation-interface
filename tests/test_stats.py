@@ -310,3 +310,50 @@ def test_report_aggregates_several_files(tmp_path: Path) -> None:
     assert "judge" in report
     assert "generator" in report
     assert "sent on all 2 calls" in report
+
+
+def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path) -> None:
+    """An aggregate hid which project was in which state, and that is the first thing to know
+    when the requirement axis of one of them comes out empty."""
+    healthy = tmp_path / "aaaa1111"
+    healthy.mkdir()
+    (healthy / "state.json").write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "1",
+                        "status": "done",
+                        "kind": "nominal",
+                        "requirement_refs": ["F01.CU01.RM01"],
+                        "tests": [{"id": "T1", "steps": [{"order": 1}], "requirement_refs": ["F01.CU01.RM01"]}],
+                    }
+                ],
+                "requirements": [{"ref": "F01.CU01.RM01", "kind": "RM", "parent": "F01.CU01", "statement": "x"}],
+                "axes": {"F": {"count": 12}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "bbbb2222"
+    empty.mkdir()
+    (empty / "state.json").write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {"id": "1", "status": "pending", "kind": "nominal", "requirement_refs": ["F01.CU01.RM01"], "tests": []}
+                ],
+                "requirements": [],
+                "axes": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_report([], tmp_path)
+
+    assert "bbbb2222" in report
+    assert "nothing was extracted from the document" in report
+    # and the healthy one is listed without the warning
+    healthy_line = next(line for line in report.splitlines() if "aaaa1111" in line)
+    assert "nothing was extracted" not in healthy_line

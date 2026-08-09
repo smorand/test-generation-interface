@@ -139,6 +139,9 @@ def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
     """Summarize scenarios, coverage and volume across every project on disk."""
     statuses: Counter[str] = Counter()
     kinds: Counter[str] = Counter()
+    # One line per project as well as the total: an aggregate hid which project was in which
+    # state, which is the first thing to know when one of them reports no requirement at all.
+    per_project: list[dict[str, Any]] = []
     scenarios_total = tests_total = steps_total = 0
     requirements_total = covered_total = untestable_total = 0
     projects = 0
@@ -166,9 +169,28 @@ def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
         for scenario in state.get("scenarios") or []:
             if isinstance(scenario, dict):
                 kinds[str(scenario.get("kind") or "?")] += 1
+        carried = {
+            str(ref)
+            for scenario in state.get("scenarios") or []
+            if isinstance(scenario, dict)
+            for ref in scenario.get("requirement_refs") or []
+        }
+        per_project.append(
+            {
+                "id": state_path.parent.name[:8],
+                "scenarios": summary["scenarios"],
+                "requirements": summary["requirements"],
+                "carried": len(carried),
+                "covered": summary["covered"],
+                "discarded": summary["discarded"],
+                "tests": summary["tests"],
+                "axes": {str(k): v.get("count") for k, v in (state.get("axes") or {}).items()},
+            }
+        )
 
     return {
         "projects": projects,
+        "per_project": per_project,
         "scenarios": scenarios_total,
         "statuses": statuses,
         "kinds": kinds,
@@ -245,6 +267,18 @@ def format_report(roles: dict[str, RoleStats], projects: dict[str, Any]) -> str:
         f"  volume: {projects['tests']} tests, {projects['steps']} steps, "
         f"{projects['tests_per_scenario']} tests per scenario"
     )
+    if len(projects.get("per_project") or []) > 1 or any(
+        not entry["requirements"] for entry in projects.get("per_project") or []
+    ):
+        lines.append("")
+        lines.append("Per project (requirements read, references carried by scenarios):")
+        for entry in projects["per_project"]:
+            warning = "  <-- nothing was extracted from the document" if not entry["requirements"] else ""
+            lines.append(
+                f"  {entry['id']}: {entry['scenarios']} scenarios, {entry['requirements']} requirements, "
+                f"{entry['carried']} carried, {entry['covered']} covered, {entry['discarded']} discarded, "
+                f"{entry['tests']} tests, axes {entry['axes']}{warning}"
+            )
     return "\n".join(lines)
 
 

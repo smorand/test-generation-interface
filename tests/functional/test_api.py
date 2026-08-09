@@ -660,3 +660,24 @@ def test_a_port_already_taken_is_detected_before_starting() -> None:
         assert port_is_free("127.0.0.1", taken) is False
 
     assert port_is_free("127.0.0.1", taken) is True
+
+
+async def test_an_empty_corpus_is_not_reported_as_an_empty_filter(client: AsyncClient) -> None:
+    """A project whose reading extracted nothing said "aucune exigence ne correspond au filtre",
+    which sends the user hunting through filters for a problem that is upstream."""
+    project_id = await _project_in_state(client, {"requirements": [], "distilled_at": "2026-01-01T00:00:00+00:00"})
+
+    html = (await client.get(f"/projects/{project_id}/partials/requirements")).text
+
+    assert "n'en a extrait aucune" in html
+    assert "correspond au filtre" not in html
+
+
+async def test_the_map_says_so_when_nothing_was_extracted(client: AsyncClient) -> None:
+    project_id = await _project_in_state(
+        client, {"requirements": [], "distilled_at": "2026-01-01T00:00:00+00:00", "scenarios": []}
+    )
+
+    html = (await client.get(f"/projects/{project_id}/partials/map")).text
+
+    assert "Aucune exigence n'a été extraite" in html

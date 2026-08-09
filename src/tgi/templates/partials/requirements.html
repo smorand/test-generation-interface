@@ -32,8 +32,20 @@
     </form>
   </div>
 
-  {% if not rows %}
-    <div class="text-gray-500 text-sm">Aucune exigence ne correspond au filtre.</div>
+  {% if not total %}
+    <div class="text-orange-400 text-sm">
+      Le projet ne contient aucune exigence: la lecture du document n'en a extrait aucune.
+      <div class="text-gray-500 mt-1">
+        Ce n'est pas un problème de filtre. Allez dans l'onglet CARTE et regardez l'encadré
+        « numérotation reconnue dans le document »: s'il est vide ou faux, la spécification
+        numérote ses éléments d'une façon que la lecture n'a pas reconnue, et il faut me le
+        montrer. Relancer la génération ne le corrigera pas.
+      </div>
+    </div>
+  {% elif not rows %}
+    <div class="text-gray-500 text-sm">
+      Aucune des {{ total }} exigences ne correspond au filtre.
+    </div>
   {% else %}
   <div class="text-xs text-gray-600 mb-2">
     Une ligne par exigence du document. Le regroupement suit la numérotation du document:

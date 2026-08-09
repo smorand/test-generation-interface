@@ -35,9 +35,26 @@
     <div class="text-sm text-gray-200 whitespace-pre-wrap">{{ context or "Aucun contexte extrait." }}</div>
   </div>
 
+  {% if distilled and not requirements_count %}
+  <div class="card mb-4 border border-red-500">
+    <div class="text-sm text-red-400">
+      Aucune exigence n'a été extraite du document.
+    </div>
+    <div class="text-xs text-gray-400 mt-1">
+      La lecture n'a reconnu aucune numérotation utilisable, donc il n'y a rien à couvrir et la
+      génération produira des tests que rien ne rattache au document. Vérifiez l'encadré de
+      numérotation ci-dessous, et le contenu de l'onglet DOC: un document converti en PDF perd
+      souvent la structure que porte le fichier Word.
+    </div>
+  </div>
+  {% endif %}
+
   {% if axes %}
   <div class="card mb-4">
-    <div class="text-xs uppercase text-gray-500 mb-2">Numérotation reconnue dans le document</div>
+    <div class="text-xs uppercase text-gray-500 mb-2">
+      Numérotation reconnue dans le document
+      <span class="text-gray-600">· famille → éléments terminaux, et le nombre de références vues</span>
+    </div>
     <div class="flex flex-wrap gap-3 text-sm">
       {% for prefix, axis in axes.items() %}
         <span class="badge badge-gray font-mono">{{ prefix }} → {{ axis.leaf_prefixes|join('/') }}
