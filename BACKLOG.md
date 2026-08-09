@@ -19,6 +19,20 @@ is read in one call. One enumeration pass returned 4 of 4 functionalities, 15 of
 **46 of 51 use cases and 250 rule references with zero invented identifier**, in 35 seconds.
 Reading costs **2 calls instead of 88**.
 
+**Refinement from the design discussion.** The first phase is not a map, it is a **distilled
+document**: context, scenarios, functional requirements, non functional requirements. Measured on
+this specification, the skeleton the document already declares weighs **20 400 tokens, 26 percent
+of the raw 77 700**, and even doubled by model written context and scenarios it stays near 40 000.
+So the expensive whole document read happens **once**, and every phase after it runs on a substrate
+any model can hold. Whether the raw document needs chunking becomes a property of the reading model
+alone, computed from its window, not a design constant.
+
+**Two axes, not one.** Scenarios drive test generation, requirements are verified against the tests
+produced. A coverage pass then either adds a few tests or **edits existing ones** so they validate
+the uncovered requirements, and the interface filters tests by scenario and by requirement. The
+current deliverable tree has a single axis (functionality, use case, rule, tests), which is the
+real structural gap.
+
 **Target shape.**
 
 1. Skeleton by regex, not by model: the document declares its identifiers, and extraction finds
@@ -66,6 +80,16 @@ added to the interface in the meantime: a field wired to nothing is worse than n
 
 ## 3. Non functional requirements
 
+**Measured before deferring.** This specification carries almost none: **zero** occurrence of
+performance, response time, accessibility or browser compatibility, and only sécurité (21) and
+disponibilité (30) as loose mentions. Building an extractor for them now would target a document
+type never observed. The deferral is evidence based, not a shortcut.
+
+**Requirements already carry a type.** The document numbers **258 RM** and **222 EM**, so it
+distinguishes business rules from business requirements by itself, and the pipeline flattened both
+into "rules". A requirement is the object, the type is an attribute, and the type is what should
+drive how it gets verified. Business rules are requirements: the model has one class too few.
+
 **Set aside on purpose, to refine later.** The pipeline has no notion of them today: it extracts
 business rules and generates functional tests. Nothing in the extractor, the generator or the
 judge distinguishes a performance, security, availability or accessibility requirement from a
@@ -83,7 +107,15 @@ step: they declare no rule of their own and reuse the previous ones. The model r
 absent, which was true about rules and misleading about the use case. The map needs a way to say
 "this use case inherits the rules of that one", otherwise those 3 look uncovered forever.
 
-## 5. Smaller items
+## 5. Preconditions belong in fixtures, not in steps
+
+Step reuse across the 7102 steps is only 1.4 (5202 distinct), so a general step library would earn
+little. The repetition is concentrated at the start of tests: "accéder à la liste des relations
+coverage" 41 times, "se connecter en tant que RRC" 29, "accéder à l'écran E01 composition du
+portefeuille" 29. Those are preconditions written as steps. Naming them as fixtures cuts review
+volume without losing a single assertion.
+
+## 6. Smaller items
 
 - **Bloc number alignment.** Sorting is fixed and numeric everywhere. Padding the display to
   `bloc-0009` was proposed and not done, because the identifier is used in the routes, the chat
