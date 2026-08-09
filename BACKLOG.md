@@ -1,0 +1,98 @@
+# Backlog
+
+Decided but not built, with the measurement that justifies each item. Numbers come from the
+reference run on the 280 000 character specification (88 blocs, `claude-haiku-4-5`), recorded
+in `.agent_docs/pipeline.md`.
+
+## 1. Read the document as a whole, generate per use case
+
+**Why.** The pipeline chunks mechanically and generates tests per chunk, which tests
+paragraphs instead of the application. Measured on the reference run: 2199 tests, 7102 steps,
+about **34 person-days of review** at 2 minutes per step, **38 percent of tests on screen
+detail** (labels, links, columns, formats) against 25 percent on a business act, up to **129
+tests for one use case**, median 22. The judge reports a median score of 100 percent because
+it only scores coverage of the rules a chunk invented for itself, so it validates a deliverable
+nobody can review.
+
+**Proven feasible.** The document is about **78 000 tokens for a 128 000 token context**, so it
+is read in one call. One enumeration pass returned 4 of 4 functionalities, 15 of 16 user steps,
+**46 of 51 use cases and 250 rule references with zero invented identifier**, in 35 seconds.
+Reading costs **2 calls instead of 88**.
+
+**Target shape.**
+
+1. Skeleton by regex, not by model: the document declares its identifiers, and extraction finds
+   **51 of 51 use cases, 401 of 401 rules, 0 orphan, 49 of 51 titles** from the markdown
+   headings. The 2 use cases without a title appear only inside rule identifiers and are named
+   by the human.
+2. One global pass for meaning: grouping, user scenarios, constraints. It never owns the list.
+3. Human validates the **map**, not the chunking. The completeness gap is computable without a
+   model, so the screen states "51 declared, 48 mapped, 3 missing".
+4. Generation per use case (51 calls), with the document sections attached to that use case.
+   Blocs survive as evidence, not as units of work.
+5. Synthesis per functionality (4 calls): grouping, and parameterised tests for message tables
+   and screen details.
+6. The judge changes question: coverage of the **declared** use cases and rules, computed
+   locally, and it only judges the quality of a test.
+
+**Two rules the measurements impose.**
+
+- **Enumerate, never interrogate.** Asking for the rules of one named use case produced **17
+  references where the document declares 1**. Asking the model to list what it sees produced
+  250 references with none invented. Same model, same document, different question shape.
+- **Filter every identifier against the document**, case insensitively. It is a regex and no
+  call. The letter suffix form `RM07a` broke this comparison twice, once in `parse_source_ref`
+  and once in a measurement script.
+
+**Not proven yet.** The generation half. Attaching the right document sections to a use case is
+untested, and so is whether the 16 000 token output budget holds for a use case carrying 24
+rules.
+
+## 2. Tests per use case as a parameter
+
+**Decided.** The number of tests per use case must be a parameter, exposed in the interface and
+honoured by generation. At 5 tests per use case this specification yields **255 tests against
+2199 today, 8.6 times fewer**.
+
+Specification to implement with item 1, since nothing consumes it before then. No control was
+added to the interface in the meantime: a field wired to nothing is worse than no field.
+
+- Setting `TGI_TESTS_PER_USE_CASE`, default 5, accepted range 1 to 20.
+- Editable per project on the import form, next to the model choices, and stored in the state so
+  a rerun keeps it.
+- The generator receives it as a target, not a hard cap: a use case with 24 rules may need more,
+  and the synthesis pass is what enforces the ceiling.
+- Likely replaces `TGI_MAX_TESTS_PER_RULE`, which caps at the wrong level.
+
+## 3. Non functional requirements
+
+**Set aside on purpose, to refine later.** The pipeline has no notion of them today: it extracts
+business rules and generates functional tests. Nothing in the extractor, the generator or the
+judge distinguishes a performance, security, availability or accessibility requirement from a
+business rule, so those requirements are either silently treated as business rules or dropped
+with the paragraph they came from.
+
+Open when it is picked up: whether they are classified during the global pass, whether they get
+their own chapter in the deliverable next to the functionalities, and whether a test is the
+right artefact for them at all.
+
+## 4. Use cases that inherit their rules
+
+The document says "Reprise des règles précédentes" for **3 use cases**, all in the notification
+step: they declare no rule of their own and reuse the previous ones. The model reported them as
+absent, which was true about rules and misleading about the use case. The map needs a way to say
+"this use case inherits the rules of that one", otherwise those 3 look uncovered forever.
+
+## 5. Smaller items
+
+- **Bloc number alignment.** Sorting is fixed and numeric everywhere. Padding the display to
+  `bloc-0009` was proposed and not done, because the identifier is used in the routes, the chat
+  and the export. Only the visual alignment is missing, if it is still wanted.
+- **Windows and Qwen3.6 end to end.** Never run by the assistant, the only part of the product
+  with no first hand verification. `tgi.bat`, then `uv run tgi-validate --model ...`.
+- **Old interrupted projects.** Several 78 bloc projects sit in `projects/` with blocs stuck at
+  running or pending, and they still display the judge error fixed on 2026-08-08. They are runtime
+  data, safe to delete.
+- **Timing measurements on a repeated document are meaningless.** The gateway caches identical
+  prompts: a fresh chunk takes 3.2 seconds, the same chunk again takes 0.35. Change the document
+  or state that the figure is a cache benchmark.

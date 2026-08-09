@@ -63,6 +63,7 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 
 ## Documentation Index
 
+- `BACKLOG.md` : decided but not built, each item with the measurement that justifies it
 - `CLAUDE.md` : fuller project overview (mirrors this index)
 - `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
 - `.agent_docs/python.md` : Python coding standards

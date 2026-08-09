@@ -82,5 +82,6 @@ This project follows the `python` skill. Reload it for full coding standards ref
 
 ## Documentation Index
 
+- `BACKLOG.md` : decided but not built, with the measurement behind each item
 - `.agent_docs/python.md` : Python coding standards and conventions
 - `.agent_docs/makefile.md` : Detailed Makefile documentation
