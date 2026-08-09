@@ -1,6 +1,6 @@
 {% set p = progress %}
 <div class="w-full">
-  <div x-init="pipelineRunning = {{ 'true' if p.in_progress else 'false' }}"></div>
+  <div x-init="pipelineRunning = {{ 'true' if p.in_progress else 'false' }}; runFinished = {{ 'true' if p.finished else 'false' }}"></div>
   {% if p.total %}
   <div class="flex items-center gap-3 text-xs mb-1">
     <div class="flex-1 h-2 rounded overflow-hidden flex" style="background:#1f2937">

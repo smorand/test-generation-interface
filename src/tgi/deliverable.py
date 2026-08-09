@@ -244,9 +244,16 @@ def filter_scenarios(scenarios: list[dict[str, Any]], query: str = "", gaps_only
 def filter_requirements(
     rows: list[dict[str, Any]], query: str = "", status: str = "", kind: str = ""
 ) -> list[dict[str, Any]]:
-    """Server side filter on the requirement axis."""
+    """Server side filter on the requirement axis.
+
+    The unstated filter is not a coverage status: it lists the references the document cites
+    and never states, which is a defect of the specification and the reason an uncovered
+    requirement can be impossible to act on.
+    """
     selected = rows
-    if status:
+    if status == "unstated":
+        selected = [row for row in selected if not row["statement"].strip()]
+    elif status:
         selected = [row for row in selected if row["status"] == status]
     if kind:
         selected = [row for row in selected if row["kind"] == kind]

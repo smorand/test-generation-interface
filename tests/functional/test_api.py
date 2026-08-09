@@ -609,3 +609,25 @@ async def test_progress_polls_itself_only_while_a_run_is_going(client: AsyncClie
     # Loaded while the document is still being read, it has nothing to draw yet and must
     # keep polling: waiting for an event left it blank for the whole run.
     assert "hx-trigger=\"load delay:4s\"" in blank
+
+
+async def test_requirements_can_be_filtered_on_the_ones_the_document_never_states(
+    client: AsyncClient,
+) -> None:
+    """Measured: 3 of 468 references are cited and never stated, including a notification
+    number the author left as E01.N0x. An uncovered requirement with no wording is a defect
+    of the document, and the reviewer has to be able to list them."""
+    project_id = await _project_with_scenarios(client)
+    from tgi.services.state_manager import state_manager
+
+    state = await state_manager.load(project_id)
+    state["requirements"].append(
+        {"ref": "VAL01.CU02.RM09", "kind": "RM", "axis": "VAL", "parent": "VAL01.CU02", "statement": ""}
+    )
+    await state_manager.save(project_id, state)
+
+    html = (await client.get(f"/projects/{project_id}/partials/requirements?status=unstated")).text
+
+    assert "VAL01.CU02.RM09" in html
+    assert "jamais défini" in html
+    assert "VAL01.CU01.RM01" not in html

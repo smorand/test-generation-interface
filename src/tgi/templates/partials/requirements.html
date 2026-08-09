@@ -5,6 +5,11 @@
     {% if summary.missing_count %}<span class="badge badge-orange">{{ summary.missing_count }} non couvertes</span>{% endif %}
     {% if summary.untestable %}<span class="badge badge-gray">{{ summary.untestable }} non testables</span>{% endif %}
     {% if summary.discarded %}<span class="badge badge-red">{{ summary.discarded }} écartées</span>{% endif %}
+    {% if unstated %}
+      <button class="badge badge-orange" title="Le document les cite sans jamais les énoncer: rien à tester tant qu'il ne les définit pas"
+        hx-get="/projects/{{ project_id }}/partials/requirements?status=unstated" hx-target="#requirements-container"
+        hx-swap="innerHTML">{{ unstated }} sans énoncé</button>
+    {% endif %}
     {% if matching != total %}<span class="text-gray-500">{{ matching }} correspondent au filtre</span>{% endif %}
 
     <form class="ml-auto flex items-center gap-2"
@@ -13,7 +18,7 @@
       <input type="hidden" name="per_page" value="{{ pagination.per_page }}" />
       <select class="input text-xs" name="status">
         <option value="">tout statut</option>
-        {% for value, label in [('covered','couvertes'),('missing','non couvertes'),('untestable','non testables'),('discarded','écartées')] %}
+        {% for value, label in [('covered','couvertes'),('missing','non couvertes'),('untestable','non testables'),('discarded','écartées'),('unstated','sans énoncé dans le document')] %}
           <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
@@ -30,36 +35,53 @@
   {% if not rows %}
     <div class="text-gray-500 text-sm">Aucune exigence ne correspond au filtre.</div>
   {% else %}
-  <table class="w-full text-xs md-table">
+  <div class="text-xs text-gray-600 mb-2">
+    Une ligne par exigence du document. Le regroupement suit la numérotation du document:
+    le titre gris est le cas d'utilisation ou l'écran qui porte les exigences en dessous.
+  </div>
+  <table class="data-table text-xs">
     <thead>
       <tr>
-        <th style="width:170px">Référence</th>
-        <th style="width:50px">Type</th>
-        <th>Énoncé</th>
-        <th style="width:110px">Statut</th>
-        <th style="width:210px">Couverte par</th>
+        <th style="width:160px">Référence</th>
+        <th style="width:46px">Type</th>
+        <th>Énoncé, tel qu'il est écrit dans le document</th>
+        <th style="width:104px">Statut</th>
+        <th style="width:190px">Couverte par</th>
       </tr>
     </thead>
     <tbody>
+      {% set ns = namespace(group=None) %}
       {% for row in rows %}
+        {% if row.parent != ns.group %}
+          {% set ns.group = row.parent %}
+          <tr class="group-start">
+            <td class="group-label font-mono">{{ row.parent or "hors numérotation" }}</td>
+            <td class="group-label" colspan="4">{{ containers.get(row.parent, "") }}</td>
+          </tr>
+        {% endif %}
         <tr>
-          <td class="font-mono text-blue-400 align-top">{{ row.ref }}</td>
-          <td class="align-top text-gray-500">{{ row.kind }}</td>
-          <td class="align-top text-gray-300">
-            {{ row.statement }}
+          <td class="font-mono text-blue-400">{{ row.ref }}</td>
+          <td class="text-gray-500">{{ row.kind }}</td>
+          <td class="text-gray-300">
+            {% if row.statement %}
+              {{ row.statement }}
+            {% else %}
+              <span class="text-orange-400">Cité dans le document, jamais défini.</span>
+              <span class="text-gray-500">Rien à tester tant que la spécification ne l'énonce pas.</span>
+            {% endif %}
             {% if row.reason %}<div class="text-gray-600 mt-1">motif: {{ row.reason }}</div>{% endif %}
           </td>
-          <td class="align-top">
+          <td>
             {% if row.status == 'covered' %}<span class="badge badge-green">couverte</span>
             {% elif row.status == 'missing' %}<span class="badge badge-orange">non couverte</span>
             {% elif row.status == 'untestable' %}<span class="badge badge-gray">non testable</span>
             {% else %}<span class="badge badge-red">écartée</span>{% endif %}
           </td>
-          <td class="align-top">
+          <td>
             {% for test in row.tests %}
               <span class="font-mono text-gray-400" title="{{ test.name }}">{{ test.id }}</span>{% if not loop.last %}, {% endif %}
             {% endfor %}
-            {% if not row.tests %}<span class="text-gray-600">—</span>{% endif %}
+            {% if not row.tests %}<span class="text-gray-600">&mdash;</span>{% endif %}
           </td>
         </tr>
       {% endfor %}

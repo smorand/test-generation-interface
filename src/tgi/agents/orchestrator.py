@@ -126,6 +126,9 @@ class Orchestrator:
                 for axis in grammar.axes.values()
             }
             fresh["distilled_at"] = datetime.now(UTC).isoformat()
+            # A map nobody has read is not a validated map. Reading the document again kept
+            # the previous approval, so a fresh map went straight to generation unreviewed.
+            fresh["validated"] = False
             await self._state.save(project_id, fresh)
 
         await self._git.commit(

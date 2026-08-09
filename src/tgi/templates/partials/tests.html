@@ -47,7 +47,7 @@
           {% endfor %}
         </div>
         {% if test.description %}<div class="text-sm text-gray-400 mb-2">{{ test.description }}</div>{% endif %}
-        <ol class="text-xs text-gray-400 ml-4 list-decimal">
+        <ol class="steps-list text-xs text-gray-400 ml-4 list-decimal">
           {% for step in test.steps %}
             <li>{{ step.description }}{% if step.expected_result %}
               <span class="text-gray-500">→ {{ step.expected_result }}</span>{% endif %}</li>

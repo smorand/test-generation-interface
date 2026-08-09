@@ -35,11 +35,27 @@ _HEADING_RE = re.compile(
     re.MULTILINE,
 )
 _WHITESPACE_RE = re.compile(r"\s+")
+# A statement says something: at least one word of three characters or more
+_WORD_RE = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
+# A bullet, in the forms the parsers emit for a Word list
+_LIST_ITEM_RE = re.compile(r"^(?:[-\u2013\u2022*o]\s|\d+[.)]\s)")
+# A declaration starts its own line, optionally under heading marks. Measured on the
+# reference document, 19 of the 20 requirements left without a statement were declared in a
+# table, and only cited in prose: taking the first occurrence read the citation.
+_DECLARATION_RE = re.compile(
+    rf"^\s*(?:#{{1,6}}\s*)?(?P<ref>{_SEGMENT}(?:\.{_SEGMENT})+)\s*(?P<rest>.*)$",
+)
 
 # A prefix seen once is a typo or a stray label, not a level of the numbering
 _MIN_PREFIX_SUPPORT = 3
 # How much text after an identifier is kept as its statement
 _STATEMENT_CHARS = 300
+# A table row states the wording, the kind and the trigger, so a declaration is allowed to be
+# longer than a sentence of prose, but not so long that the table becomes unreadable. The
+# median statement measured is 146 characters.
+_DECLARATION_CHARS = 400
+# Below this length, a line ending without punctuation is a section title, not a statement
+_TITLE_CHARS = 60
 
 
 @dataclass(frozen=True)
@@ -207,6 +223,7 @@ def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requ
     """
     grammar = grammar or infer_grammar(text)
     titles = titles_in(text)
+    declarations = _declarations(text)
     flat = _WHITESPACE_RE.sub(" ", text)
 
     found: dict[str, Requirement] = {}
@@ -225,6 +242,17 @@ def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requ
         if following:
             tail = tail[: following.start()]
         statement = tail.split(" ###")[0].split(" ##")[0].lstrip(" :-\u2013.").strip()
+        # The line where the document declares a reference always wins over an occurrence
+        # found in running text: a citation carries no statement of its own, and reading one
+        # left a requirement with an empty statement that no reviewer could act on. Preferring
+        # whichever was longer was not enough, since a citation running into the next
+        # paragraph is longer than the declaration it cites.
+        statement = declarations.get(ref) or statement
+        # Punctuation is not a statement. A citation between parentheses left ")." behind,
+        # which reads as a wording and is worse than an honest blank: the reference E01.N0x,
+        # a number the specification never decided, looked documented.
+        if not _WORD_RE.search(statement):
+            statement = ""
         axis = grammar.axis_of(ref)
         found[ref] = Requirement(
             ref=ref,
@@ -235,6 +263,103 @@ def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requ
             title=titles.get(ref, ""),
         )
     return list(found.values())
+
+
+
+
+def _continues_after_blank(paragraph: list[str], rest: list[str]) -> bool:
+    """Whether a statement continues past a blank line.
+
+    It usually does: the reference document states a second case of the same rule in the next
+    paragraph, and cutting at the blank line dropped it. What must not be swallowed is the
+    title of the following section, and this document writes those as plain lines rather than
+    as headings, so structure cannot separate them. The shape can: a title is short and ends
+    without punctuation, "Présentation détaillée", where a continuation is a sentence or a
+    bullet. A bullet is never a title, and a colon announces a list, both checked first.
+    """
+    following = next((line.strip() for line in rest if line.strip()), "")
+    if not following or _DECLARATION_RE.match(following) or following.startswith("#"):
+        return False
+    if _LIST_ITEM_RE.match(following) or (paragraph and paragraph[-1].rstrip().endswith(":")):
+        return True
+    return not _looks_like_a_title(following)
+
+
+def _looks_like_a_title(line: str) -> bool:
+    """A short line that ends without punctuation announces a section, it states nothing."""
+    return len(line) < _TITLE_CHARS and not line.rstrip().endswith((".", "!", "?", "\u00bb", ":", ";", ")"))
+
+
+def _declarations(text: str) -> dict[str, str]:
+    """The statement of every reference the document declares at the start of a line.
+
+    A specification states a message or a notification in a table, one row per identifier,
+    and only cites it in prose. Reading the first occurrence therefore read the citation and
+    left the requirement with no statement at all, which is unreviewable: an uncovered
+    requirement with no wording tells nobody what to test. Measured on the reference
+    document, 19 of the 20 statements missing were declared in a table.
+    """
+    lines = text.splitlines()
+    starts: list[tuple[int, str, str]] = []
+    for number, line in enumerate(lines):
+        match = _DECLARATION_RE.match(line)
+        if match:
+            starts.append((number, match.group("ref").upper(), match.group("rest")))
+
+    declarations: dict[str, str] = {}
+    for index, (number, ref, rest) in enumerate(starts):
+        if ref in declarations:
+            continue
+        limit = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
+        block = _block_of(lines, number, rest, limit)
+        statement = _row_statement(block) if "|" in rest else _prose_statement(block)
+        if statement:
+            declarations[ref] = statement
+    return declarations
+
+
+def _block_of(lines: list[str], number: int, rest: str, limit: int) -> list[str]:
+    """The lines a declaration may draw from: up to the next one, and never past a heading."""
+    block = [rest, *lines[number + 1 : limit]]
+    for offset, line in enumerate(block):
+        if line.lstrip().startswith("#"):
+            return block[:offset]
+    return block
+
+
+def _row_statement(block: list[str]) -> str:
+    """A table row, joined so the wording, the kind and the trigger are read together.
+
+    A row is not one line: the parser breaks cells over several lines and a cell can hold a
+    blank one. But running to the next declaration crossed section boundaries and produced
+    700 character statements ending in the next chapter, so a row tolerates one blank line
+    and stops once what follows it has left the table.
+    """
+    row: list[str] = []
+    after_blank = False
+    for line in block:
+        stripped = line.strip()
+        if not stripped:
+            after_blank = True
+            continue
+        if after_blank and "|" not in stripped:
+            break
+        row.append(stripped)
+        after_blank = False
+    cells = [cell.strip(" :-\u2013.\u00a0") for cell in " ".join(row).split("|")]
+    return " \u00b7 ".join(cell for cell in cells if cell)[:_DECLARATION_CHARS]
+
+
+def _prose_statement(block: list[str]) -> str:
+    """Prose, up to the blank line that ends it, unless the statement continues past it."""
+    paragraph: list[str] = []
+    for offset, line in enumerate(block):
+        stripped = line.strip()
+        if stripped:
+            paragraph.append(stripped)
+        elif not _continues_after_blank(paragraph, block[offset + 1 :]):
+            break
+    return " ".join(paragraph).lstrip(" :-\u2013.\u00a0").strip()[:_DECLARATION_CHARS]
 
 
 def containers(requirements: list[Requirement], text: str = "") -> dict[str, str]:

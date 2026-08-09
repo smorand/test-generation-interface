@@ -51,6 +51,36 @@ call, and it turns a 94 percent fabricated answer into a clean one. The letter s
 `RM07a` broke that comparison twice, once in the parser and once in a measurement script:
 normalise both sides.
 
+### A statement comes from the line that declares it
+
+Reading the first occurrence of a reference read whichever came first, and a specification
+cites an identifier long before, or long after, it states it. Measured: **20 of 468
+requirements had no statement at all**, all of them screen messages and notifications, which
+is unreviewable, since an uncovered requirement with no wording tells nobody what to test.
+
+The document declares those in tables, one row per identifier, and only cites them in prose.
+So the declaring line wins over any occurrence in running text, and three shapes are read:
+
+| Shape | Boundary | Why |
+|---|---|---|
+| Table row | next declaration, tolerating one blank line inside a cell | the parser breaks cells over several lines |
+| Prose | end of its paragraph, continuing past a blank line unless a section title follows | a rule states a second case in the next paragraph |
+| List | the bullets that follow a colon | 16 rules ended on "Si oui :" with their conditions dropped |
+
+Result: **467 of 468 carry their wording**, median 145 characters, and no statement contains
+the title of the following section.
+
+Preferring whichever candidate was longer was not enough: a citation running into the next
+paragraph is longer than the declaration it cites. The declaration wins, full stop.
+
+**Punctuation is not a statement.** A citation between parentheses left ")." behind, which
+reads as a wording and is worse than an honest blank. A statement needs one word of three
+letters, otherwise it is empty.
+
+The three left empty are defects of the document, and the interface lists them: `E01.N0x`, a
+notification number the author never decided, `E06.N03` and `F03.EU01.CU03.EM06`, cited in a
+cross reference column and never stated anywhere.
+
 ### The grammar is inferred, not assumed
 
 Counting prefixes per position over the whole identifier population gives position 0 as `F`

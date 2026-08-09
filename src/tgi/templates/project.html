@@ -32,27 +32,54 @@
     </template>
   </nav>
 
-  <!-- Pipeline controls -->
-  <div class="px-6 py-3 border-b border-gray-800 flex items-center gap-3">
+  <!-- Pipeline controls. The three steps are always named, because a button labelled
+       "Valider la carte" that appears and vanishes tells nobody what was validated. -->
+  <div class="px-6 py-3 border-b border-gray-800 flex flex-wrap items-center gap-x-3 gap-y-2">
+    <ol class="steps text-xs">
+      <li class="step" :class="mapReady ? 'step-done' : 'step-current'">
+        <span x-text="mapReady ? '\u2713' : '1'"></span> Lecture du document
+      </li>
+      <li class="step-arrow">&rsaquo;</li>
+      <li class="step" :class="!mapReady ? 'step-todo' : (mapValidated ? 'step-done' : 'step-current')">
+        <span x-text="mapValidated ? '\u2713' : '2'"></span> Relecture de la carte, par vous
+      </li>
+      <li class="step-arrow">&rsaquo;</li>
+      <li class="step" :class="!mapValidated ? 'step-todo' : (pipelineRunning ? 'step-current' : (runFinished ? 'step-done' : 'step-current'))">
+        <span x-text="runFinished ? '\u2713' : '3'"></span> Génération des tests
+      </li>
+    </ol>
+
     <div x-show="!mapReady" class="flex items-center gap-2 text-blue-400 text-sm">
-      <span class="spinner"></span> Lecture du document…
+      <span class="spinner"></span> Lecture en cours…
     </div>
-    <button
-      class="btn-secondary text-sm"
-      x-show="mapReady && !mapValidated"
-      @click="validateMap()"
-    >✓ Valider la carte</button>
-    <button
-      class="btn-primary text-sm"
-      x-show="mapReady && mapValidated && !pipelineRunning"
-      @click="runPipeline()"
-    >▶ Lancer la génération</button>
+
+    <template x-if="mapReady && !mapValidated">
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn-secondary text-sm" @click="validateMap()"
+          title="Confirme que les scénarios et les exigences relevés sont les bons, et débloque la génération">
+          ✓ Je valide la carte, on peut générer
+        </button>
+        <span class="text-xs text-gray-500">
+          Onglets CARTE et EXIGENCES: vérifiez ce que le document a donné. Corriger ici coûte
+          une minute, corriger après coûte une génération entière.
+        </span>
+      </div>
+    </template>
+
+    <template x-if="mapReady && mapValidated && !pipelineRunning">
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn-primary text-sm" @click="runPipeline()"
+          x-text="runFinished ? '\u21bb Relancer la génération' : '\u25b6 Lancer la génération'"></button>
+        <span class="badge badge-green">carte validée</span>
+        <span class="text-xs text-gray-500">
+          Pour revenir en arrière: ↺ Relire dans l'onglet CARTE, la validation sera redemandée.
+        </span>
+      </div>
+    </template>
+
     <div x-show="pipelineRunning" class="flex items-center gap-2 text-blue-400 text-sm">
       <span class="spinner"></span> Génération en cours…
     </div>
-    <span x-show="mapReady && !mapValidated" class="text-xs text-gray-500">
-      Relisez la carte, puis validez: c'est le seul moment où une correction coûte une minute.
-    </span>
     <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
   </div>
 
@@ -322,6 +349,7 @@ function discardRow(projectId, index) {
           { id: 'history', label: '🕑 HISTORIQUE' },
         ],
         pipelineRunning: false,
+        runFinished: false,
         statusMessage: '',
         chatMessages: [],
         chatInput: '',

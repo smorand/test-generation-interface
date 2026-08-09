@@ -185,3 +185,124 @@ def test_the_guard_tolerates_anything_that_is_not_a_list() -> None:
     assert keep_known_references(None, DOC) == []
     assert keep_known_references("F01.EU01.CU01.RM01", DOC) == []
     assert keep_known_references([None, 12], DOC) == []
+
+
+def test_a_requirement_declared_in_a_table_carries_its_wording() -> None:
+    """Measured: 19 of the 20 requirements left without a statement were declared in a table.
+
+    The document states its screen messages as table rows and only cites them in prose, so
+    reading the first occurrence read the citation and left an uncovered requirement that no
+    reviewer could act on: a reference, and nothing to test.
+    """
+    text = """
+### E01 Composition du portefeuille
+
+F03.EU03.CU01.RM02 Si c'est le cas, le système affiche un message E01.M05.
+
+## Messages métier
+
+ID | Type | Libellé | Conditions
+
+E01.M05 | E | Relation déjà présente dans le portefeuille | Au retour d'un ajout manuel
+
+E01.N01 | Information
+Temps réel | Titre : Retrait d'un GAC
+Texte : « Relation retirée du portefeuille. »
+
+Archivage automatique sous 30 jours.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert "Relation déjà présente dans le portefeuille" in statements["E01.M05"]
+    assert "Au retour d'un ajout manuel" in statements["E01.M05"]
+    # A cell may hold a blank line, so the row survives it
+    assert "Titre : Retrait d'un GAC" in statements["E01.N01"]
+    assert "Relation retirée du portefeuille" in statements["E01.N01"]
+    # but the row stops when the table does, instead of swallowing the next section
+    assert "Archivage" not in statements["E01.N01"]
+
+
+def test_a_statement_citing_another_requirement_is_not_cut_short() -> None:
+    """Stopping at the next identifier truncated the sentence that cites one."""
+    text = """
+F01.EU01.CU05.RM04 Le système informe l'ancien RRC par une notification E01.N01.
+
+F01.EU01.CU05.RM05 Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert statements["F01.EU01.CU05.RM04"].endswith("notification E01.N01.")
+
+
+def test_prose_does_not_swallow_the_title_of_the_next_section() -> None:
+    """This document writes section titles as plain lines, so shape has to separate them:
+    short, and ending without punctuation."""
+    text = """
+F01.EU01.CU01.EM01 Chaque jour, le système identifie les changements.
+
+Présentation détaillée
+
+F01.EU01.CU01.EM02 Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert statements["F01.EU01.CU01.EM01"] == "Chaque jour, le système identifie les changements."
+
+
+def test_a_statement_continued_in_the_next_paragraph_keeps_it() -> None:
+    """The document states a second case of the same rule after a blank line, and cutting
+    there dropped it: 16 rules of the reference document lost their conditions."""
+    text = """
+F01.EU01.CU01.RM03 Si le gestionnaire est un CAGE, le système l'ajoute au portefeuille.
+
+Si le gestionnaire est un CAE, le système ne le remonte pas automatiquement dans le CRM.
+
+F01.EU01.CU01.RM04 Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert "CAGE" in statements["F01.EU01.CU01.RM03"]
+    assert "ne le remonte pas automatiquement" in statements["F01.EU01.CU01.RM03"]
+    assert "Autre règle" not in statements["F01.EU01.CU01.RM03"]
+
+
+def test_a_rule_announcing_a_list_keeps_its_bullets() -> None:
+    text = """
+F01.EU01.CU05.RM03 Le système teste si le gestionnaire était le binôme. Si oui :
+
+- le binôme est supprimé
+- la relation est maintenue dans son état actif
+
+F01.EU01.CU05.RM04 Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert "le binôme est supprimé" in statements["F01.EU01.CU05.RM03"]
+    assert "maintenue dans son état actif" in statements["F01.EU01.CU05.RM03"]
+
+
+def test_a_requirement_only_ever_cited_keeps_an_empty_statement() -> None:
+    """Measured: 1 of 468. The document names it and never states it, and saying so is the
+    honest answer, rather than attributing a neighbour's sentence to it."""
+    text = """
+F04.EU03.CU01.EM01 Le système notifie le nouvel intervenant E06.N03.
+
+F04.EU03.CU01.EM02 Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert statements["E06.N03"] == ""
+
+
+def test_a_citation_between_parentheses_leaves_no_statement() -> None:
+    """Measured on the reference document: E01.N0x, a notification number the specification
+    never decided, came out with the statement ")." and looked documented."""
+    text = """
+F02.EU01.CU03.RM01 : Le système notifie le RRC de l'intégration (E01.N0x).
+
+F02.EU01.CU03.RM02 : Autre règle.
+"""
+    statements = {r.ref: r.statement for r in extract_requirements(text)}
+
+    assert statements["E01.N0X"] == ""
+    assert statements["F02.EU01.CU03.RM01"].startswith("Le système notifie")

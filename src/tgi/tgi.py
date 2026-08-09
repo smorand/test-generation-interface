@@ -599,6 +599,10 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "total": len(rows),
                 "matching": len(matching),
                 "summary": coverage_summary(state),
+                "containers": state.get("containers") or {},
+                # A requirement the document cites and never states is a finding about the
+                # document, not a blank cell to shrug at
+                "unstated": sum(1 for row in rows if not row["statement"].strip()),
                 "kind_options": kind_options(rows),
                 "pagination": pagination,
                 "q": q,

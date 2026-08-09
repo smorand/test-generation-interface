@@ -158,6 +158,21 @@ async def test_a_watcher_that_leaves_is_forgotten(orchestrator: Orchestrator) ->
     assert subscriber_count(project_id) == 0
 
 
+async def test_reading_the_document_again_asks_for_the_map_to_be_validated_again(
+    orchestrator: Orchestrator,
+) -> None:
+    """A map nobody has read is not validated: keeping the approval sent a fresh map, with
+    different scenarios, straight to generation unreviewed."""
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.validate_map(project_id)
+    assert (await orchestrator._state.load(project_id))["validated"] is True
+
+    await orchestrator.distil(project_id)
+
+    assert (await orchestrator._state.load(project_id))["validated"] is False
+
+
 async def test_validating_the_map_is_recorded(orchestrator: Orchestrator) -> None:
     project_id = await _new_project(orchestrator)
     await orchestrator.distil(project_id)
