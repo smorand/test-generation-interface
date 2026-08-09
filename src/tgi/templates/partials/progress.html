@@ -1,6 +1,7 @@
 {% set p = progress %}
-{% if p.total %}
 <div class="w-full">
+  <div x-init="pipelineRunning = {{ 'true' if p.in_progress else 'false' }}"></div>
+  {% if p.total %}
   <div class="flex items-center gap-3 text-xs mb-1">
     <div class="flex-1 h-2 rounded overflow-hidden flex" style="background:#1f2937">
       {% if p.done %}<div style="width:{{ p.done_percent }}%; background:#22c55e"></div>{% endif %}
@@ -25,5 +26,13 @@
     <span class="ml-auto">écoulé {{ p.elapsed_label }}{% if p.remaining_label %} · reste ~{{ p.remaining_label }}{% endif %}</span>
     {% endif %}
   </div>
+  {% endif %}
+  {% if not p.finished %}
+  <!-- Self stopping poll, and it must survive the case that broke it: this fragment is
+       first loaded while the document is still being read, when there is no scenario and
+       nothing to draw. Polling on "a run is going" left it blank forever, since only a
+       lost event could have woken it. It polls until every scenario reached a final state. -->
+  <div hx-get="/projects/{{ project_id }}/partials/progress"
+    hx-trigger="load delay:4s" hx-target="#progress-container" hx-swap="innerHTML"></div>
+  {% endif %}
 </div>
-{% endif %}

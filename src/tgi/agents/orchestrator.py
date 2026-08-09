@@ -16,6 +16,7 @@ from tgi.agents.distiller import DistillerAgent, attach_requirements
 from tgi.agents.scenario_generator import ScenarioGeneratorAgent
 from tgi.config import settings
 from tgi.coverage_report import coverage_summary
+from tgi.events import publish
 from tgi.grammar import Requirement, containers, extract_requirements, infer_grammar, section_of
 from tgi.locks import lock_for
 from tgi.services.llm import LLMJSONError
@@ -37,19 +38,11 @@ def _test_offset(scenario_id: str) -> int:
     return (int(digits) if digits else 1) * 100
 
 
-# SSE event queues per project: project_id -> asyncio.Queue
-_EVENT_QUEUES: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 
 # Locks per project to prevent concurrent pipeline runs
 
-# Projects whose event queue already overflowed, so the warning is logged once
-_SATURATED_QUEUES: set[str] = set()
 
 
-def get_event_queue(project_id: str) -> asyncio.Queue[dict[str, Any]]:
-    if project_id not in _EVENT_QUEUES:
-        _EVENT_QUEUES[project_id] = asyncio.Queue(maxsize=500)
-    return _EVENT_QUEUES[project_id]
 
 
 def get_project_lock(project_id: str) -> asyncio.Lock:
@@ -89,32 +82,14 @@ class Orchestrator:
         self._coverage = CoverageAgent(llm_client)
 
     async def _emit(self, project_id: str, event_type: str, data: dict[str, Any]) -> None:
-        """Publish a UI event, keeping the most recent state when nobody listens.
+        """Publish a UI event to every browser watching this project.
 
-        With no browser attached (headless runs, closed tab) the queue fills up.
-        Dropping the oldest event rather than the new one keeps the freshest status
-        for a client that connects later, and the warning is only logged once per
-        project instead of on every event.
+        Delivery is best effort by design: a headless run has no subscriber and must not be
+        slowed down or held up by that. The interface never depends on an event alone, it
+        polls as well, because an event lost to a dropped connection would otherwise leave a
+        panel claiming work is still running.
         """
-        queue = get_event_queue(project_id)
-        event = {"type": event_type, "data": data}
-        try:
-            queue.put_nowait(event)
-            return
-        except asyncio.QueueFull:
-            pass
-
-        if project_id not in _SATURATED_QUEUES:
-            _SATURATED_QUEUES.add(project_id)
-            logger.warning(
-                "Event queue full for project %s (no listener), dropping oldest events from now on",
-                project_id,
-            )
-        try:
-            queue.get_nowait()
-            queue.put_nowait(event)
-        except (asyncio.QueueEmpty, asyncio.QueueFull):
-            logger.debug("Could not requeue event for project %s", project_id)
+        publish(project_id, {"type": event_type, "data": data})
 
     async def distil(self, project_id: str) -> dict[str, Any]:
         """Phase one: read the whole document and produce the corpus useful for testing.

@@ -1,4 +1,8 @@
 <div id="map-panel">
+  <!-- The controls above are driven by Alpine, and Alpine only learned of the end of the
+       distillation through an SSE event. One missed event showed the map with no button to
+       validate it. Every refresh of this fragment restates the server truth. -->
+  <div x-init="mapReady = {{ 'true' if distilled else 'false' }}; mapValidated = {{ 'true' if validated else 'false' }}"></div>
   <div class="flex flex-wrap items-center gap-4 mb-4 text-sm">
     <span class="text-gray-300"><strong>{{ scenarios|length }}</strong> scénarios</span>
     <span class="text-gray-500">{{ requirements_count }} exigences</span>
@@ -17,6 +21,8 @@
   </div>
 
   {% if not distilled %}
+    <div hx-get="/projects/{{ project_id }}/partials/map"
+      hx-trigger="load delay:4s" hx-target="#map-container" hx-swap="innerHTML"></div>
     <div class="text-gray-500 text-sm">
       Le document est en cours de lecture. Cette étape lit la spécification en entier et en extrait
       le contexte, les scénarios et les exigences. Elle prend de quelques secondes à une minute.

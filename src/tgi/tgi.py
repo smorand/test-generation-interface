@@ -20,10 +20,11 @@ from fastapi.templating import Jinja2Templates
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-from tgi.agents.orchestrator import Orchestrator, get_event_queue
+from tgi.agents.orchestrator import Orchestrator
 from tgi.config import Settings, settings
 from tgi.coverage_report import coverage_summary, requirement_rows
 from tgi.deliverable import build_tree, filter_requirements, filter_scenarios, kind_options, natural_key
+from tgi.events import subscribe
 from tgi.grammar import references_in
 from tgi.logging_config import setup_logging
 from tgi.progress import compute_progress
@@ -138,6 +139,23 @@ class ConditionalGZipMiddleware:
             await self._app(scope, receive, send)
             return
         await self._gzip(scope, receive, send)
+
+
+def _why_generation_is_refused(state: dict[str, Any]) -> str:
+    """Explain, in the words shown to the user, why generation cannot start now.
+
+    Returns an empty string when it can. The three refusals are ordered as the pipeline is:
+    the document must have been read, a human must have accepted the map, and a run already
+    under way must not be doubled.
+    """
+    if not state.get("distilled_at"):
+        return "La lecture du document n'est pas terminée, la carte est encore vide."
+    if not state.get("validated"):
+        return "La carte doit être validée avant de générer, c'est là que les corrections sont gratuites."
+    scenarios = state.get("scenarios") or []
+    if any(scenario.get("status") == "running" for scenario in scenarios):
+        return "Une génération est déjà en cours."
+    return ""
 
 
 def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915
@@ -301,21 +319,26 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
     @application.get("/projects/{project_id}/stream")
     async def project_stream(project_id: str) -> StreamingResponse:
-        """SSE endpoint for live project events."""
-        queue = get_event_queue(project_id)
+        """SSE endpoint for live project events.
+
+        Each connection subscribes with its own queue. A single shared queue handed every
+        event to whichever client happened to call get() first, so a second tab silently
+        stole the completion event from the tab being watched.
+        """
 
         async def event_generator() -> AsyncGenerator[str]:
-            # Send initial connected event
-            yield "data: " + json.dumps({"type": "connected", "data": {}}) + "\n\n"
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield "data: " + json.dumps(event) + "\n\n"
-                except TimeoutError:
-                    # Keep-alive ping
-                    yield ": ping\n\n"
-                except asyncio.CancelledError:
-                    break
+            with subscribe(project_id) as queue:
+                # Send initial connected event
+                yield "data: " + json.dumps({"type": "connected", "data": {}}) + "\n\n"
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                        yield "data: " + json.dumps(event) + "\n\n"
+                    except TimeoutError:
+                        # Keep-alive ping
+                        yield ": ping\n\n"
+                    except asyncio.CancelledError:
+                        break
 
         return StreamingResponse(
             event_generator(),
@@ -343,7 +366,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
     @application.post("/projects/{project_id}/run")
     async def run_pipeline(project_id: str) -> JSONResponse:
-        await _load_or_404(project_id)
+        state = await _load_or_404(project_id)
+        refusal = _why_generation_is_refused(state)
+        if refusal:
+            # Without this guard, clicking during distillation ran the pipeline over zero
+            # scenarios, declared it complete and committed an empty deliverable.
+            return JSONResponse({"status": "refused", "reason": refusal}, status_code=409)
         # Fire and forget: pipeline runs in background
         task = asyncio.create_task(orchestrator.run_pipeline(project_id))
         _BACKGROUND_TASKS.add(task)

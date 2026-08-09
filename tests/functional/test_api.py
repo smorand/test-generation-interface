@@ -175,6 +175,8 @@ async def test_run_and_rerun_start(client: AsyncClient, monkeypatch: pytest.Monk
     monkeypatch.setattr(Orchestrator, "rerun_scenario", fake_rerun)
 
     project_id = await _project_with_scenarios(client)
+    # Generation is refused until the map is validated, which is the point of the map
+    assert (await client.post(f"/projects/{project_id}/validate-map")).status_code == 200
     assert (await client.post(f"/projects/{project_id}/run")).status_code == 200
     assert (await client.post(f"/projects/{project_id}/scenarios/SC-001/rerun")).status_code == 200
     await asyncio.sleep(0.05)
@@ -486,3 +488,124 @@ async def test_filter_dropdowns_are_ordered_numerically(client: AsyncClient) -> 
         "VAL01.CU01.RM9",
         "VAL01.CU01.RM10",
     ]
+
+
+async def _project_in_state(client: AsyncClient, fields: dict[str, Any]) -> str:
+    """A project whose pipeline flags are set to exactly what a test needs."""
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _upload_sample(client)
+    state = await state_manager.load(project_id)
+    state.update(fields)
+    await state_manager.save(project_id, state)
+    return project_id
+
+
+async def test_generation_is_refused_while_the_document_is_still_being_read(client: AsyncClient) -> None:
+    """Clicking during distillation ran the pipeline over zero scenarios and declared it done."""
+    project_id = await _project_in_state(client, {"scenarios": [], "distilled_at": None, "validated": False})
+
+    response = await client.post(f"/projects/{project_id}/run")
+
+    assert response.status_code == 409
+    assert "lecture du document" in response.json()["reason"]
+
+
+async def test_generation_is_refused_until_a_human_validates_the_map(client: AsyncClient) -> None:
+    """The map review is the point of the pipeline, a click must not skip it."""
+    project_id = await _project_in_state(
+        client,
+        {
+            "distilled_at": "2026-01-01T00:00:00+00:00",
+            "validated": False,
+            "scenarios": [{"id": "1", "status": "pending"}],
+        },
+    )
+
+    response = await client.post(f"/projects/{project_id}/run")
+
+    assert response.status_code == 409
+    assert "validée" in response.json()["reason"]
+
+
+async def test_generation_is_refused_while_a_run_is_already_going(client: AsyncClient) -> None:
+    project_id = await _project_in_state(
+        client,
+        {
+            "distilled_at": "2026-01-01T00:00:00+00:00",
+            "validated": True,
+            "scenarios": [{"id": "1", "status": "running"}],
+        },
+    )
+
+    response = await client.post(f"/projects/{project_id}/run")
+
+    assert response.status_code == 409
+    assert "déjà en cours" in response.json()["reason"]
+
+
+async def test_generation_starts_once_the_map_is_validated(client: AsyncClient) -> None:
+    project_id = await _project_in_state(
+        client,
+        {
+            "distilled_at": "2026-01-01T00:00:00+00:00",
+            "validated": True,
+            "scenarios": [{"id": "1", "status": "done", "requirement_refs": [], "tests": []}],
+        },
+    )
+
+    response = await client.post(f"/projects/{project_id}/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "started"
+
+
+async def test_the_map_fragment_refreshes_itself_while_the_document_is_read(client: AsyncClient) -> None:
+    """The spinner turned forever when the completion event was lost: the fragment must poll."""
+    project_id = await _project_in_state(client, {"distilled_at": None, "scenarios": []})
+
+    html = (await client.get(f"/projects/{project_id}/partials/map")).text
+
+    assert "hx-trigger=\"load delay:4s\"" in html
+    assert "mapReady = false" in html
+
+
+async def test_the_map_fragment_stops_polling_once_the_map_is_there(client: AsyncClient) -> None:
+    project_id = await _project_with_scenarios(client)
+
+    html = (await client.get(f"/projects/{project_id}/partials/map")).text
+
+    assert "hx-trigger=\"load delay:4s\"" not in html
+    assert "mapReady = true" in html
+
+
+async def test_progress_polls_itself_only_while_a_run_is_going(client: AsyncClient) -> None:
+    """Polling is decided by the server, since a client flag goes stale on a missed event."""
+    running = await _project_in_state(
+        client,
+        {
+            "run_started_at": "2026-01-01T00:00:00+00:00",
+            "scenarios": [{"id": "1", "status": "running"}, {"id": "2", "status": "done"}],
+        },
+    )
+    finished = await _project_in_state(
+        client,
+        {
+            "run_started_at": "2026-01-01T00:00:00+00:00",
+            "scenarios": [{"id": "1", "status": "done"}],
+        },
+    )
+
+    empty = await _project_in_state(client, {"scenarios": [], "run_started_at": None})
+
+    live = (await client.get(f"/projects/{running}/partials/progress")).text
+    over = (await client.get(f"/projects/{finished}/partials/progress")).text
+    blank = (await client.get(f"/projects/{empty}/partials/progress")).text
+
+    assert "hx-trigger=\"load delay:4s\"" in live
+    assert "pipelineRunning = true" in live
+    assert "hx-trigger=\"load delay:4s\"" not in over
+    assert "pipelineRunning = false" in over
+    # Loaded while the document is still being read, it has nothing to draw yet and must
+    # keep polling: waiting for an event left it blank for the whole run.
+    assert "hx-trigger=\"load delay:4s\"" in blank

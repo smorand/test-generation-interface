@@ -156,6 +156,40 @@ awaits it, so a lock in a module level registry leaked between tests and raised 
 different event loop", making failures depend on test order. `locks.py` keys them by running
 loop.
 
+## Live updates: three faults that all looked like one hung run
+
+A user reported the reading of the document turning forever until they reloaded, and a
+generation button offered while the reading was still going. Three distinct faults.
+
+**One queue per project, not per client.** `asyncio.Queue` hands each item to exactly one
+consumer, so with two tabs open, or with the stale connection an SSE reconnect leaves behind,
+`distil_done` went to one of them and the tab being watched never heard it. Measured directly:
+two listeners on the old code received one event each, and on `events.py` both receive all of
+them.
+
+**An htmx trigger filter cannot see Alpine scope.** `hx-trigger="every 5s [activeTab === 'map'
+&& !mapReady]"` compiles to `new Function` called with the element as `this`, so those names
+resolve as globals: `ReferenceError`, which htmx catches and treats as "filter says no". The
+fallback polling never fired once, silently, for every filtered trigger in the app. Verified in
+the browser: the filter body throws `activeTab is not defined`.
+
+**A panel whose only source of truth is an event will lie.** The controls were Alpine flags
+set by SSE, so a lost event left the map displayed with no button to validate it. Fragments now
+restate the server truth on every refresh through `x-init`, and they carry their own stopping
+poll: the map fragment polls while the document is unread, the progress fragment polls while
+any scenario has not reached a final state. That second condition matters, since the progress
+fragment is first loaded during distillation when there is nothing to draw; polling on "a run
+is going" left it blank for the whole run.
+
+Proof it holds without any event at all: with the `EventSource` closed and reconnection
+disabled, the interface still went reading, map, validated, 0/30, 11/30, 30/30, and stopped
+polling at 30/30, 25 requests in total and none after.
+
+**Generation is refused server side**, not merely hidden. Clicking during distillation ran the
+pipeline over zero scenarios, declared it complete and committed an empty deliverable. The
+three refusals are that the document has not been read, that a human has not validated the map,
+and that a run is already going.
+
 ## Two measurement traps
 
 **The gateway caches identical prompts.** A fresh chunk takes 3.2 s, the same chunk again

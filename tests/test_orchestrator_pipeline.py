@@ -11,12 +11,21 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tgi.agents.orchestrator import Orchestrator, get_event_queue
+from tgi.agents.orchestrator import Orchestrator
+from tgi.events import subscribe, subscriber_count
 from tgi.services.git_service import GitService
 from tgi.services.state_manager import StateManager
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+def _drain(queue: Any) -> set[str]:
+    """Every event type a watcher received."""
+    kinds = set()
+    while not queue.empty():
+        kinds.add(queue.get_nowait()["type"])
+    return kinds
+
 
 DOC = """
 ### F01.EU01.CU01 Visualiser son portefeuille
@@ -118,15 +127,35 @@ async def test_distil_loses_no_requirement(orchestrator: Orchestrator) -> None:
 
 async def test_distil_commits_and_emits(orchestrator: Orchestrator) -> None:
     project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
+    with subscribe(project_id) as queue:
+        await orchestrator.distil(project_id)
 
-    log = await orchestrator._git.log(project_id)
-    assert any("distil" in entry["message"] for entry in log)
-    queue = get_event_queue(project_id)
-    kinds = []
-    while not queue.empty():
-        kinds.append(queue.get_nowait()["type"])
+        log = await orchestrator._git.log(project_id)
+        assert any("distil" in entry["message"] for entry in log)
+        kinds = []
+        while not queue.empty():
+            kinds.append(queue.get_nowait()["type"])
     assert "distil_start" in kinds and "distil_done" in kinds
+
+
+async def test_every_watcher_receives_every_event(orchestrator: Orchestrator) -> None:
+    """One shared queue handed each event to a single client, so a second tab stole them."""
+    project_id = await _new_project(orchestrator)
+    with subscribe(project_id) as first, subscribe(project_id) as second:
+        assert subscriber_count(project_id) == 2
+        await orchestrator.distil(project_id)
+        seen = [_drain(first), _drain(second)]
+    assert "distil_done" in seen[0]
+    assert "distil_done" in seen[1]
+    assert seen[0] == seen[1]
+
+
+async def test_a_watcher_that_leaves_is_forgotten(orchestrator: Orchestrator) -> None:
+    """A queue left behind by a closed tab would hold its events for the life of the process."""
+    project_id = await _new_project(orchestrator)
+    with subscribe(project_id):
+        assert subscriber_count(project_id) == 1
+    assert subscriber_count(project_id) == 0
 
 
 async def test_validating_the_map_is_recorded(orchestrator: Orchestrator) -> None:

@@ -87,6 +87,9 @@ def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict
         "elapsed_label": None,
         "remaining_label": None,
         "finished": total > 0 and processed == total,
+        # The interface polls on this rather than on a client flag: an event lost to a
+        # dropped connection left the progress bar frozen with nothing refreshing it.
+        "in_progress": bool(state.get("run_started_at")) and total > 0 and processed < total,
     }
 
     started = _parse_started_at(state.get("run_started_at"))

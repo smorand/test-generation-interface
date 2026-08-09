@@ -35,6 +35,7 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/progress.py` : run progress, elapsed and naive remaining estimate
 - `src/tgi/workbook.py` : reviewable xlsx (summary, traceability, one sheet per functionality)
 - `src/tgi/locks.py` : locks keyed by the running event loop
+- `src/tgi/events.py` : SSE fan out, one queue per connection (a shared queue got stolen)
 - `src/tgi/services/` : llm, doc_parser, git_service, state_manager
 - `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel)
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
@@ -45,6 +46,7 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - Resources resolved from `Path(__file__)`, never relative to cwd
 - Logging uses `%` formatting; never trace prompts/responses/API keys
 - LLM calls wrapped in `trace_span("llm.chat" / "api.list_models")`; httpx + FastAPI auto-instrumented
+- Live UI: fragments restate server truth (`x-init`) and carry their own stopping poll; never rely on an event alone
 - Module-level singletons kept intentionally: `settings`, `llm_client`, `state_manager`, `git_service`, `doc_parser`
 - Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
 

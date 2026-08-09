@@ -20,6 +20,7 @@ test-generation-interface/
 │   ├── workbook.py            # reviewable xlsx export
 │   ├── testset.py             # deduplication and similarity
 │   ├── locks.py               # locks bound to the loop that runs them
+│   ├── events.py              # SSE fan out, one queue per connected browser
 │   ├── agents/
 │   │   ├── orchestrator.py     # distil, validate, generate, close gaps
 │   │   ├── distiller.py        # phase 1: context, scenarios, discards
@@ -227,6 +228,18 @@ export.
 The workbook opens on a summary, then the traceability sheet, then one sheet per
 functionality with one row per test step, then the discards. Frozen header, autofilter, no
 merged cells, since merged cells break sorting.
+
+### Live updates
+
+Events are an optimisation, never the only path to the truth. Each browser subscribes with its
+own queue, because a single shared queue handed every event to whichever client called first,
+so a second tab stole the completion event and the watched tab spun forever. On top of that,
+every fragment restates the server state when it refreshes and carries its own stopping poll,
+so a dropped connection costs at most four seconds. Verified with the event stream closed: the
+whole run still reported through to 30 of 30, then stopped polling.
+
+Generation is refused server side while the document is being read, while the map is not
+validated, and while a run is already going. Hiding the button is not a guard.
 
 ### Resilience
 

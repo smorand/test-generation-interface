@@ -34,19 +34,25 @@
 
   <!-- Pipeline controls -->
   <div class="px-6 py-3 border-b border-gray-800 flex items-center gap-3">
-    <button
-      class="btn-primary text-sm"
-      x-show="!pipelineRunning"
-      @click="runPipeline()"
-    >▶ Lancer la génération</button>
-    <div x-show="pipelineRunning" class="flex items-center gap-2 text-blue-400 text-sm">
-      <span class="spinner"></span> Pipeline en cours…
+    <div x-show="!mapReady" class="flex items-center gap-2 text-blue-400 text-sm">
+      <span class="spinner"></span> Lecture du document…
     </div>
     <button
       class="btn-secondary text-sm"
-      x-show="!mapValidated && mapReady"
+      x-show="mapReady && !mapValidated"
       @click="validateMap()"
     >✓ Valider la carte</button>
+    <button
+      class="btn-primary text-sm"
+      x-show="mapReady && mapValidated && !pipelineRunning"
+      @click="runPipeline()"
+    >▶ Lancer la génération</button>
+    <div x-show="pipelineRunning" class="flex items-center gap-2 text-blue-400 text-sm">
+      <span class="spinner"></span> Génération en cours…
+    </div>
+    <span x-show="mapReady && !mapValidated" class="text-xs text-gray-500">
+      Relisez la carte, puis validez: c'est le seul moment où une correction coûte une minute.
+    </span>
     <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
   </div>
 
@@ -54,7 +60,7 @@
   <div class="px-6 py-2 border-b border-gray-800">
     <div id="progress-container"
       hx-get="/projects/{{ project_id }}/partials/progress"
-      hx-trigger="load, every 5s [pipelineRunning]"
+      hx-trigger="load"
       hx-swap="innerHTML"></div>
   </div>
 
@@ -75,7 +81,7 @@
     <div x-show="activeTab === 'map'">
       <div id="map-container"
         hx-get="/projects/{{ project_id }}/partials/map"
-        hx-trigger="load, every 5s [activeTab === 'map' && !mapReady]"
+        hx-trigger="load"
         hx-swap="innerHTML"></div>
     </div>
 
@@ -309,8 +315,8 @@ function discardRow(projectId, index) {
         tabs: [
           { id: 'doc', label: '📄 DOC' },
           { id: 'map', label: '🧭 CARTE' },
-          { id: 'scenarios', label: '🎬 SCÉNARIOS & TESTS' },
           { id: 'requirements', label: '📋 EXIGENCES' },
+          { id: 'scenarios', label: '🎬 SCÉNARIOS & TESTS' },
           { id: 'tests', label: '🔍 RECHERCHE' },
           { id: 'chat', label: '💬 CHAT' },
           { id: 'history', label: '🕑 HISTORIQUE' },
@@ -381,8 +387,13 @@ function discardRow(projectId, index) {
         },
 
         async runPipeline() {
+          const r = await fetch(`/projects/${this.projectId}/run`, { method: 'POST' });
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            this.statusMessage = body.reason || "La génération a été refusée.";
+            return;
+          }
           this.pipelineRunning = true;
-          await fetch(`/projects/${this.projectId}/run`, { method: 'POST' });
         },
 
         async sendChat() {

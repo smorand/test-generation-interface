@@ -69,8 +69,12 @@ def _fresh_locks() -> Iterator[None]:
     module level registry leaks into the next test and raises "bound to a different event
     loop", which made failures depend on test order.
     """
-    from tgi import locks
+    from tgi import events, locks
 
     locks.reset()
+    events.reset()
     yield
     locks.reset()
+    # A subscriber queue is bound to its loop just as a lock is, and a leaked one would
+    # receive events from the next test.
+    events.reset()
