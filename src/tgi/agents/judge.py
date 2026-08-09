@@ -138,6 +138,19 @@ class JudgeAgent:
                 logger.warning("Judge batch %d/%d produced no verdict: %s", index, len(batches), exc)
                 unevaluated_ids.extend(batch_ids)
                 continue
+            if not isinstance(result, dict):
+                # The client is asked for a dict and raises otherwise, so this is the
+                # belt to that braces: a verdict shaped as a list once killed whole blocs
+                # with "'list' object has no attribute 'get'". This method promises never
+                # to raise, and an annotation is not a runtime check.
+                logger.warning(
+                    "Judge batch %d/%d returned a %s instead of an object, batch left unevaluated",
+                    index,
+                    len(batches),
+                    type(result).__name__,
+                )
+                unevaluated_ids.extend(batch_ids)
+                continue
 
             evaluated_ids.extend(batch_ids)
             known_batch = set(batch_ids)

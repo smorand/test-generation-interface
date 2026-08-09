@@ -55,6 +55,19 @@ excluded from the score denominator, listed in `gaps`, and added to
 `uncovered_rules` so the next regeneration targets them. Counting them as
 uncovered instead would report a coverage number the judge never measured.
 
+## The judge never raises, and that is checked at runtime now
+
+A verdict shaped as a JSON list instead of an object once failed whole blocs with
+`'list' object has no attribute 'get'`: two blocs of a 78 bloc run died that way on
+2026-08-07, and the error is still stored in that project state, so the UI keeps showing
+it. `expected_type=dict` shipped 2 h 50 later and closed the path: the client retries a
+wrong shape with a hint, then raises `LLMJSONError`, which `evaluate` already caught.
+
+The annotation `result: dict[str, Any]` on `_judge_batch` is not a runtime check, so
+`evaluate` now verifies the shape itself and leaves the batch unevaluated, exactly like a
+batch that returned no JSON. A promise this method makes in its docstring should not
+depend on another module keeping a keyword argument.
+
 ## The judge never raises
 
 `JudgeAgent.evaluate` catches `LLMJSONError` and returns

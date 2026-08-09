@@ -448,3 +448,31 @@ async def test_extractor_keeps_the_document_reference() -> None:
     agent = ExtractorAgent(fake)  # type: ignore[arg-type]
     rules = await agent.extract(model="m", chunk="text")
     assert [r["source_ref"] for r in rules] == ["F01.EU01.CU02.RM01", "F01.EU01.CU02.RM02", ""]
+
+
+async def test_judge_survives_a_verdict_shaped_as_a_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a list verdict failed whole blocs with 'list' has no attribute 'get'.
+
+    evaluate() promises never to raise, so a batch answered with the wrong shape must
+    be left unevaluated, exactly like a batch that produced no JSON at all.
+    """
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "judge_batch_rules", 2)
+    client = _BatchClient(
+        [
+            ["R1", "R2"],  # a list instead of the object the prompt asks for
+            {"covered_rules": ["R3", "R4"], "gaps": [], "redundancies": []},
+        ]
+    )
+    agent = JudgeAgent(client)  # type: ignore[arg-type]
+
+    result = await agent.evaluate(model="m", rules=_rules(4), tests=[{"id": "T1", "business_rule": "R3"}])
+
+    # The bloc is not lost: the second batch still counts
+    assert set(result["covered_rules"]) == {"R3", "R4"}
+    # The unjudged rules are reported as uncovered so regeneration targets them
+    assert set(result["uncovered_rules"]) == {"R1", "R2"}
+    assert any("non évaluées" in gap for gap in result["gaps"])
+    # Score is computed on what was actually judged, 2 of 2 covered
+    assert result["score"] == 100
