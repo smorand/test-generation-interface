@@ -226,7 +226,7 @@
     <select class="cds-select" id="slide-select" onchange="goToSlide(this.value)"></select>
     <svg class="cds-select-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 11L3 6h10z"></path></svg>
   </div>
-  <span class="cds-tag" id="progress-tag">1 / 3</span>
+  <span class="cds-tag" id="progress-tag">1 / 4</span>
 </div>
 
 <div class="stage">
@@ -240,37 +240,42 @@
          Mettre à jour TOTAL et slideNames dans le <script> en bas. -->
     <article class="slide active" id="slide-0" data-type="slide" data-id="slide-0" data-title="Vue d'ensemble">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 01 / 03</div>
+        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 01 / 04</div>
         <h1 class="slide-h1" data-editable="text"><strong>Generateur de tests</strong> fonctionnels</h1>
         <p class="slide-subtitle" data-editable="text">D'un dossier de specifications a des cas de test JSON, avec un juge qui score la couverture et un humain qui tranche.</p>
       </div>
-      <div class="slide-body" data-editable="text">
-        <table data-type="table" style="width:100%; border-collapse:collapse; font-size:13px;">
-          <thead>
-            <tr style="background:var(--ibm-blue-10); color:var(--ibm-blue-70);">
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Etape</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Ce qui se passe</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--ibm-blue-60);">Qui decide</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Import</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Le document est lu, les titres et les tables dans l'ordre, puis decoupe en blocs</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Machine</td></tr>
-            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Decoupage</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Le decoupage propose est valide avant tout appel couteux</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>Humain</strong></td></tr>
-            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Generation</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Regles extraites, tests generes, couverture scoree, jusqu'a 3 passes</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Machine</td></tr>
-            <tr><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Revue</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);">Score par bloc, code couleur, regles proches signalees, edition et relance</td><td style="padding:7px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>Humain</strong></td></tr>
-            <tr><td style="padding:7px 10px;">Export</td><td style="padding:7px 10px;">Archive ZIP des tests, historique git par projet</td><td style="padding:7px 10px;">Machine</td></tr>
-          </tbody>
-        </table>
+      <div class="slide-body">
+        <div data-type="arch-diagram" style="position:relative; width:100%; height:100%; min-height:300px;">
+          <div data-type="arch-node" class="arch-node" data-label="Import" data-shape="box" data-x="1.0" data-y="22.0" data-width="17.0" data-height="26.0" style="position:absolute; left:1.0%; top:22.0%; width:17.0%; height:26.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Import<small style="color:rgba(255,255,255,.85);">document lu, titres et tables dans l'ordre, decoupe en blocs</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Decoupage" data-shape="box" data-x="21.5" data-y="22.0" data-width="17.0" data-height="26.0" style="position:absolute; left:21.5%; top:22.0%; width:17.0%; height:26.0%; border:2px solid #ff832b; background:#fff2e8; color:#8a3800; border-radius:4px;">Decoupage<small>le decoupage propose est valide avant tout appel couteux</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Generation" data-shape="box" data-x="42.0" data-y="22.0" data-width="17.0" data-height="26.0" style="position:absolute; left:42.0%; top:22.0%; width:17.0%; height:26.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Generation<small style="color:rgba(255,255,255,.85);">regles extraites, tests generes, couverture scoree, 3 passes</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Revue" data-shape="box" data-x="62.5" data-y="22.0" data-width="17.0" data-height="26.0" style="position:absolute; left:62.5%; top:22.0%; width:17.0%; height:26.0%; border:2px solid #ff832b; background:#fff2e8; color:#8a3800; border-radius:4px;">Revue<small>score par bloc, regles proches signalees, edition et relance</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Export" data-shape="box" data-x="83.0" data-y="22.0" data-width="16.0" data-height="26.0" style="position:absolute; left:83.0%; top:22.0%; width:16.0%; height:26.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Export<small style="color:rgba(255,255,255,.85);">archive ZIP des tests, historique git par projet</small></div>
+
+          <div class="arch-edge arch-line-h" style="left:18.0%; top:35.0%; width:3.5%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:21.5%; top:35.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge arch-line-h" style="left:38.5%; top:35.0%; width:3.5%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:42.0%; top:35.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge arch-line-h" style="left:59.0%; top:35.0%; width:3.5%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:62.5%; top:35.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge arch-line-h" style="left:79.5%; top:35.0%; width:3.5%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:83.0%; top:35.0%; transform:translate(-100%,-50%);"></div>
+
+          <div style="position:absolute; left:1.0%; top:64.0%; display:flex; gap:24px; align-items:center; font-size:12px; color:var(--cds-text-secondary);">
+            <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:14px; height:14px; background:var(--ibm-blue-60); border:2px solid var(--ibm-blue-70); border-radius:3px;"></span>Machine</span>
+            <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:14px; height:14px; background:#fff2e8; border:2px solid #ff832b; border-radius:3px;"></span>L'humain tranche</span>
+          </div>
+        </div>
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Produit · Présentation</span>
-        <span class="slide-footer-right">Slide 1 / 3</span>
+        <span class="slide-footer-right">Slide 1 / 4</span>
       </div>
     </article>
 
     <article class="slide" id="slide-1" data-type="slide" data-id="slide-1" data-title="Architecture applicative">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 02 / 03</div>
+        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 02 / 04</div>
         <h1 class="slide-h1" data-editable="text"><strong>Architecture</strong> applicative</h1>
       </div>
       <div class="slide-body">
@@ -319,15 +324,57 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Generateur de tests QA &middot; src/tgi</span>
-        <span class="slide-footer-right">Slide 2 / 3</span>
+        <span class="slide-footer-right">Slide 2 / 4</span>
       </div>
     </article>
 
-    <article class="slide" id="slide-2" data-type="slide" data-id="slide-2" data-title="Pipeline par bloc">
+    <article class="slide" id="slide-2" data-type="slide" data-id="slide-2" data-title="Flux logique de la donnee">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Pipeline &middot; Slide 03 / 03</div>
+        <div class="slide-eyebrow" data-editable="text">Flux logique &middot; Slide 03 / 04</div>
+        <h1 class="slide-h1" data-editable="text">Du <strong>fichier</strong> aux <strong>tests</strong></h1>
+        <p class="slide-subtitle" data-editable="text">Un document devient des blocs, chaque bloc est scanne pour ses regles metier, puis les regles et le contexte du fichier deviennent des tests que des controles filtrent.</p>
+      </div>
+      <div class="slide-body">
+        <div data-type="arch-diagram" style="position:relative; width:100%; height:100%; min-height:360px;">
+          <div data-type="arch-node" class="arch-node" data-label="Fichier" data-shape="box" data-x="2.0" data-y="20.0" data-width="15.0" data-height="20.0" style="position:absolute; left:2.0%; top:20.0%; width:15.0%; height:20.0%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939; border-radius:4px;">Fichier<small>docx, pdf, txt</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Decoupe" data-shape="box" data-x="20.0" data-y="20.0" data-width="15.0" data-height="20.0" style="position:absolute; left:20.0%; top:20.0%; width:15.0%; height:20.0%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Decoupe<small>titres et tables dans l'ordre, chunk 4000</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Blocs" data-shape="box" data-x="38.0" data-y="20.0" data-width="15.0" data-height="20.0" style="position:absolute; left:38.0%; top:20.0%; width:15.0%; height:20.0%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939; border-radius:4px;">Blocs<small>sections du document</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Regles metier" data-shape="box" data-x="56.0" data-y="20.0" data-width="15.0" data-height="20.0" style="position:absolute; left:56.0%; top:20.0%; width:15.0%; height:20.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Regles metier<small style="color:rgba(255,255,255,.85);">scan du bloc par l'extracteur</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Tests JSON" data-shape="box" data-x="74.0" data-y="20.0" data-width="15.0" data-height="20.0" style="position:absolute; left:74.0%; top:20.0%; width:15.0%; height:20.0%; border:2px solid var(--ibm-blue-70); background:var(--ibm-blue-60); color:#fff; border-radius:4px;">Tests JSON<small style="color:rgba(255,255,255,.85);">generation</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Contexte fichier" data-shape="box" data-x="56.0" data-y="62.0" data-width="15.0" data-height="18.0" style="position:absolute; left:56.0%; top:62.0%; width:15.0%; height:18.0%; border:2px dashed var(--ibm-blue-60); background:var(--ibm-blue-10); color:var(--ibm-blue-70); border-radius:4px;">Contexte fichier<small>texte du bloc</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Controles" data-shape="box" data-x="74.0" data-y="62.0" data-width="22.0" data-height="18.0" style="position:absolute; left:74.0%; top:62.0%; width:22.0%; height:18.0%; border:2px solid #ff832b; background:#fff2e8; color:#8a3800; border-radius:4px;">Controles<small>juge, dedup, cap par regle, meilleure version</small></div>
+
+          <div class="arch-edge arch-line-h" style="left:17.0%; top:30.0%; width:3.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:20.0%; top:30.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge arch-line-h" style="left:35.0%; top:30.0%; width:3.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:38.0%; top:30.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge arch-line-h" style="left:53.0%; top:30.0%; width:3.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:56.0%; top:30.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge-label" style="left:47.5%; top:11.0%; transform:translateX(-50%);">extraction</div>
+          <div class="arch-edge arch-line-h" style="left:71.0%; top:30.0%; width:3.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-r" style="left:74.0%; top:30.0%; transform:translate(-100%,-50%);"></div>
+          <div class="arch-edge-label" style="left:72.5%; top:11.0%; transform:translateX(-50%);">generation</div>
+          <div class="arch-edge arch-line-v dashed" style="left:63.5%; top:45.0%; height:17.0%;"></div>
+          <div class="arch-edge arch-line-h dashed" style="left:63.5%; top:45.0%; width:15.0%;"></div>
+          <div class="arch-edge arch-line-v dashed" style="left:78.5%; top:40.0%; height:5.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-u" style="left:78.5%; top:40.0%; transform:translate(-50%,0);"></div>
+          <div class="arch-edge-label" style="left:64.5%; top:41.0%;">nourrit la generation</div>
+          <div class="arch-edge arch-line-v" style="left:85.0%; top:40.0%; height:22.0%;"></div>
+          <div class="arch-edge arch-tip arch-tip-d" style="left:85.0%; top:62.0%; transform:translate(-50%,-100%);"></div>
+          <div class="arch-edge-label" style="left:86.0%; top:49.0%;">filtrage</div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span class="slide-footer-left" data-editable="text">Machine sur tout le flux, humain sur le decoupage et la revue</span>
+        <span class="slide-footer-right">Slide 3 / 4</span>
+      </div>
+    </article>
+
+    <article class="slide" id="slide-3" data-type="slide" data-id="slide-3" data-title="Pipeline par bloc">
+      <div class="slide-header">
+        <div class="slide-eyebrow" data-editable="text">Pipeline &middot; Slide 04 / 04</div>
         <h1 class="slide-h1" data-editable="text"><strong>Pipeline</strong> par bloc</h1>
-        <p class="slide-subtitle" data-editable="text">Chaque passe du juge est une version scoree. La meilleure gagne, jamais la derniere.</p>
+        <p class="slide-subtitle" data-editable="text">Chaque passe du juge est une version scoree. La meilleure gagne, jamais la derniere. Des controles filtrent les tests a chaque passe.</p>
       </div>
       <div class="slide-body">
         <div data-type="arch-diagram" style="position:relative; width:100%; height:100%; min-height:330px;">
@@ -361,10 +408,16 @@
       <div class="arch-edge arch-tip arch-tip-d" style="left:51.5%; top:70.0%; transform:translate(-50%,-100%);"></div>
       <div class="arch-edge-label" style="left:53.0%; top:60.0%;">3 passes</div>
         </div>
+        <div class="cds-notification warning" style="margin-top:10px;">
+          <div>
+            <div class="notif-title" data-editable="text">Controles a chaque passe</div>
+            <div class="notif-body" data-editable="text">Juge score la couverture localement (regles couvertes / evaluees, par lots de 10). Les quasi doublons sont ecartes, chaque regle est plafonnee a 4 tests, une regle saturee sort du brief de regeneration. Le juge ne leve jamais: sans verdict, les tests sont gardes et un humain tranche.</div>
+          </div>
+        </div>
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">3 appels au mieux, 7 au pire, plus un par lot</span>
-        <span class="slide-footer-right">Slide 3 / 3</span>
+        <span class="slide-footer-right">Slide 4 / 4</span>
       </div>
     </article>
 
@@ -377,16 +430,17 @@
 
 <div class="status-bar">
   <span class="status-active">●</span>
-  <span id="status-slide">Slide 1 / 3</span>
+  <span id="status-slide">Slide 1 / 4</span>
   <span style="margin-left:auto;">Navigation : ← → ou menu déroulant</span>
 </div>
 
 <script>
   // ── À METTRE À JOUR à chaque ajout/suppression de slide ──────
-  const TOTAL = 3;
+  const TOTAL = 4;
   const slideNames = [
     "Vue d'ensemble",
     "Architecture applicative",
+    "Flux logique de la donnee",
     "Pipeline par bloc",
   ];
   // ─────────────────────────────────────────────────────────────
