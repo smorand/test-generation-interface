@@ -234,3 +234,7 @@ body {
 .hover\:bg-gray-700:hover { background: #374151; }
 .hover\:bg-gray-500:hover { background: #6b7280; }
 .flex-col { flex-direction: column; }
+/* Arborescence du livrable */
+details.rule-node > summary::marker, details.use-case > summary::marker { color: #6b7280; }
+details.rule-node[open] > summary { color: #fff; }
+details.use-case > summary:hover, details.rule-node > summary:hover { background: rgba(59, 130, 246, 0.06); }

@@ -1,37 +1,39 @@
-{% if tests %}
-<div x-data="testsPanel()">
+{% set p = pagination %}
+<div>
   <div class="flex flex-wrap items-center gap-3 mb-3 text-sm">
-    <span class="text-gray-300"><strong>{{ tests|length }}</strong> tests</span>
+    <span class="text-gray-300"><strong>{{ tests_total }}</strong> tests</span>
     <span class="text-gray-500">pour {{ rules_count }} règles</span>
-    {% if rules_count %}
-    <span class="text-gray-500">{{ '%.1f'|format(tests|length / rules_count) }} test par règle</span>
-    {% endif %}
-    <span class="text-gray-500" x-show="ruleFilter || query">
-      (<span x-text="visible"></span> affichés)
-    </span>
-    <div class="ml-auto flex items-center gap-2">
-      <select class="input text-xs" x-model="ruleFilter" style="width:130px">
-        <option value="">Toutes les règles</option>
-        {% for rid in rule_options %}<option value="{{ rid }}">{{ rid }}</option>{% endfor %}
+    {% if rules_count %}<span class="text-gray-500">{{ '%.1f'|format(tests_total / rules_count) }} par règle</span>{% endif %}
+    {% if p.total != tests_total %}<span class="text-blue-400">{{ p.total }} correspondent au filtre</span>{% endif %}
+
+    <form class="ml-auto flex items-center gap-2"
+      hx-get="/projects/{{ project_id }}/partials/tests"
+      hx-target="#tests-container" hx-swap="innerHTML"
+      hx-trigger="submit, change from:select, keyup changed delay:400ms from:input[name=q]">
+      <select name="rule" class="input text-xs" style="width:110px">
+        <option value="">toutes règles</option>
+        {% for rid in rule_options %}<option value="{{ rid }}" {% if rid == rule %}selected{% endif %}>{{ rid }}</option>{% endfor %}
       </select>
-      <input type="text" class="input text-xs" placeholder="Filtrer: texte, bloc-3, TEST-012…"
-        x-model="query" style="width:230px" />
-    </div>
+      <select name="bloc" class="input text-xs" style="width:110px">
+        <option value="">tous blocs</option>
+        {% for bid in bloc_options %}<option value="{{ bid }}" {% if bid == bloc %}selected{% endif %}>{{ bid }}</option>{% endfor %}
+      </select>
+      <select name="status" class="input text-xs" style="width:105px">
+        <option value="">tous statuts</option>
+        {% for st in ['draft', 'validated', 'rejected'] %}<option value="{{ st }}" {% if st == status %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+      <input type="text" name="q" class="input text-xs" style="width:200px"
+        placeholder="Filtrer: texte, TEST-012…" value="{{ q or '' }}" />
+      <input type="hidden" name="per_page" value="{{ p.per_page }}" />
+    </form>
   </div>
 
+  {% if tests %}
   <div class="space-y-4">
   {% for test in tests %}
   {% set covered = test.business_rule | rule_ids %}
-  <!-- Le filtre vit sur l'enveloppe: un x-show sur l'element qui porte x-data serait
-       evalue dans le scope de testEditor, ou matches() n'existe pas. -->
-  <div class="test-wrap"
-    data-rules="{{ covered | join(' ') }}"
-    data-search="{{ (test.id ~ ' ' ~ test.bloc_id ~ ' ' ~ test.name ~ ' ' ~ (test.description or '') ~ ' ' ~ (test.business_rule or ''))|lower }}"
-    x-show="matches($el)"
-  >
   <div class="card test-card" id="test-{{ test.id }}"
-    x-data='testEditor("{{ project_id }}", {{ test | tojson }})'
-  >
+    x-data='testEditor("{{ project_id }}", {{ test | tojson }})'>
     <div class="flex items-start justify-between mb-2">
       <div class="flex items-center gap-2">
         <span class="font-mono text-xs text-blue-400">{{ test.id }}</span>
@@ -75,7 +77,7 @@
         <input type="text" class="input w-full text-sm" x-model="draft.name" />
       </div>
       <div>
-        <label class="label">Règle métier</label>
+        <label class="label">Règles couvertes</label>
         <input type="text" class="input w-full text-sm" x-model="draft.business_rule" />
       </div>
       <div>
@@ -107,11 +109,24 @@
 
     <div class="text-xs text-gray-600 mt-3">Créé: {{ test.created_at[:10] }} &bull; Modifié: {{ test.updated_at[:10] }}</div>
   </div>
-  </div>
   {% endfor %}
   </div>
-</div>
-{% else %}
-<div class="text-gray-500 text-sm">Aucun test généré. Lancez le pipeline pour commencer.</div>
-{% endif %}
 
+  {% if p.pages > 1 %}
+  {% set base = '/projects/' ~ project_id ~ '/partials/tests?q=' ~ (q or '') ~ '&rule=' ~ (rule or '') ~ '&bloc=' ~ (bloc or '') ~ '&status=' ~ (status or '') ~ '&per_page=' ~ p.per_page %}
+  <div class="flex items-center justify-center gap-3 mt-4 text-xs">
+    <button class="btn-secondary" {% if not p.has_previous %}disabled{% endif %}
+      hx-get="{{ base }}&page={{ p.page - 1 }}" hx-target="#tests-container" hx-swap="innerHTML">‹ précédent</button>
+    <span class="text-gray-400">{{ p.start }} à {{ p.end }} sur {{ p.total }} &bull; page {{ p.page }}/{{ p.pages }}</span>
+    <button class="btn-secondary" {% if not p.has_next %}disabled{% endif %}
+      hx-get="{{ base }}&page={{ p.page + 1 }}" hx-target="#tests-container" hx-swap="innerHTML">suivant ›</button>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="text-gray-500 text-sm">
+    {% if q or rule or bloc or status %}Aucun test ne correspond au filtre.
+    {% else %}Aucun test généré. Lancez la génération pour commencer.{% endif %}
+  </div>
+  {% endif %}
+</div>

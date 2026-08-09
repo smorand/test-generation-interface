@@ -21,18 +21,24 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from tgi.agents.orchestrator import Orchestrator, get_event_queue
 from tgi.config import Settings, settings
+from tgi.deliverable import build_deliverable, other_rules_of, tests_by_rule
 from tgi.logging_config import setup_logging
+from tgi.progress import compute_progress
 from tgi.services.doc_parser import doc_parser
 from tgi.services.git_service import git_service
 from tgi.services.llm import llm_client
 from tgi.services.state_manager import state_manager
 from tgi.testset import rule_ids_of
 from tgi.tracing import configure_tracing
+from tgi.workbook import build_workbook
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
+
+# Guard rail on the page weight: a test card is about 5 kB of HTML.
+_MAX_PER_PAGE = 200
 
 _MODULE_DIR = Path(__file__).parent
 _STATIC_DIR = _MODULE_DIR / "static"
@@ -61,6 +67,82 @@ def _rule_filter_options(tests: list[dict[str, Any]]) -> list[str]:
     return sorted(seen, key=lambda rid: (len(rid), rid))
 
 
+def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], dict[str, Any]]:
+    """Slice a list and describe the pagination.
+
+    Server side because a test card renders about 5 kB of HTML: two thousand tests
+    would be a nine megabyte page.
+    """
+    per_page = max(1, min(per_page, _MAX_PER_PAGE))
+    total = len(items)
+    pages = max(1, -(-total // per_page))
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    return items[start : start + per_page], {
+        "page": page,
+        "pages": pages,
+        "per_page": per_page,
+        "total": total,
+        "start": start + 1 if total else 0,
+        "end": min(start + per_page, total),
+        "has_previous": page > 1,
+        "has_next": page < pages,
+    }
+
+
+def _filter_tests(
+    tests: list[dict[str, Any]],
+    query: str = "",
+    rule: str = "",
+    bloc: str = "",
+    status: str = "",
+) -> list[dict[str, Any]]:
+    """Apply the tests tab filters. A test matching any of its rules is kept."""
+    selected = tests
+    if rule:
+        selected = [t for t in selected if rule in rule_ids_of(t)]
+    if bloc:
+        selected = [t for t in selected if str(t.get("bloc_id", "")) == bloc]
+    if status:
+        selected = [t for t in selected if str(t.get("status", "")) == status]
+    terms = [term for term in query.lower().split() if term]
+    if terms:
+
+        def haystack(test: dict[str, Any]) -> str:
+            return " ".join(
+                str(test.get(field, "")) for field in ("id", "bloc_id", "name", "description", "business_rule")
+            ).lower()
+
+        selected = [t for t in selected if all(term in haystack(t) for term in terms)]
+    return selected
+
+
+def _filter_rules(
+    rules: list[dict[str, Any]],
+    tests: list[dict[str, Any]],
+    query: str = "",
+    uncovered: bool = False,
+    unreviewed: bool = False,
+) -> list[dict[str, Any]]:
+    """Apply the deliverable filters before the hierarchy is built."""
+    selected = rules
+    if unreviewed:
+        selected = [r for r in selected if not r.get("reviewed")]
+    if uncovered:
+        index = tests_by_rule(tests)
+        selected = [r for r in selected if not index.get(f"{r.get('bloc_id', '')}/{r.get('id', '')}")]
+    terms = [term for term in query.lower().split() if term]
+    if terms:
+
+        def haystack(rule: dict[str, Any]) -> str:
+            return " ".join(
+                str(rule.get(field, "")) for field in ("id", "source_ref", "description", "bloc_id", "bloc_title")
+            ).lower()
+
+        selected = [r for r in selected if all(term in haystack(r) for term in terms)]
+    return selected
+
+
 def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915
     """Create and configure the FastAPI application with OTel instrumentation."""
     app_settings = app_settings or settings
@@ -84,6 +166,8 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     # A test can cite several rules: the template needs them as a list
     templates.env.filters["rule_ids"] = lambda value: sorted(rule_ids_of({"business_rule": value or ""}))
+    # Rules a test also covers, to show shared coverage without double counting
+    templates.env.filters["other_rules"] = other_rules_of
     orchestrator = Orchestrator(state_manager, git_service, llm_client)
 
     @asynccontextmanager
@@ -347,6 +431,11 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             all_tests = await state_manager.get_all_tests(project_id)
             zf.writestr("tests/all_tests.json", json.dumps(all_tests, indent=2, ensure_ascii=False))
 
+            # Reviewable workbook: one sheet per functionality, one row per test step
+            all_rules = await state_manager.get_all_rules(project_id)
+            scores = {b["id"]: b.get("score") for b in state.get("blocs", [])}
+            zf.writestr("tests.xlsx", build_workbook(all_rules, all_tests, scores))
+
         buf.seek(0)
         return StreamingResponse(
             io.BytesIO(buf.read()),
@@ -373,39 +462,89 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.get("/projects/{project_id}/partials/tests", response_class=HTMLResponse)
-    async def partial_tests(request: Request, project_id: str) -> HTMLResponse:
+    async def partial_tests(
+        request: Request,
+        project_id: str,
+        q: str = "",
+        rule: str = "",
+        bloc: str = "",
+        status: str = "",
+        page: int = 1,
+        per_page: int = 50,
+    ) -> HTMLResponse:
+        """Flat searchable list. Filtered and paginated server side, see _paginate."""
         await _load_or_404(project_id)
         all_tests = await state_manager.get_all_tests(project_id)
         all_rules = await state_manager.get_all_rules(project_id)
+        matching = _filter_tests(all_tests, q, rule, bloc, status)
+        page_items, pagination = _paginate(matching, page, per_page)
         return templates.TemplateResponse(
             request,
             "partials/tests.html",
             {
-                "tests": all_tests,
+                "tests": page_items,
                 "project_id": project_id,
                 "rules_count": len(all_rules),
+                "tests_total": len(all_tests),
                 "rule_options": _rule_filter_options(all_tests),
+                "bloc_options": sorted({str(t.get("bloc_id", "")) for t in all_tests if t.get("bloc_id")}),
+                "pagination": pagination,
+                "q": q,
+                "rule": rule,
+                "bloc": bloc,
+                "status": status,
             },
         )
 
     @application.get("/projects/{project_id}/partials/rules", response_class=HTMLResponse)
-    async def partial_rules(request: Request, project_id: str) -> HTMLResponse:
-        """Rules of the whole project, reviewable and editable."""
-        await _load_or_404(project_id)
+    async def partial_rules(
+        request: Request,
+        project_id: str,
+        q: str = "",
+        uncovered: bool = False,
+        unreviewed: bool = False,
+    ) -> HTMLResponse:
+        """The deliverable: functionality, use case, rule, then its tests on demand."""
+        state = await _load_or_404(project_id)
         all_rules = await state_manager.get_all_rules(project_id)
         all_tests = await state_manager.get_all_tests(project_id)
-        tests_per_rule = _tests_per_rule(all_tests)
+        selected = _filter_rules(all_rules, all_tests, q, uncovered, unreviewed)
+        scores = {b["id"]: b.get("score") for b in state["blocs"]}
         return templates.TemplateResponse(
             request,
             "partials/rules.html",
             {
-                "rules": all_rules,
                 "project_id": project_id,
-                "tests_per_rule": tests_per_rule,
-                "tests_count": len(all_tests),
-                "reviewed_count": sum(1 for r in all_rules if r.get("reviewed")),
-                "traced_count": sum(1 for r in all_rules if r.get("source_ref")),
+                "deliverable": build_deliverable(selected, all_tests, scores),
+                "q": q,
+                "uncovered": uncovered,
+                "unreviewed": unreviewed,
             },
+        )
+
+    @application.get(
+        "/projects/{project_id}/blocs/{bloc_id}/rules/{rule_id}/tests",
+        response_class=HTMLResponse,
+    )
+    async def partial_rule_tests(request: Request, project_id: str, bloc_id: str, rule_id: str) -> HTMLResponse:
+        """Tests covering one rule, loaded when the rule is expanded."""
+        await _load_or_404(project_id)
+        all_tests = await state_manager.get_all_tests(project_id)
+        covering = tests_by_rule(all_tests).get(f"{bloc_id}/{rule_id}", [])
+        return templates.TemplateResponse(
+            request,
+            "partials/rule_tests.html",
+            {"tests": covering, "rule_id": rule_id, "bloc_id": bloc_id, "project_id": project_id},
+        )
+
+    @application.get("/projects/{project_id}/partials/progress", response_class=HTMLResponse)
+    async def partial_progress(request: Request, project_id: str) -> HTMLResponse:
+        """Where the run stands, visible from every tab."""
+        state = await _load_or_404(project_id)
+        return templates.TemplateResponse(
+            request,
+            "partials/progress.html",
+            {"progress": compute_progress(state), "project_id": project_id},
         )
 
     @application.get("/projects/{project_id}/partials/history", response_class=HTMLResponse)

@@ -1,0 +1,27 @@
+{% set p = progress %}
+{% if p.total %}
+<div class="w-full">
+  <div class="flex items-center gap-3 text-xs mb-1">
+    <div class="flex-1 h-2 rounded overflow-hidden flex" style="background:#1f2937">
+      {% if p.done %}<div style="width:{{ p.done_percent }}%; background:#22c55e"></div>{% endif %}
+      {% if p.needs_human %}<div style="width:{{ p.needs_human_percent }}%; background:#f97316"></div>{% endif %}
+      {% if p.error %}<div style="width:{{ p.error_percent }}%; background:#ef4444"></div>{% endif %}
+      {% if p.running %}<div style="width:{{ p.running_percent }}%; background:#3b82f6"></div>{% endif %}
+    </div>
+    <span class="text-gray-300 shrink-0"><strong>{{ p.processed }}/{{ p.total }}</strong> blocs ({{ p.percent }} %)</span>
+  </div>
+  <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+    <span>terminés {{ p.done }}</span>
+    <span>revue {{ p.needs_human }}</span>
+    <span {% if p.error %}class="text-red-400"{% endif %}>erreur {{ p.error }}</span>
+    <span>en cours {{ p.running }}</span>
+    <span>en attente {{ p.pending }}</span>
+    <span class="text-gray-600">|</span>
+    <span>{{ p.rules }} règles · {{ p.tests }} tests{% if p.tests_per_rule %} ({{ p.tests_per_rule }} par règle){% endif %}</span>
+    {% if p.score_median is not none %}<span>score médian {{ p.score_median }} %</span>{% endif %}
+    {% if p.elapsed_label %}
+    <span class="ml-auto">écoulé {{ p.elapsed_label }}{% if p.remaining_label %} · reste ~{{ p.remaining_label }}{% endif %}</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

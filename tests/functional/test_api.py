@@ -408,19 +408,82 @@ async def _project_with_rules(client: AsyncClient) -> str:
     return project_id
 
 
-async def test_rules_partial_lists_and_counts(client: AsyncClient) -> None:
-    """The rules tab is where a human reviews what drives everything else."""
+async def test_rules_partial_shows_the_specification_hierarchy(client: AsyncClient) -> None:
+    """The deliverable follows the document numbering: functionality, use case, rule."""
     project_id = await _project_with_rules(client)
     resp = await client.get(f"/projects/{project_id}/partials/rules")
     assert resp.status_code == 200
     html = resp.text
 
-    assert "VAL01.CU01.RM01" in html  # traceability to the specification
-    assert "2</strong> règles" in html or "<strong>2</strong>" in html
-    assert "1 avec référence document" in html
-    assert "badge-orange" in html  # R2 carries no test
-    # The panel is initialised with the reviewed count, not a Jinja expression in the JS
-    assert "rulesPanel('" in html and ", 1)" in html
+    assert "VAL01" in html  # functionality level
+    assert "VAL01.CU01" in html  # use case level
+    assert "RM01" in html  # rule label taken from the reference
+    assert "Hors numérotation" in html  # the rule without a reference has its chapter
+    assert "2 tests" in html  # R1 is covered by TEST-001 and by the multi rule TEST-002
+    assert "badge-orange" in html  # R2 is not
+    # Tests are loaded on expansion, not inlined
+    assert "/rules/R1/tests" in html
+    assert 'hx-trigger="toggle once"' in html
+    # TEST-002 cites R1 and R3: R1 exists, so it is shared coverage, not an orphan
+    assert "Tests non rattachés" not in html
+
+
+async def test_rules_partial_surfaces_orphan_tests(client: AsyncClient) -> None:
+    """A test citing only rules that do not exist in its bloc must be visible."""
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _project_with_rules(client)
+    state = await state_manager.load(project_id)
+    state["blocs"][0]["tests"].append(
+        {
+            "id": "TEST-099",
+            "bloc_id": "bloc-1",
+            "business_rule": "R42",
+            "name": "cite une regle inexistante",
+            "description": "d",
+            "steps": [],
+            "status": "draft",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    await state_manager.save(project_id, state)
+
+    html = (await client.get(f"/projects/{project_id}/partials/rules")).text
+    assert "Tests non rattachés" in html
+    assert "TEST-099" in html
+    assert "R42" in html
+
+
+async def test_rules_partial_filters_server_side(client: AsyncClient) -> None:
+    project_id = await _project_with_rules(client)
+    only_uncovered = (await client.get(f"/projects/{project_id}/partials/rules?uncovered=1")).text
+    assert "Sans reference et sans test" in only_uncovered
+    assert "Le systeme cree une habilitation" not in only_uncovered
+
+    # The haystack includes the bloc title on purpose, so filter on a rule specific word
+    by_text = (await client.get(f"/projects/{project_id}/partials/rules?q=cree")).text
+    assert "Le systeme cree une habilitation" in by_text
+    assert "Sans reference et sans test" not in by_text
+
+    by_reference = (await client.get(f"/projects/{project_id}/partials/rules?q=VAL01.CU01")).text
+    assert "Le systeme cree une habilitation" in by_reference
+
+    nothing = (await client.get(f"/projects/{project_id}/partials/rules?q=zzzintrouvable")).text
+    assert "Aucune règle ne correspond au filtre" in nothing
+
+
+async def test_rule_tests_fragment_lists_the_covering_tests(client: AsyncClient) -> None:
+    project_id = await _project_with_rules(client)
+    html = (await client.get(f"/projects/{project_id}/blocs/bloc-1/rules/R1/tests")).text
+    assert "TEST-001" in html
+    assert "TEST-002" in html
+    # TEST-002 also covers R3, shown so the reader does not count it twice
+    assert "couvre aussi" in html
+    assert "R3" in html
+
+    empty = (await client.get(f"/projects/{project_id}/blocs/bloc-1/rules/R2/tests")).text
+    assert "Aucun test pour cette règle" in empty
 
 
 async def test_rule_can_be_edited_and_marked_reviewed(client: AsyncClient) -> None:
@@ -448,15 +511,75 @@ async def test_rule_edit_is_scoped_to_its_bloc(client: AsyncClient) -> None:
     assert unknown.status_code == 404
 
 
-async def test_tests_partial_exposes_the_rule_filter(client: AsyncClient) -> None:
-    """A test can cover several rules, so the filter matches any of them."""
+async def test_tests_partial_filters_and_paginates_server_side(client: AsyncClient) -> None:
+    """A test card is about 5 kB of HTML: filtering and paging must happen server side."""
     project_id = await _project_with_rules(client)
     html = (await client.get(f"/projects/{project_id}/partials/tests")).text
-
     assert "pour 2 règles" in html
-    assert 'data-rules="R1"' in html
-    assert 'data-rules="R1 R3"' in html  # multi rule test
-    assert '<option value="R1">' in html and '<option value="R3">' in html
-    # The JSON payload must live in a single quoted attribute, otherwise it closes it early
+    assert "TEST-001" in html and "TEST-002" in html
+    assert 'value="R1"' in html and 'value="R3"' in html
+    # The JSON payload lives in a single quoted attribute, otherwise it closes it early
     assert "x-data='testEditor(" in html
     assert 'x-data="testEditor(' not in html
+
+    by_rule = (await client.get(f"/projects/{project_id}/partials/tests?rule=R3")).text
+    assert "TEST-002" in by_rule
+    assert "TEST-001" not in by_rule
+    assert "1 correspondent au filtre" in by_rule
+
+    paged = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1")).text
+    assert "1 à 1 sur 2" in paged
+    assert "page 1/2" in paged
+
+    second = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1&page=2")).text
+    assert "TEST-002" in second
+    assert "TEST-001" not in second
+
+    out_of_range = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1&page=99")).text
+    assert "page 2/2" in out_of_range  # clamped, never an empty page
+
+    none = (await client.get(f"/projects/{project_id}/partials/tests?q=zzzintrouvable")).text
+    assert "Aucun test ne correspond au filtre" in none
+
+
+async def test_progress_partial_reports_the_run(client: AsyncClient) -> None:
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _project_with_rules(client)
+    state = await state_manager.load(project_id)
+    state["blocs"] = state["blocs"] + [
+        {"id": "bloc-2", "title": "b", "chunk": "c", "status": "pending", "rules": [], "tests": []},
+        {"id": "bloc-3", "title": "c", "chunk": "c", "status": "error", "rules": [], "tests": []},
+    ]
+    await state_manager.save(project_id, state)
+
+    html = (await client.get(f"/projects/{project_id}/partials/progress")).text
+    assert "2/3</strong> blocs (67 %)" in html
+    assert "erreur 1" in html
+    assert "en attente 1" in html
+    assert "2 règles" in html and "2 tests" in html
+
+
+async def test_export_contains_the_reviewable_workbook(client: AsyncClient) -> None:
+    import io as _io
+    import zipfile as _zipfile
+
+    from openpyxl import load_workbook
+
+    project_id = await _project_with_rules(client)
+    resp = await client.get(f"/projects/{project_id}/export")
+    assert resp.status_code == 200
+
+    with _zipfile.ZipFile(_io.BytesIO(resp.content)) as archive:
+        names = archive.namelist()
+        assert "tests.xlsx" in names
+        assert "tests/all_tests.json" in names  # JSON kept for tooling
+        workbook = load_workbook(_io.BytesIO(archive.read("tests.xlsx")))
+
+    assert workbook.sheetnames[0].startswith("Synth")
+    assert "VAL01" in workbook.sheetnames
+    assert "Hors numérotation" in workbook.sheetnames
+    sheet = workbook["VAL01"]
+    assert sheet.freeze_panes == "A2"
+    assert sheet.auto_filter.ref is not None
+    assert [c.value for c in sheet[1]][:3] == ["Cas d'utilisation", "Référence règle", "Règle"]

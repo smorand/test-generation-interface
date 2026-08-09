@@ -28,6 +28,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.50b0",
     "opentelemetry-instrumentation-httpx>=0.50b0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]
@@ -111,6 +112,10 @@ warn_redundant_casts = true
 warn_unused_configs = true
 show_error_codes = true
 show_column_numbers = true
+
+[[tool.mypy.overrides]]
+module = ["openpyxl.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [

@@ -1,0 +1,37 @@
+{% if tests %}
+<ul class="space-y-2">
+  {% for test in tests %}
+  <li class="pl-2" style="border-left:2px solid #1f2937">
+    <div class="flex items-baseline gap-2">
+      <span class="font-mono text-xs text-blue-400 shrink-0">{{ test.id }}</span>
+      <span class="text-xs text-gray-200 flex-1">{{ test.name }}</span>
+      <span class="badge {% if test.status == 'validated' %}badge-green{% elif test.status == 'rejected' %}badge-red{% else %}badge-gray{% endif %} shrink-0">{{ test.status }}</span>
+      {% set shared = test | other_rules(rule_id) %}
+      {% if shared %}
+      <span class="text-xs text-gray-500 shrink-0">couvre aussi
+        {% for rid in shared %}<span class="font-mono text-gray-400">{{ rid }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+      </span>
+      {% endif %}
+    </div>
+    {% if test.description %}<div class="text-xs text-gray-500 mt-0.5">{{ test.description }}</div>{% endif %}
+    {% if test.steps %}
+    <ol class="mt-1 space-y-0.5">
+      {% for step in test.steps %}
+      <li class="text-xs text-gray-400 flex gap-2">
+        <span class="text-gray-600 font-mono shrink-0">{{ step.order }}</span>
+        <span class="flex-1">{{ step.description }}
+          <span class="text-green-500">→ {{ step.expected_result }}</span>
+        </span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="text-xs text-orange-400">
+  Aucun test pour cette règle. Utilisez « Rejouer » sur le bloc {{ bloc_id }}, ou éditez la règle si sa formulation
+  n'est pas testable.
+</div>
+{% endif %}

@@ -203,6 +203,13 @@ class StateManager:
                 await f.write(json.dumps(updated_test, indent=2, ensure_ascii=False))
         return updated_test
 
+    async def set_run_started(self, project_id: str) -> None:
+        """Stamp the start of a run, so progress can estimate what remains."""
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            state["run_started_at"] = datetime.now(UTC).isoformat()
+            await self.save(project_id, state)
+
     async def update_rule(
         self,
         project_id: str,

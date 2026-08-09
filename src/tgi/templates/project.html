@@ -26,7 +26,7 @@
       <button
         class="tab-btn"
         :class="{ 'active': activeTab === tab.id }"
-        @click="activeTab = tab.id"
+        @click="activeTab = tab.id; refreshTab(tab.id)"
         x-text="tab.label"
       ></button>
     </template>
@@ -48,6 +48,14 @@
       @click="validateSplit()"
     >✓ Valider le découpage</button>
     <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
+  </div>
+
+  <!-- Progression du run, visible depuis tous les onglets -->
+  <div class="px-6 py-2 border-b border-gray-800">
+    <div id="progress-container"
+      hx-get="/projects/{{ project_id }}/partials/progress"
+      hx-trigger="load, every 5s [pipelineRunning]"
+      hx-swap="innerHTML"></div>
   </div>
 
   <!-- Tab content -->
@@ -188,24 +196,13 @@ function testEditor(projectId, initialTest) {
   };
 }
 
-function rulesPanel(projectId, reviewedCount) {
+function ruleEditor(projectId, blocId, ruleId) {
   return {
-    projectId,
-    reviewedCount,
-    query: '',
-    onlyUnreviewed: false,
-
-    matches(row) {
-      if (this.onlyUnreviewed && row.dataset.reviewed === 'true') return false;
-      const q = this.query.trim().toLowerCase();
-      if (!q) return true;
-      return q.split(/\s+/).every(term => row.dataset.search.includes(term));
-    },
-
-    async save(blocId, ruleId, payload, el) {
+    // Edition d'une regle: enregistrement immediat, retour visuel sur le champ modifie
+    async save(payload, el) {
       const previous = el.style.borderColor;
       try {
-        const r = await fetch(`/projects/${this.projectId}/blocs/${blocId}/rules/${ruleId}`, {
+        const r = await fetch(`/projects/${projectId}/blocs/${blocId}/rules/${ruleId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -216,13 +213,6 @@ function rulesPanel(projectId, reviewedCount) {
       }
       setTimeout(() => { el.style.borderColor = previous; }, 1200);
     },
-
-    async toggleReviewed(blocId, ruleId, el) {
-      const reviewed = el.checked;
-      await this.save(blocId, ruleId, { reviewed }, el);
-      el.closest('tr').dataset.reviewed = reviewed ? 'true' : 'false';
-      this.reviewedCount += reviewed ? 1 : -1;
-    },
   };
 }
 
@@ -230,6 +220,14 @@ function rulesPanel(projectId, reviewedCount) {
       return {
         projectId,
         activeTab: 'blocs',
+        // Un onglet affiche l'etat au moment de son activation, pas celui du chargement de la page
+        refreshTab(tab) {
+          const targets = { rules: '#rules-container', tests: '#tests-container', history: '#history-container' };
+          const target = targets[tab];
+          if (target && document.querySelector(target)) {
+            htmx.trigger(target, 'load');
+          }
+        },
         tabs: [
           { id: 'doc', label: '📄 DOC' },
           { id: 'blocs', label: '📦 BLOCS' },
@@ -266,9 +264,11 @@ function rulesPanel(projectId, reviewedCount) {
           if (evt.type === 'pipeline_start') {
             this.pipelineRunning = true;
             this.statusMessage = 'Pipeline démarré…';
+            htmx.trigger('#progress-container', 'load');
           } else if (evt.type === 'pipeline_done') {
             this.pipelineRunning = false;
             this.statusMessage = 'Pipeline terminé';
+            htmx.trigger('#progress-container', 'load');
             htmx.trigger('#blocs-container', 'load');
             htmx.trigger('#tests-container', 'load');
             htmx.trigger('#rules-container', 'load');
@@ -277,6 +277,7 @@ function rulesPanel(projectId, reviewedCount) {
             const suffix = (score === null || score === undefined) ? '' : ` (score ${score}%)`;
             this.statusMessage = `Bloc ${evt.data.bloc_id}: ${evt.data.status}${suffix}`;
             htmx.trigger('#blocs-container', 'load');
+            htmx.trigger('#progress-container', 'load');
             if (evt.data.status === 'done' || evt.data.status === 'needs_human') {
               htmx.trigger('#tests-container', 'load');
               htmx.trigger('#rules-container', 'load');

@@ -293,6 +293,8 @@ class Orchestrator:
 
         async with lock:
             await self._emit(project_id, "pipeline_start", {"project_id": project_id})
+            # Sole purpose: let the progress bar estimate the remaining time.
+            await self._state.set_run_started(project_id)
             state = await self._state.load(project_id)
             blocs = state["blocs"]
             pending = [b for b in blocs if b["status"] in {"pending", "error"}]
