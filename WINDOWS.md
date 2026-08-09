@@ -130,22 +130,34 @@ d'entreprise (voir la fin de ce document).
    scénario ne couvre, et propose d'écarter ce qui ne sert pas à tester (historique de
    versions, éléments hors périmètre). Pour chaque écart proposé : **écarter** ou **garder**.
 
-3. Cliquer sur **✓ Valider la carte**, puis sur **▶ Lancer la génération**. La barre de
-   progression indique où en est le traitement et le temps restant estimé.
+3. Le bandeau du haut nomme les trois étapes et montre celle où vous êtes:
+   **1 Lecture du document**, **2 Relecture de la carte, par vous**, **3 Génération des tests**.
+   L'étape 2 est la vôtre: en cliquant sur **✓ Je valide la carte, on peut générer**, vous dites
+   que les scénarios et les exigences relevés sont les bons. Rien de coûteux ne tourne avant.
+   Si vous changez d'avis après, **↺ Relire** dans l'onglet CARTE relit le document et vous
+   redemande de valider.
 
-4. **Onglet SCÉNARIOS & TESTS** : le livrable, rangé comme le document. Déplier une
+4. Cliquer sur **▶ Lancer la génération**. La barre de progression indique où en est le
+   traitement et le temps restant estimé.
+
+5. **Onglet SCÉNARIOS & TESTS** : le livrable, rangé comme le document. Déplier une
    fonctionnalité, un cas d'utilisation, un scénario, pour voir ses tests.
 
-5. **Onglet EXIGENCES** : la preuve que rien n'a été oublié. Une ligne par exigence du
-   document, avec les tests qui la couvrent. Filtrez sur **non couvertes** pour voir ce qui
-   reste à traiter.
+6. **Onglet EXIGENCES** : la preuve que rien n'a été oublié. Une ligne par exigence du
+   document, groupée par cas d'utilisation, avec son énoncé tel qu'il est écrit et les tests
+   qui la couvrent. Filtrez sur **non couvertes** pour voir ce qui reste à traiter.
 
-6. **Onglet RECHERCHE** : chercher un test, le corriger à la main.
+   Le badge **sans énoncé** compte les exigences que le document cite sans jamais les écrire,
+   par exemple une notification dont le numéro n'a pas été décidé. Cliquez dessus pour les
+   lister: ce sont des trous de la spécification, pas des oublis de l'outil, et rien ne peut
+   être testé tant que le document ne les énonce pas.
 
-7. **Onglet CHAT** : poser des questions sur le document, les tests, la couverture. Le chat
+7. **Onglet RECHERCHE** : chercher un test, le corriger à la main.
+
+8. **Onglet CHAT** : poser des questions sur le document, les tests, la couverture. Le chat
    répond, il ne modifie rien.
 
-8. **⬇ Export ZIP** en haut : une archive contenant le document, le corpus distillé, les
+9. **⬇ Export ZIP** en haut : une archive contenant le document, le corpus distillé, les
    scénarios, les exigences, et surtout **`4-tests.xlsx`** à ouvrir dans Excel. C'est ce
    fichier qu'on relit et qu'on transmet.
 
