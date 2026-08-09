@@ -44,8 +44,8 @@ Expected shape of a healthy run:
 ```
 Reasoning switch: never sent (7 calls), TGI_DISABLE_THINKING is off
 
-Sample run : 1 bloc(s) in 101 s (101 s per bloc)
-Projection : about 0.5 h for a 90 bloc document at 5 blocs in parallel
+Sample run : 1 scénario(s) in 101 s (101 s per scénario)
+Projection : about 0.5 h for a 90 scénario document at 5 scénarios in parallel
 Statuses   : done=1
 Coverage   : median 91%  min 91%  max 91%
 Output     : 22 rules, 60 tests (2.7 tests per rule)
@@ -91,7 +91,7 @@ strips the field, so turn reasoning off at the server instead.
 **Truncations remain.** Raise the output budget or shrink each answer.
 
 ```bash
-TGI_MAX_OUTPUT_TOKENS=32000 TGI_GENERATOR_BATCH_RULES=4 tgi-validate --model ...
+TGI_MAX_OUTPUT_TOKENS=32000 TGI_TESTS_PER_SCENARIO=4 tgi-validate --model ...
 ```
 
 Note for reasoning models: Qwen documents 32768 output tokens as the floor for
@@ -112,7 +112,7 @@ For the certificate, the clean fix is to give the corporate bundle, in `.env`:
 TGI_LLM_CA_BUNDLE=C:/chemin/vers/ca-entreprise.pem
 ```
 
-If the bundle is not available, verification can be skipped. It unblocks the run and
+If the bundle is not available, verification can be skipped. It unscénarioks the run and
 exposes the traffic, so it is opt in and logged as a warning on every start, and the
 verdict prints `TLS: verification DISABLED`:
 

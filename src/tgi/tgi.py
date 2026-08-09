@@ -238,6 +238,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "page": "home",
                 "default_model_generator": app_settings.model_generator,
                 "default_model_judge": app_settings.model_judge,
+                "default_tests_per_scenario": app_settings.tests_per_scenario,
             },
         )
 

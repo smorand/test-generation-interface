@@ -30,7 +30,10 @@ uv run uvicorn tgi.tgi:app --reload --port 8080
 - `src/tgi/logging_config.py` : rich console + file logging (`setup_logging`)
 - `src/tgi/tracing.py` : OpenTelemetry tracing, JSONL export (`configure_tracing`, `trace_span`)
 - `src/tgi/agents/orchestrator.py` : pipeline coordinator, `split_document`, SSE queues
-- `src/tgi/agents/{extractor,generator,judge}.py` : LLM sub-agents (fresh context per call)
+- `src/tgi/agents/{distiller,scenario_generator,coverage}.py` : LLM sub-agents (fresh context per call)
+- `src/tgi/grammar.py` : infers the document's own numbering, extracts requirements without a model
+- `src/tgi/coverage_report.py` : coverage counted, and the requirement traceability matrix
+- `src/tgi/locks.py` : locks keyed by the running event loop
 - `src/tgi/deliverable.py` : functionality / use case / rule hierarchy built from `source_ref`
 - `src/tgi/progress.py` : run progress, elapsed time, naive remaining estimate
 - `src/tgi/workbook.py` : xlsx export (one sheet per functionality, one row per test step)
@@ -82,6 +85,7 @@ This project follows the `python` skill. Reload it for full coding standards ref
 
 ## Documentation Index
 
+- `WINDOWS.md` : install and use on Windows, for a non technical reader
 - `BACKLOG.md` : decided but not built, with the measurement behind each item
 - `.agent_docs/python.md` : Python coding standards and conventions
 - `.agent_docs/makefile.md` : Detailed Makefile documentation

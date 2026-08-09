@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -92,7 +92,6 @@ class Settings(BaseSettings):
     llm_ca_bundle: str | None = None
     model_generator: str = "gemma-4-26b-a4b-it"
     model_judge: str = "gemma-4-26b-a4b-it"
-    max_judge_passes: int = 3
     max_parallel_blocs: int = 5
     max_context_tokens: int = 128000
     # Output budget per LLM call. Reasoning models (gemma) spend thousands of
@@ -108,31 +107,9 @@ class Settings(BaseSettings):
     disable_thinking: bool = False
     llm_json_retries: int = 5
     projects_dir: str = "./projects"
-
-    # Judge scoring. score is a 0-100 coverage percentage.
-    # >= judge_pass_score: accepted (green). < judge_bad_score: poor (red).
-    # In between: kept but flagged for human review (yellow).
-    judge_score_mode: Literal["coverage", "llm"] = "coverage"
-    judge_pass_score: int = 80
-    judge_bad_score: int = 40
-    # Rules judged per LLM call. Judging many rules at once makes a reasoning
-    # model overshoot its output budget and return nothing usable; measured on
-    # gemma, 10 rules against 26 tests answers reliably. 0 disables batching.
-    judge_batch_rules: int = 10
-    # Rules per generation call. Covering dozens of rules at once produces a
-    # very long JSON payload that the output budget cuts off, wasting the call.
-    generator_batch_rules: int = 8
-    # Test set hygiene. Regeneration used to append without ever pruning, so a
-    # 49 rule bloc ended up with 270 tests, 40 percent near duplicates, while the
-    # score went down. 0 disables the cap.
-    # Document splitting. Blocs follow the document outline when available;
-    # chunk_overlap only applies where a section must be cut by paragraphs.
-    chunk_size: int = 4000
-    chunk_overlap: int = 200
     # Target volume per scenario, honoured by generation and shown in the interface.
     # At 5, the reference specification yields about 290 tests against 2199 before.
     tests_per_scenario: int = 5
-    max_tests_per_rule: int = 4
     test_similarity_threshold: float = 0.9
     # Rules worded almost the same are only flagged for the reviewer, never
     # merged: similarity cannot tell a restated rule from its own negation.

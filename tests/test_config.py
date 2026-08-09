@@ -26,8 +26,8 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.app_name == "tgi"
     assert s.model_generator == "gemma-4-26b-a4b-it"
     assert s.model_judge == "gemma-4-26b-a4b-it"
-    assert s.max_judge_passes == 3
     assert s.max_parallel_blocs == 5
+    assert s.tests_per_scenario == 5
     assert s.max_context_tokens == 128000
     assert s.projects_dir == "./projects"
 

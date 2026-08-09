@@ -1,5 +1,7 @@
 # Installation, pas à pas
 
+
+> Sur Windows et pour un lecteur non technique, suivre `WINDOWS.md`, plus détaillé et pas à pas.
 Guide pour une première installation, sans connaissance préalable du projet.
 Comptez 10 minutes. Tout se fait dans un terminal, en copiant les commandes.
 
@@ -158,20 +160,20 @@ Pour arrêter le serveur: `Ctrl` + `C` dans la fenêtre du terminal.
 ## 7. Utiliser l'application
 
 1. **Importer** votre document de spécifications (Word, PDF ou texte).
-2. **Vérifier le découpage** proposé en blocs, puis le valider. Cette étape est
+2. **Vérifier le découpage** proposé en scénarios, puis le valider. Cette étape est
    volontairement manuelle: elle évite de lancer des traitements coûteux sur un
    découpage inadapté.
-3. **Lancer le traitement**. L'avancement s'affiche en direct, bloc par bloc.
-4. **Relire les résultats**. Chaque bloc porte un score de couverture:
+3. **Lancer le traitement**. L'avancement s'affiche en direct, scénario par scénario.
+4. **Relire les résultats**. Chaque scénario porte un score de couverture:
 
    | Couleur | Signification |
    |---|---|
-   | Vert | couverture au dessus du seuil, bloc terminé |
+   | Vert | couverture au dessus du seuil, scénario terminé |
    | Orange | à relire, la couverture reste sous le seuil |
    | Rouge | couverture faible, ou erreur technique |
-   | Gris | aucune règle métier dans ce bloc, normal pour un sommaire |
+   | Gris | aucune règle métier dans ce scénario, normal pour un sommaire |
 
-   Un bouton **Rejouer** est disponible sur chaque bloc. Les paires de règles très
+   Un bouton **Rejouer** est disponible sur chaque scénario. Les paires de règles très
    proches sont signalées, à vous de trancher: elles ne sont jamais fusionnées
    automatiquement, car une règle et sa négation se ressemblent beaucoup.
 5. **Exporter** les tests en archive ZIP.
@@ -212,7 +214,7 @@ uv run python -m tgi.stats
 | `Connection error` | la requête n'atteint pas le serveur: proxy d'entreprise ou certificat. Voir [VALIDATION.md](VALIDATION.md#5-fix-the-usual-failures) |
 | `models seen: not listed by this endpoint` | normal avec certaines passerelles, le traitement continue. Vérifiez seulement que les noms de modèles sont exacts |
 | Le traitement est très lent | le modèle « réfléchit » avant de répondre. Ajoutez `TGI_DISABLE_THINKING=true` dans `.env` |
-| Un bloc est en erreur | cliquez sur **Rejouer**. Le message d'erreur est affiché sur le bloc |
+| Un scénario est en erreur | cliquez sur **Rejouer**. Le message d'erreur est affiché sur le scénario |
 
 ---
 

@@ -19,11 +19,13 @@ def _healthy() -> ValidationResult:
         endpoint="http://endpoint/v1",
         reachable=True,
         models_visible=3,
-        blocs=1,
+        scenarios=1,
         statuses={"done": 1},
-        scores=[91],
-        rules=22,
-        tests=59,
+        requirements=22,
+        covered=21,
+        coverage_percent=95,
+        tests=6,
+        steps=19,
         duration_s=110.0,
         switch_line="Reasoning switch: never sent (7 calls), TGI_DISABLE_THINKING is off",
     )
@@ -55,10 +57,10 @@ def test_unreachable_endpoint_is_not_usable() -> None:
     assert "ConnectError" in report
 
 
-def test_failed_blocs_are_a_problem() -> None:
+def test_failed_scenarios_are_a_problem() -> None:
     result = _healthy()
     result.statuses = {"done": 1, "error": 2}
-    result.blocs = 3
+    result.scenarios = 3
     _judge_the_results(result)
     assert any("failed outright" in p for p in result.problems)
     assert result.ok is False
@@ -85,30 +87,31 @@ def test_slow_model_is_reported_with_a_projection(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(settings, "max_parallel_blocs", 5)
     result = _healthy()
-    result.duration_s = 1200.0  # 20 min for one bloc
+    result.duration_s = 1200.0  # 20 min for one scenario
     _judge_the_results(result)
-    assert any("bloc document" in p for p in result.problems)
+    assert any("scenario document" in p for p in result.problems)
     assert any("TGI_DISABLE_THINKING" in a for a in result.advice)
     assert result.projected_hours > 3
     assert "Projection" in format_verdict(result)
 
 
-def test_no_score_means_the_judge_never_worked() -> None:
+def test_low_coverage_is_a_problem_with_advice() -> None:
+    """Coverage is counted, so a thin run is visible without asking a model."""
     result = _healthy()
-    result.scores = []
+    result.covered = 8
+    result.coverage_percent = 36
     _judge_the_results(result)
-    assert any("never returned a usable verdict" in p for p in result.problems)
+    assert any("requirements are covered" in p for p in result.problems)
+    assert any("TGI_TESTS_PER_SCENARIO" in a for a in result.advice)
+    assert result.ok is False
 
 
-def test_low_coverage_is_advice_not_a_blocker(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tgi.config import settings
-
-    monkeypatch.setattr(settings, "judge_pass_score", 80)
+def test_full_coverage_raises_no_problem() -> None:
     result = _healthy()
-    result.scores = [40, 45]
+    result.covered = 22
+    result.coverage_percent = 100
     _judge_the_results(result)
     assert result.problems == []
-    assert any("below TGI_JUDGE_PASS_SCORE" in a for a in result.advice)
     assert result.ok is True
 
 
@@ -125,9 +128,9 @@ def test_verdict_reports_the_measurements() -> None:
     result = _healthy()
     _judge_the_results(result)
     report = format_verdict(result)
-    assert "22 rules, 59 tests" in report
-    assert "2.7 tests per rule" in report
-    assert "median 91%" in report
+    assert "21/22 requirements (95%)" in report
+    assert "6 tests, 19 steps" in report
+    assert "6.0 tests per scenario" in report
 
 
 def test_placeholder_key_is_reported_with_the_fix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,7 +321,19 @@ def test_measurements_ignore_a_previous_run(monkeypatch: pytest.MonkeyPatch, tmp
         return [{"id": "m"}]
 
     async def _one_bloc(projects_dir: Path, client: object) -> tuple[dict[str, object], float]:
-        return {"blocs": [{"status": "done", "score": 90, "rules": [{"id": "R1"}], "tests": [{"id": "T1"}]}]}, 3.0
+        return {
+            "requirements": [{"ref": "VAL01.CU01.RM01", "kind": "RM", "parent": "VAL01.CU01", "statement": "s"}],
+            "scenarios": [
+                {
+                    "id": "SC-001",
+                    "status": "done",
+                    "kind": "nominal",
+                    "requirement_refs": ["VAL01.CU01.RM01"],
+                    "uncovered_refs": [],
+                    "tests": [{"id": "T1", "requirement_refs": ["VAL01.CU01.RM01"], "steps": [{}]}],
+                }
+            ],
+        }, 3.0
 
     monkeypatch.setattr("tgi.services.llm.LLMClient.list_models", _models)
     monkeypatch.setattr("tgi.validate._run_sample", _one_bloc)

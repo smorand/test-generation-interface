@@ -52,6 +52,14 @@
             <input type="text" name="model_judge" placeholder="{{ default_model_judge }}"
               class="input w-full" />
           </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Tests par scénario</label>
+            <input type="number" name="tests_per_scenario" min="1" max="20"
+              placeholder="{{ default_tests_per_scenario }}" class="input w-full" />
+            <div class="text-xs text-gray-600 mt-1">
+              Cible, pas une limite: un scénario chargé peut en demander plus.
+            </div>
+          </div>
         </div>
         <div x-show="error" class="text-red-400 text-sm mb-3" x-text="error"></div>
         <button type="submit" class="btn-primary w-full" :disabled="uploading">
@@ -69,7 +77,7 @@
         <a href="/projects/{{ p.id }}" class="flex items-center justify-between p-3 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">
           <div>
             <div class="font-medium text-sm">{{ p.doc_path.split('/')[-1] }}</div>
-            <div class="text-xs text-gray-500">{{ p.created_at[:10] }} &bull; {{ p.bloc_count }} blocs</div>
+            <div class="text-xs text-gray-500">{{ p.created_at[:10] }} &bull; {{ p.scenario_count }} scénarios &bull; {{ p.tests_count }} tests</div>
           </div>
           <span class="text-gray-400">→</span>
         </a>

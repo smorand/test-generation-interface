@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.config import settings
+from tgi.coverage_report import coverage_summary
+from tgi.deliverable import coverage_percent
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -133,49 +135,50 @@ def aggregate_roles(spans: list[dict[str, Any]]) -> dict[str, RoleStats]:
     return dict(per_role)
 
 
-def aggregate_blocs(projects_dir: Path) -> dict[str, Any]:
-    """Summarize judge passes, scores and statuses across every project bloc."""
-    passes: Counter[int] = Counter()
+def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
+    """Summarize scenarios, coverage and volume across every project on disk."""
     statuses: Counter[str] = Counter()
-    scores: list[int] = []
-    best_versions: Counter[int] = Counter()
-    improved = 0
-    regressed = 0
-    blocs_total = 0
+    kinds: Counter[str] = Counter()
+    scenarios_total = tests_total = steps_total = 0
+    requirements_total = covered_total = untestable_total = 0
+    projects = 0
 
     if not projects_dir.exists():
-        return {"blocs": 0}
+        return {"scenarios": 0, "projects": 0}
 
     for state_path in sorted(projects_dir.glob("*/state.json")):
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        for bloc in state.get("blocs", []):
-            blocs_total += 1
-            statuses[str(bloc.get("status", "?"))] += 1
-            passes[int(bloc.get("judge_passes") or 0)] += 1
-            score = bloc.get("score")
-            if isinstance(score, int):
-                scores.append(score)
-            best = bloc.get("best_version")
-            if isinstance(best, int):
-                best_versions[best] += 1
-            history = [h for h in (bloc.get("judge_history") or []) if isinstance(h.get("score"), int)]
-            if len(history) >= _MIN_HISTORY_FOR_TREND:
-                if history[-1]["score"] > history[0]["score"]:
-                    improved += 1
-                elif history[-1]["score"] < history[0]["score"]:
-                    regressed += 1
+        summary = coverage_summary(state)
+        if not summary["scenarios"]:
+            continue
+        projects += 1
+        scenarios_total += summary["scenarios"]
+        tests_total += summary["tests"]
+        steps_total += summary["steps"]
+        requirements_total += summary["requirements"]
+        covered_total += summary["covered"]
+        untestable_total += summary["untestable"]
+        for status, count in summary["statuses"].items():
+            statuses[status] += count
+        for scenario in state.get("scenarios") or []:
+            if isinstance(scenario, dict):
+                kinds[str(scenario.get("kind") or "?")] += 1
 
     return {
-        "blocs": blocs_total,
+        "projects": projects,
+        "scenarios": scenarios_total,
         "statuses": statuses,
-        "passes": passes,
-        "scores": scores,
-        "best_versions": best_versions,
-        "improved": improved,
-        "regressed": regressed,
+        "kinds": kinds,
+        "tests": tests_total,
+        "steps": steps_total,
+        "requirements": requirements_total,
+        "covered": covered_total,
+        "untestable": untestable_total,
+        "coverage_percent": coverage_percent(covered_total, requirements_total),
+        "tests_per_scenario": round(tests_total / scenarios_total, 2) if scenarios_total else 0,
     }
 
 
@@ -195,7 +198,7 @@ def format_switch_line(usage: dict[str, int]) -> str:
     )
 
 
-def format_report(roles: dict[str, RoleStats], blocs: dict[str, Any]) -> str:
+def format_report(roles: dict[str, RoleStats], projects: dict[str, Any]) -> str:
     """Render the statistics as a plain text report."""
     lines: list[str] = []
     lines.append("LLM calls per role")
@@ -227,26 +230,20 @@ def format_report(roles: dict[str, RoleStats], blocs: dict[str, Any]) -> str:
             lines.append(f"    finish_reason: {finish}")
 
     lines.append("")
-    if not blocs.get("blocs"):
-        lines.append("No bloc state found.")
+    if not projects.get("scenarios"):
+        lines.append("No generated project found in the projects directory.")
         return "\n".join(lines)
 
-    lines.append(f"Blocs: {blocs['blocs']}")
-    lines.append("  statuses: " + ", ".join(f"{k}={v}" for k, v in blocs["statuses"].most_common()))
-    lines.append("  judge passes used: " + ", ".join(f"{k} pass={v}" for k, v in sorted(blocs["passes"].items())))
-    if blocs["best_versions"]:
-        lines.append(
-            "  best version kept: " + ", ".join(f"v{k}={v}" for k, v in sorted(blocs["best_versions"].items()))
-        )
-    scores = blocs["scores"]
-    if scores:
-        lines.append(
-            f"  score: median={statistics.median(scores):.0f}% mean={statistics.mean(scores):.0f}% "
-            f"min={min(scores)}% max={max(scores)}% (n={len(scores)})"
-        )
+    lines.append(f"Projects: {projects['projects']}")
+    lines.append(f"  scenarios: {projects['scenarios']} ({dict(projects['statuses'])})")
+    lines.append(f"  kinds: {dict(projects['kinds'])}")
     lines.append(
-        f"  multi pass outcome: improved={blocs['improved']} regressed={blocs['regressed']} "
-        "(regressed blocs are why the best version is kept, not the last)"
+        f"  requirements: {projects['covered']}/{projects['requirements']} covered "
+        f"({projects['coverage_percent']}%), {projects['untestable']} declared untestable"
+    )
+    lines.append(
+        f"  volume: {projects['tests']} tests, {projects['steps']} steps, "
+        f"{projects['tests_per_scenario']} tests per scenario"
     )
     return "\n".join(lines)
 
@@ -276,8 +273,8 @@ def build_report(otel_paths: Sequence[Path], projects_dir: Path) -> str:
         switch["not_sent"] += usage["not_sent"]
 
     roles = aggregate_roles(spans)
-    blocs = aggregate_blocs(projects_dir)
-    report = f"{format_switch_line(switch)}\n\n{format_report(roles, blocs)}"
+    projects = aggregate_projects(projects_dir)
+    report = f"{format_switch_line(switch)}\n\n{format_report(roles, projects)}"
     if not spans:
         report = f"{_no_span_diagnostic(otel_paths)}\n\n{report}"
     return report

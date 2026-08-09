@@ -374,8 +374,10 @@ async def test_progress_partial_reports_the_run(client: AsyncClient) -> None:
 
     html = (await client.get(f"/projects/{project_id}/partials/progress")).text
     assert "2/3" in html
+    assert "scénarios" in html
     assert "en attente 1" in html
     assert "2 tests" in html
+    assert "exigences couvertes" in html
 
 
 async def test_export_contains_the_reviewable_workbook(client: AsyncClient) -> None:

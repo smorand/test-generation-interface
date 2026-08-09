@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from tgi.stats import (
-    aggregate_blocs,
+    aggregate_projects,
     aggregate_roles,
     build_report,
     format_switch_line,
@@ -79,91 +79,105 @@ def test_aggregate_roles_handles_missing_attributes(tmp_path: Path) -> None:
     assert roles["unknown"].durations == []
 
 
-def _project(projects: Path, name: str, blocs: list[dict[str, object]]) -> None:
+def _project(projects: Path, name: str, scenarios: list[dict[str, object]], requirements: list[str]) -> None:
     directory = projects / name
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "state.json").write_text(json.dumps({"blocs": blocs}), encoding="utf-8")
+    state = {
+        "scenarios": scenarios,
+        "requirements": [{"ref": ref, "kind": "RM", "parent": "", "statement": ""} for ref in requirements],
+    }
+    (directory / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
-def test_aggregate_blocs_summarizes_passes_and_scores(tmp_path: Path) -> None:
+def test_aggregate_projects_summarizes_coverage_and_volume(tmp_path: Path) -> None:
     projects = tmp_path / "projects"
     _project(
         projects,
         "p1",
         [
             {
+                "id": "SC-001",
+                "kind": "nominal",
                 "status": "done",
-                "judge_passes": 1,
-                "score": 97,
-                "best_version": 1,
-                "judge_history": [{"version": 1, "score": 97, "tests_count": 3}],
+                "requirement_refs": ["R.A1", "R.A2"],
+                "uncovered_refs": [],
+                "tests": [{"id": "T1", "requirement_refs": ["R.A1", "R.A2"], "steps": [{}, {}]}],
             },
             {
+                "id": "SC-002",
+                "kind": "erreur",
                 "status": "needs_human",
-                "judge_passes": 3,
-                "score": 70,
-                "best_version": 1,
-                "judge_history": [
-                    {"version": 1, "score": 70, "tests_count": 3},
-                    {"version": 2, "score": 40, "tests_count": 6},
-                ],
+                "requirement_refs": ["R.A3"],
+                "uncovered_refs": ["R.A3"],
+                "tests": [],
             },
-            {
-                "status": "needs_human",
-                "judge_passes": 3,
-                "score": 60,
-                "best_version": 2,
-                "judge_history": [
-                    {"version": 1, "score": 30, "tests_count": 2},
-                    {"version": 2, "score": 60, "tests_count": 4},
-                ],
-            },
-            {"status": "error", "judge_passes": 0},
         ],
+        ["R.A1", "R.A2", "R.A3"],
     )
 
-    summary = aggregate_blocs(projects)
-    assert summary["blocs"] == 4
-    assert summary["statuses"]["needs_human"] == 2
-    assert summary["passes"][3] == 2
-    assert summary["passes"][0] == 1
-    assert summary["scores"] == [97, 70, 60]
-    assert summary["best_versions"][1] == 2
-    # One bloc got better across passes, one got worse
-    assert summary["improved"] == 1
-    assert summary["regressed"] == 1
+    summary = aggregate_projects(projects)
+    assert summary["projects"] == 1
+    assert summary["scenarios"] == 2
+    assert summary["statuses"] == {"done": 1, "needs_human": 1}
+    assert summary["kinds"] == {"nominal": 1, "erreur": 1}
+    assert summary["requirements"] == 3
+    assert summary["covered"] == 2
+    assert summary["coverage_percent"] == 67
+    assert summary["tests"] == 1
+    assert summary["steps"] == 2
+    assert summary["tests_per_scenario"] == 0.5
 
 
-def test_aggregate_blocs_missing_dir(tmp_path: Path) -> None:
-    assert aggregate_blocs(tmp_path / "absent") == {"blocs": 0}
+def test_aggregate_projects_ignores_a_project_without_scenarios(tmp_path: Path) -> None:
+    projects = tmp_path / "projects"
+    _project(projects, "vide", [], [])
+    assert aggregate_projects(projects)["projects"] == 0
 
 
-def test_aggregate_blocs_skips_unreadable_state(tmp_path: Path) -> None:
+def test_aggregate_projects_missing_dir(tmp_path: Path) -> None:
+    assert aggregate_projects(tmp_path / "absent") == {"scenarios": 0, "projects": 0}
+
+
+def test_aggregate_projects_skips_unreadable_state(tmp_path: Path) -> None:
     projects = tmp_path / "projects"
     (projects / "broken").mkdir(parents=True)
     (projects / "broken" / "state.json").write_text("{ not json", encoding="utf-8")
-    assert aggregate_blocs(projects)["blocs"] == 0
+    assert aggregate_projects(projects)["projects"] == 0
 
 
 def test_build_report_contains_key_figures(tmp_path: Path) -> None:
     otel = tmp_path / "otel.log"
     _write_otel(otel, [_span("judge", "ok", 100), _span("judge", "shape", 50)])
     projects = tmp_path / "projects"
-    _project(projects, "p1", [{"status": "done", "judge_passes": 1, "score": 90, "best_version": 1}])
+    _project(
+        projects,
+        "p1",
+        [
+            {
+                "id": "SC-001",
+                "kind": "nominal",
+                "status": "done",
+                "requirement_refs": ["R.A1"],
+                "uncovered_refs": [],
+                "tests": [{"id": "T1", "requirement_refs": ["R.A1"], "steps": [{}]}],
+            }
+        ],
+        ["R.A1"],
+    )
 
     report = build_report([otel], projects)
     assert "LLM calls per role" in report
     assert "judge" in report
-    assert "Blocs: 1" in report
-    assert "done=1" in report
+    assert "Projects: 1" in report
+    assert "'done': 1" in report
     assert "shape=1" in report
 
 
-def test_build_report_without_blocs(tmp_path: Path) -> None:
+def test_build_report_without_a_project(tmp_path: Path) -> None:
     otel = tmp_path / "otel.log"
-    _write_otel(otel, [_span("extractor", "ok", 5)])
+    _write_otel(otel, [_span("distiller", "ok", 5)])
     report = build_report([otel], tmp_path / "absent")
-    assert "No bloc state found." in report
+    assert "No generated project found" in report
 
 
 def _chat_span(thinking_disabled: bool | None) -> dict[str, object]:

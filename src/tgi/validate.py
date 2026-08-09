@@ -25,6 +25,7 @@ from typing import Any
 
 from tgi.agents.orchestrator import Orchestrator
 from tgi.config import settings
+from tgi.coverage_report import coverage_summary
 from tgi.logging_config import setup_logging
 from tgi.services.git_service import GitService
 from tgi.services.llm import LLMClient
@@ -40,10 +41,11 @@ SAMPLE_PATH = Path(__file__).parent / "samples" / "sample_spec.md"
 _VALIDATE_APP_NAME = "tgi-validate"
 
 # Blocs of a typical specification, used to extrapolate a full run.
-_REFERENCE_DOCUMENT_BLOCS = 90
+_REFERENCE_DOCUMENT_SCENARIOS = 90
 # Beyond this, processing a whole specification stops being practical.
 _SLOW_HOURS_PER_DOCUMENT = 3.0
 # Above this share of unusable calls the model is fighting the JSON contract.
+_LOW_COVERAGE_PERCENT = 80
 _HIGH_WASTE_PERCENT = 25.0
 
 
@@ -58,11 +60,13 @@ class ValidationResult:
     model_discovery_error: str | None = None
     reachable: bool = False
     error: str | None = None
-    blocs: int = 0
+    scenarios: int = 0
     statuses: dict[str, int] = field(default_factory=dict)
-    scores: list[int] = field(default_factory=list)
-    rules: int = 0
+    requirements: int = 0
+    covered: int = 0
+    coverage_percent: int = 0
     tests: int = 0
+    steps: int = 0
     duration_s: float = 0.0
     switch_line: str = ""
     log_dir: Path | None = None
@@ -74,14 +78,14 @@ class ValidationResult:
     advice: list[str] = field(default_factory=list)
 
     @property
-    def seconds_per_bloc(self) -> float:
-        return self.duration_s / self.blocs if self.blocs else 0.0
+    def seconds_per_scenario(self) -> float:
+        return self.duration_s / self.scenarios if self.scenarios else 0.0
 
     @property
     def projected_hours(self) -> float:
         """Wall clock for a typical specification at the measured rate."""
         parallel = max(1, settings.max_parallel_blocs)
-        return _REFERENCE_DOCUMENT_BLOCS * self.seconds_per_bloc / parallel / 3600
+        return _REFERENCE_DOCUMENT_SCENARIOS * self.seconds_per_scenario / parallel / 3600
 
     @property
     def ok(self) -> bool:
@@ -192,15 +196,14 @@ def _collect_measurements(
     since_ns matters: the trace file is appended across runs, so without it the
     counts would mix in every earlier validation stored in the same file.
     """
-    blocs = state.get("blocs", [])
-    result.blocs = len(blocs)
-    for bloc in blocs:
-        status = str(bloc.get("status", "?"))
-        result.statuses[status] = result.statuses.get(status, 0) + 1
-        if isinstance(bloc.get("score"), int):
-            result.scores.append(int(bloc["score"]))
-        result.rules += len(bloc.get("rules", []))
-        result.tests += len(bloc.get("tests", []))
+    summary = coverage_summary(state)
+    result.scenarios = summary["scenarios"]
+    result.statuses = dict(summary["statuses"])
+    result.requirements = summary["requirements"]
+    result.covered = summary["covered"]
+    result.coverage_percent = summary["coverage_percent"]
+    result.tests = summary["tests"]
+    result.steps = summary["steps"]
 
     result.switch_line = format_switch_line(reasoning_switch_usage(otel_path, since_ns))
     roles = aggregate_roles(read_attempt_spans(otel_path, since_ns))
@@ -222,29 +225,32 @@ def _judge_the_results(result: ValidationResult) -> None:
     """Turn measurements into problems and advice."""
     errors = result.statuses.get("error", 0)
     if errors:
-        result.problems.append(f"{errors} of {result.blocs} blocs failed outright")
+        result.problems.append(f"{errors} of {result.scenarios} scenarios failed outright")
     if result.truncations:
         result.problems.append(f"{result.truncations} call(s) were cut off by the output budget")
         result.advice.append(
-            f"Raise TGI_MAX_OUTPUT_TOKENS (currently {settings.max_output_tokens}) or lower TGI_GENERATOR_BATCH_RULES"
+            f"Raise TGI_MAX_OUTPUT_TOKENS (currently {settings.max_output_tokens}) or lower "
+            f"TGI_TESTS_PER_SCENARIO (currently {settings.tests_per_scenario})"
         )
     if result.waste_percent > _HIGH_WASTE_PERCENT:
         result.problems.append(f"{result.waste_percent:.0f}% of calls produced nothing usable")
     if result.projected_hours > _SLOW_HOURS_PER_DOCUMENT:
         result.problems.append(
-            f"{result.seconds_per_bloc:.0f} s per bloc means about {result.projected_hours:.1f} h "
-            f"for a {_REFERENCE_DOCUMENT_BLOCS} bloc document"
+            f"{result.seconds_per_scenario:.0f} s per scenario means about {result.projected_hours:.1f} h "
+            f"for a {_REFERENCE_DOCUMENT_SCENARIOS} scenario document"
         )
         result.advice.append("The usual cause is reasoning: see TGI_DISABLE_THINKING below")
-    if result.scores:
-        median = statistics.median(result.scores)
-        if median < settings.judge_pass_score:
-            result.advice.append(
-                f"Median coverage {median:.0f}% is below TGI_JUDGE_PASS_SCORE ({settings.judge_pass_score}%), "
-                "the judge and the generator disagree on this model"
-            )
-    elif result.blocs:
-        result.problems.append("No bloc produced a coverage score, the judge never returned a usable verdict")
+    if result.requirements and result.coverage_percent < _LOW_COVERAGE_PERCENT:
+        result.problems.append(
+            f"only {result.covered} of {result.requirements} requirements are covered "
+            f"({result.coverage_percent}%)"
+        )
+        result.advice.append(
+            "Raise TGI_TESTS_PER_SCENARIO, or check the distilled map: a scenario with no evidence "
+            "produces thin tests"
+        )
+    elif result.scenarios and not result.tests:
+        result.problems.append("The run produced no test at all, so nothing could be measured")
 
     if "never sent" in result.switch_line and (result.truncations or result.projected_hours > _SLOW_HOURS_PER_DOCUMENT):
         result.advice.append(
@@ -284,23 +290,20 @@ def _header_lines(result: ValidationResult) -> list[str]:
 
 def _measurement_lines(result: ValidationResult) -> list[str]:
     """What the sample run measured, empty when it never ran."""
-    if not (result.reachable and result.blocs):
+    if not (result.reachable and result.scenarios):
         return []
     lines = [
         result.switch_line,
         "",
-        f"Sample run : {result.blocs} bloc(s) in {result.duration_s:.0f} s ({result.seconds_per_bloc:.0f} s per bloc)",
-        f"Projection : about {result.projected_hours:.1f} h for a {_REFERENCE_DOCUMENT_BLOCS} bloc "
-        f"document at {settings.max_parallel_blocs} blocs in parallel",
+        f"Sample run : {result.scenarios} scenario(s) in {result.duration_s:.0f} s "
+        f"({result.seconds_per_scenario:.0f} s per scenario)",
+        f"Projection : about {result.projected_hours:.1f} h for a {_REFERENCE_DOCUMENT_SCENARIOS} scenario "
+        f"document at {settings.max_parallel_blocs} in parallel",
         "Statuses   : " + ", ".join(f"{k}={v}" for k, v in sorted(result.statuses.items())),
+        f"Coverage   : {result.covered}/{result.requirements} requirements ({result.coverage_percent}%)",
+        f"Output     : {result.tests} tests, {result.steps} steps "
+        f"({result.tests / result.scenarios:.1f} tests per scenario)",
     ]
-    if result.scores:
-        lines.append(
-            f"Coverage   : median {statistics.median(result.scores):.0f}%  "
-            f"min {min(result.scores)}%  max {max(result.scores)}%"
-        )
-    ratio = result.tests / result.rules if result.rules else 0.0
-    lines.append(f"Output     : {result.rules} rules, {result.tests} tests ({ratio:.1f} tests per rule)")
     lines.append(f"Wasted     : {result.waste_percent:.0f}% of calls, {result.truncations} truncated")
     lines.append("")
     lines.append("Per role:")

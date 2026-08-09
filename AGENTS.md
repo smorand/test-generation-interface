@@ -4,7 +4,11 @@ Compact index for AI agents. Details live in `.agent_docs/`. Read this first, th
 
 ## Overview
 
-QA test generator: FastAPI + HTMX web app that splits a spec document into blocs, extracts business rules, generates JSON functional tests via LLM sub-agents, iterates with a scoring judge, and versions each project with local git. Python 3.13, src/ package layout (`src/tgi`).
+QA test generator: FastAPI + HTMX web app that reads a functional specification whole, distils it
+into context, user scenarios and requirements, has a human validate that map, then writes the tests
+of each scenario and closes the coverage gaps. Coverage is counted against the requirements the
+document declares, never scored by a model. Each project is versioned with local git. Python 3.13,
+src/ package layout (`src/tgi`).
 
 ## Key Commands
 
@@ -24,12 +28,14 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 
 - `src/tgi/tgi.py` : `create_app()` factory, module-level `app`, `main()`
 - `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`
-- `src/tgi/logging_config.py`, `src/tgi/tracing.py` : logging + OpenTelemetry
-- `src/tgi/agents/` : orchestrator + extractor/generator/judge
-- `src/tgi/services/` : llm, doc_parser, git_service, state_manager
-- `src/tgi/deliverable.py` : functionality / use case / rule hierarchy from `source_ref`
+- `src/tgi/grammar.py` : infers the numbering the document gives itself, extracts requirements
+- `src/tgi/agents/` : orchestrator + distiller / scenario_generator / coverage
+- `src/tgi/coverage_report.py` : coverage counted, and the requirement traceability matrix
+- `src/tgi/deliverable.py` : the two reading axes (scenario tree, requirement rows)
 - `src/tgi/progress.py` : run progress, elapsed and naive remaining estimate
-- `src/tgi/workbook.py` : reviewable xlsx (one sheet per functionality, one row per step)
+- `src/tgi/workbook.py` : reviewable xlsx (summary, traceability, one sheet per functionality)
+- `src/tgi/locks.py` : locks keyed by the running event loop
+- `src/tgi/services/` : llm, doc_parser, git_service, state_manager
 - `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel)
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
 
@@ -44,18 +50,25 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 
 ## Pipeline essentials
 
-The deliverable is read as functionality, use case, rule, tests, driven by `source_ref`;
-rules without a reference fall into « Hors numérotation ». Rule identity is (bloc, rule id).
-The rules and tests tabs filter and paginate **server side**: a test card is about 4.8 kB of
-HTML. The chat is read only, receives a run summary plus at most 3 relevant blocs, and is
-rendered as markdown with HTML escaped first.
+Four phases, and the order matters. **Phase 0 without a model**: `grammar.py` infers the
+document's own numbering (51/51 use cases, 401/401 requirements, 0 orphan, where a model
+found 46 and fabricated when interrogated). **Phase 1**: the whole document in one call
+(78k tokens against 128k) gives context, scenarios and discards, every identifier filtered
+against the text; arithmetic then attaches every requirement left behind, so 468 of 468 are
+carried. A human validates that map before anything expensive runs. **Phase 2**: one call
+per scenario with its requirements and its section, volume as a target not a cap.
+**Phase 3**: gaps computed, then closed by completing an existing test before adding one.
 
-Judge scores rule coverage (0 to 100, computed locally). Each pass is a scored
-version; the best one wins. Tests are deduplicated and capped per rule, and the
-splitter follows the document outline (tables read in document order). Weak models need a large `TGI_MAX_OUTPUT_TOKENS` or
-they are truncated before answering. `LLMJSONError` is an expected outcome: warn,
-never `logger.exception`. Full details and the measured numbers:
-`.agent_docs/pipeline.md` (read it before touching orchestrator, judge, or llm).
+Two hard rules, both measured. **Enumerate, never interrogate**: asked for the rules of one
+named use case a model returned 17 references where 1 exists, while asked to list what it
+sees it returned 250 with none invented. **Filter every identifier against the document**,
+case insensitively; the letter suffix form `RM07a` broke that comparison twice.
+
+There is no judge. Coverage is arithmetic, because a model judging its own chunks reported a
+median of 100 percent on a deliverable nobody could review. Result on the reference document:
+284 tests instead of 2199, 1029 steps instead of 7102, 463 of 468 requirements covered.
+Full details and the measured numbers: `.agent_docs/pipeline.md` (read it before touching
+the distiller, the generator or coverage).
 
 ## Quality Gate
 
@@ -63,6 +76,7 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 
 ## Documentation Index
 
+- `WINDOWS.md` : install and use on Windows, for someone who never opened a terminal
 - `BACKLOG.md` : decided but not built, each item with the measurement that justifies it
 - `CLAUDE.md` : fuller project overview (mirrors this index)
 - `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
