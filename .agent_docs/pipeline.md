@@ -233,6 +233,31 @@ Two things this confirms. The judge loop earns its cost: 24 blocs needed more th
 one pass and 19 of them improved. And keeping the best version is not theoretical:
 one bloc scored worse on a later pass and its earlier version was restored.
 
+### After the extractor rewrite, same document and model
+
+| Measure | Before | After |
+|---|---|---|
+| Wall clock | 31.5 min | **17 min** |
+| Statuses | done 77, needs_human 11, error 0 | done 82, needs_human 6, **error 0** |
+| Rules | 1614, 4.3x the 377 declared | **850, 2.25x** |
+| Tests | 3799, 2.4 per rule | **2199, 2.6 per rule** |
+| Rules with a reference | 0 percent | **68 percent carry one, 52 percent placeable** |
+| Coverage | median 93 | **median 100, min 56** |
+| Judge passes | 1 pass 64, 2 passes 11, 3 passes 13 | 1 pass 76, 2 passes 3, 3 passes 6 |
+| LLM waste | 1 percent | no JSON incident logged |
+
+Faster because fewer rules means fewer judge batches, and 76 blocs of 88 converged on
+the first pass. Three targets were missed and are stated as such: 850 rules against the
+600 expected, 2.6 tests per rule against 2.5, and 52 percent placeable references against
+70 percent. The extractor still invents references: only **73 percent of the reference
+strings it produced exist verbatim in the document**.
+
+Waste was not measured at span level on this run: the measurement harness did not call
+`configure_tracing()`, so no `llm.json_attempt` span was written. The run log carries no
+JSON incident, and `tgi-validate` on the same model reports 0 percent wasted and 0
+truncated, which is evidence the instrumentation works, not proof about this run. A
+harness that forgets tracing measures nothing: call `configure_tracing()` first.
+
 Event queue: with no browser attached the SSE queue saturates. The oldest event is
 dropped rather than the newest, so a client connecting later still gets the current
 state, and the warning is logged once per project instead of on every event.
@@ -377,7 +402,25 @@ option: `partials/tests` takes `q`, `rule`, `bloc`, `status`, `page`, `per_page`
 returning an empty page.
 
 Same reason in the rules tab: the tree renders counters only, and the tests of a rule are
-fetched on expansion with `hx-trigger="toggle once"`. Consequence accepted: expanding 600
+fetched on expansion with `hx-trigger="toggle once"`. That is not enough on its own:
+measured 1.8 kB per rule, so **1.53 MB for the 850 rules** of a real run, the editable
+fields being what costs. Responses are therefore gzipped, `ConditionalGZipMiddleware`:
+1.53 MB becomes **69 kB**, a factor of 22 on repetitive markup, and the tests page 220 kB
+becomes 10 kB. The `/stream` path is excluded because gzip buffers a stream and live
+progress would arrive in bursts.
+
+## A reference that names no use case is refused
+
+Measured on the 88 bloc run: 577 rules carried a `source_ref`, but only 73 % of those
+strings exist verbatim in the document. The rest were stray labels (`T1`, `E1.M2`, `P1`),
+and accepting them as positions built **13 fake functionalities** next to the 4 real ones.
+`parse_source_ref` now requires a `CU` segment, or three segments as a fallback, and
+returns `None` otherwise: 4 chapters, 48 use cases, 404 rules in « Hors numérotation ».
+
+The `CU` convention is an assumption about this family of specifications, stated openly:
+without it there is no way to tell `F03.EU01.CU08` (a use case) from `VAL01.CU01.RM03`
+(a rule inside a use case). `totals["traced"]` counts only placeable references, so the
+header can never claim more traced rules than the tree actually holds. Consequence accepted: expanding 600
 rules fires 600 requests, so no « expand everything » button is offered.
 
 ## What the chat is allowed to know, and to do

@@ -116,10 +116,10 @@
   {% set base = '/projects/' ~ project_id ~ '/partials/tests?q=' ~ (q or '') ~ '&rule=' ~ (rule or '') ~ '&bloc=' ~ (bloc or '') ~ '&status=' ~ (status or '') ~ '&per_page=' ~ p.per_page %}
   <div class="flex items-center justify-center gap-3 mt-4 text-xs">
     <button class="btn-secondary" {% if not p.has_previous %}disabled{% endif %}
-      hx-get="{{ base }}&page={{ p.page - 1 }}" hx-target="#tests-container" hx-swap="innerHTML">‹ précédent</button>
+      hx-get="{{ base }}&page={{ [p.page - 1, 1] | max }}" hx-target="#tests-container" hx-swap="innerHTML">‹ précédent</button>
     <span class="text-gray-400">{{ p.start }} à {{ p.end }} sur {{ p.total }} &bull; page {{ p.page }}/{{ p.pages }}</span>
     <button class="btn-secondary" {% if not p.has_next %}disabled{% endif %}
-      hx-get="{{ base }}&page={{ p.page + 1 }}" hx-target="#tests-container" hx-swap="innerHTML">suivant ›</button>
+      hx-get="{{ base }}&page={{ [p.page + 1, p.pages] | min }}" hx-target="#tests-container" hx-swap="innerHTML">suivant ›</button>
   </div>
   {% endif %}
 

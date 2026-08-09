@@ -37,8 +37,25 @@ def test_parse_shorter_identifier() -> None:
     assert parse_source_ref("VAL01.CU01.RM03") == ("VAL01", "VAL01.CU01", "RM03")
 
 
-def test_parse_single_segment() -> None:
-    assert parse_source_ref("F01") == ("F01", "F01", "")
+def test_a_reference_that_names_no_use_case_is_refused() -> None:
+    """One and two segment labels built 13 fake functionalities on a real run."""
+    assert parse_source_ref("F01") is None
+    assert parse_source_ref("T1") is None
+    assert parse_source_ref("E1.M2") is None
+    assert parse_source_ref("CU01") is None  # no functionality in front of it
+
+
+def test_a_use_case_reference_without_a_rule_keeps_the_use_case_whole() -> None:
+    """F03.EU01.CU08 names a use case, so CU08 must not become a rule label."""
+    assert parse_source_ref("F03.EU01.CU08") == ("F03", "F03.EU01.CU08", "")
+
+
+def test_letter_suffixed_rules_are_kept() -> None:
+    assert parse_source_ref("F03.EU06.CU01.RM07a") == ("F03", "F03.EU06.CU01", "RM07A")
+
+
+def test_without_a_cu_segment_three_segments_are_still_placeable() -> None:
+    assert parse_source_ref("F01.EU01.RM01") == ("F01", "F01.EU01", "RM01")
 
 
 def test_parse_is_case_insensitive_and_trims() -> None:
@@ -147,6 +164,7 @@ def test_totals_and_orphans() -> None:
     assert totals["uncovered"] == 1
     assert totals["coverage_percent"] == 80
     assert totals["tests"] == 5
+    # Only placeable references count, so the header cannot contradict Hors numérotation
     assert totals["traced"] == 4
     assert totals["orphans"] == 1
     assert [t["id"] for t in d["orphan_tests"]] == ["T5"]
@@ -194,3 +212,30 @@ def test_use_case_coverage_table() -> None:
 
 def test_orphan_chapter_label_is_exposed() -> None:
     assert ORPHAN_TESTS == "Tests non rattachés"
+
+
+def test_unplaceable_references_do_not_create_chapters() -> None:
+    """Regression on a real run: stray labels built 13 fake functionalities."""
+    rules = [
+        {"id": "R1", "bloc_id": "bloc-1", "source_ref": "T1", "description": "a"},
+        {"id": "R2", "bloc_id": "bloc-1", "source_ref": "E1.M2", "description": "b"},
+        {"id": "R3", "bloc_id": "bloc-1", "source_ref": "F01.EU01.CU02.RM01", "description": "c"},
+    ]
+    result = build_deliverable(rules, [], {})
+    assert [chapter.key for chapter in result["chapters"]] == ["F01"]
+    assert result["unnumbered"] is not None
+    assert result["unnumbered"].rules_count == 2
+    # The reference stays visible on the rule, it is only not usable as a position
+    unplaceable = [rule for group in result["unnumbered"].groups for rule in group.rules]
+    assert {rule.source_ref for rule in unplaceable} == {"T1", "E1.M2"}
+    assert result["totals"]["traced"] == 1
+
+
+def test_coverage_never_claims_full_while_a_rule_is_uncovered() -> None:
+    """402 of 404 rounds to 100 %, hiding the two rules to look at."""
+    from tgi.deliverable import coverage_percent
+
+    assert coverage_percent(402, 404) == 99
+    assert coverage_percent(404, 404) == 100
+    assert coverage_percent(0, 0) == 0
+    assert coverage_percent(1, 3) == 33

@@ -20,11 +20,28 @@ from tgi.testset import rule_ids_of
 
 # F01.EU01.CU02.RM01, VAL01.CU01.RM03, EM05 ... one or more SEGMENTS joined by dots,
 # each segment being letters followed by digits.
-_SEGMENT = r"[A-Z]{1,6}\d+"
-_SOURCE_REF_RE = re.compile(rf"^{_SEGMENT}(?:\.{_SEGMENT})*$", re.IGNORECASE)
+# A segment is letters then digits, with an optional letter suffix: RM01, RM07a, VAL01
+_SEGMENT = r"[A-Za-z]{1,6}\d+[a-zA-Z]?"
+_SOURCE_REF_RE = re.compile(rf"^{_SEGMENT}(?:\.{_SEGMENT})*$")
+
+# Below this, a reference names no use case, so it cannot be placed in the tree
+_MIN_PLACEABLE_SEGMENTS = 3
 
 UNNUMBERED = "Hors numérotation"
 ORPHAN_TESTS = "Tests non rattachés"
+
+
+def coverage_percent(covered: int, total: int) -> int:
+    """Coverage as an integer, never claiming 100 % while a rule is uncovered.
+
+    402 covered out of 404 rounds to 100 %, which hides the two rules a reviewer has to
+    look at. Only full coverage may display 100 %.
+    """
+    if not total:
+        return 0
+    if covered >= total:
+        return 100
+    return min(99, round(covered / total * 100))
 
 
 @dataclass
@@ -72,7 +89,7 @@ class Group:
 
     @property
     def coverage_percent(self) -> int:
-        return round(self.covered_count / self.rules_count * 100) if self.rules_count else 0
+        return coverage_percent(self.covered_count, self.rules_count)
 
     @property
     def has_uncovered(self) -> bool:
@@ -101,7 +118,7 @@ class Chapter:
 
     @property
     def coverage_percent(self) -> int:
-        return round(self.covered_count / self.rules_count * 100) if self.rules_count else 0
+        return coverage_percent(self.covered_count, self.rules_count)
 
     @property
     def has_uncovered(self) -> bool:
@@ -111,21 +128,34 @@ class Chapter:
 def parse_source_ref(source_ref: Any) -> tuple[str, str, str] | None:
     """Split a specification identifier into (functionality, use case, rule label).
 
-    F01.EU01.CU02.RM01 gives ("F01", "F01.EU01.CU02", "RM01").
-    VAL01.CU01.RM03 gives ("VAL01", "VAL01.CU01", "RM03").
-    A single segment gives ("F01", "F01", ""), an identifier with no rule part keeps an
-    empty label. Anything that does not look like an identifier returns None rather
-    than being guessed at.
+    The use case is the prefix up to and including the last `CU` segment, because that
+    is the level a reviewer signs off on: `F01.EU01.CU02.RM01` gives
+    ("F01", "F01.EU01.CU02", "RM01") and `F03.EU01.CU08`, which names a use case and no
+    rule, gives ("F03", "F03.EU01.CU08", ""). `VAL01.CU01.RM03` gives
+    ("VAL01", "VAL01.CU01", "RM03").
+
+    Without a `CU` segment, three segments or more are still placeable: the last one is
+    the rule, the rest is the use case. Below that there is no tree position to give,
+    so the reference is refused rather than invented: measured on a real run, accepting
+    one and two segment references built 13 fake functionalities out of stray labels
+    like `T1` or `E1.M2`. Those rules go to « Hors numérotation », keeping their
+    reference visible.
     """
     text = str(source_ref or "").strip()
     if not text or not _SOURCE_REF_RE.match(text):
         return None
-    segments = text.split(".")
-    functionality = segments[0].upper()
-    if len(segments) == 1:
-        return functionality, functionality, ""
-    use_case = ".".join(segment.upper() for segment in segments[:-1])
-    return functionality, use_case, segments[-1].upper()
+    segments = [segment.upper() for segment in text.split(".")]
+
+    use_case_end = next(
+        (index for index in range(len(segments) - 1, 0, -1) if segments[index].startswith("CU")),
+        None,
+    )
+    if use_case_end is not None:
+        return segments[0], ".".join(segments[: use_case_end + 1]), ".".join(segments[use_case_end + 1 :])
+
+    if len(segments) >= _MIN_PLACEABLE_SEGMENTS:
+        return segments[0], ".".join(segments[:-1]), segments[-1]
+    return None
 
 
 def tests_by_rule(tests: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -246,10 +276,12 @@ def build_deliverable(
             "rules": rules_total,
             "covered": covered_total,
             "uncovered": rules_total - covered_total,
-            "coverage_percent": round(covered_total / rules_total * 100) if rules_total else 0,
+            "coverage_percent": coverage_percent(covered_total, rules_total),
             "tests": len(tests),
             "tests_per_rule": round(len(tests) / rules_total, 1) if rules_total else 0.0,
-            "traced": sum(1 for r in rules if isinstance(r, dict) and r.get("source_ref")),
+            # Only references that actually place a rule in the tree count as traced,
+            # otherwise the header contradicts the size of « Hors numérotation »
+            "traced": sum(1 for r in rules if isinstance(r, dict) and parse_source_ref(r.get("source_ref"))),
             "reviewed": sum(1 for r in rules if isinstance(r, dict) and r.get("reviewed")),
             "orphans": len(orphans),
         },

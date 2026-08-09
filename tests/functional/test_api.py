@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,6 +15,8 @@ from tgi.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from starlette.types import Receive, Scope, Send
 
 
 @pytest.fixture(autouse=True)
@@ -583,3 +585,56 @@ async def test_export_contains_the_reviewable_workbook(client: AsyncClient) -> N
     assert sheet.freeze_panes == "A2"
     assert sheet.auto_filter.ref is not None
     assert [c.value for c in sheet[1]][:3] == ["Cas d'utilisation", "Référence règle", "Règle"]
+
+
+async def test_fragments_are_compressed(client: AsyncClient) -> None:
+    """The rules tree is 1.53 MB for 850 rules and gzips 22 times smaller."""
+    project_id = await _project_with_rules(client)
+
+    plain = await client.get(f"/projects/{project_id}/partials/rules", headers={"Accept-Encoding": "identity"})
+    zipped = await client.get(f"/projects/{project_id}/partials/rules", headers={"Accept-Encoding": "gzip"})
+    assert plain.status_code == zipped.status_code == 200
+    assert zipped.headers.get("content-encoding") == "gzip"
+    # httpx decodes transparently, so compare the wire length the server reported
+    assert int(zipped.headers["content-length"]) < len(plain.content)
+    assert "rules-panel" in zipped.text  # and it still decodes to the same page
+
+
+async def test_the_event_stream_is_never_compressed() -> None:
+    """gzip buffers a stream, so live progress would arrive in bursts.
+
+    Driven at the ASGI layer: opening a real SSE connection would never close.
+    """
+    from tgi.tgi import ConditionalGZipMiddleware
+
+    seen: list[str] = []
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"x" * 5000})
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def run(path: str) -> list[tuple[bytes, bytes]]:
+        headers: list[tuple[bytes, bytes]] = []
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                headers.extend(message["headers"])
+
+        scope: Scope = {
+            "type": "http",
+            "path": path,
+            "method": "GET",
+            "headers": [(b"accept-encoding", b"gzip")],
+        }
+        await ConditionalGZipMiddleware(app)(scope, receive, send)
+        return headers
+
+    stream_headers = await run("/projects/abc/stream")
+    assert not any(name == b"content-encoding" for name, _ in stream_headers)
+
+    fragment_headers = await run("/projects/abc/partials/rules")
+    assert (b"content-encoding", b"gzip") in fragment_headers

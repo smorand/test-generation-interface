@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiofiles
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -34,6 +35,8 @@ from tgi.workbook import build_workbook
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,27 @@ def _filter_rules(
     return selected
 
 
+class ConditionalGZipMiddleware:
+    """Compress responses, except the SSE stream.
+
+    Measured on a real project: the rules tree is 1.53 MB for 850 rules and gzips to
+    69 kB, a factor of 22, because the markup repeats. Compressing the event stream
+    instead buffers it, so live progress would arrive in bursts: that path is excluded.
+    """
+
+    __slots__ = ("_app", "_gzip")
+
+    def __init__(self, app: ASGIApp, minimum_size: int = 1024) -> None:
+        self._app = app
+        self._gzip = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and str(scope.get("path", "")).endswith("/stream"):
+            await self._app(scope, receive, send)
+            return
+        await self._gzip(scope, receive, send)
+
+
 def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915
     """Create and configure the FastAPI application with OTel instrumentation."""
     app_settings = app_settings or settings
@@ -195,6 +219,8 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         provider.shutdown()
 
     application = FastAPI(title="Test Generation Interface", lifespan=lifespan)
+    application.add_middleware(ConditionalGZipMiddleware)
+
     application.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     # -----------------------------------------------------------------------

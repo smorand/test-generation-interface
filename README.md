@@ -159,10 +159,15 @@ F01 Synchronisation des relations        24 règles · 22 couvertes (92 %) · 47
        TEST-014  Suppression d'un GAC puis contrôle   [couvre aussi RM02]
 ```
 
-- The hierarchy comes from `source_ref` (`F01.EU01.CU02.RM01` splits into functionality,
-  use case, rule). Malformed or absent references land in **Hors numérotation**, grouped
-  by bloc so they stay findable. That group is a real chapter, not a bin: it holds 1 to
-  30 % of the rules depending on the model.
+- The hierarchy comes from `source_ref`. The use case is the prefix up to the last `CU`
+  segment, so `F01.EU01.CU02.RM01` gives functionality `F01`, use case `F01.EU01.CU02`,
+  rule `RM01`, and `F03.EU01.CU08`, which names a use case and no rule, is not split into
+  a fake `CU08` rule.
+- A reference naming no use case is refused rather than guessed: on a real run, accepting
+  stray labels like `T1` or `E1.M2` built **13 fake functionalities**; refusing them left
+  the 4 the specification actually has. Those rules go to **Hors numérotation**, grouped
+  by bloc, keeping their reference visible. That group is a real chapter, not a bin: it
+  held 404 of 850 rules on the reference run.
 - The bloc is provenance only. It never becomes a level of the tree.
 - A rule identity is the pair (bloc, rule id), because ids restart at `R1` in every bloc.
   `R1` of `bloc-3` is never confused with `R1` of `bloc-4`.
@@ -173,10 +178,13 @@ F01 Synchronisation des relations        24 règles · 22 couvertes (92 %) · 47
 - A rule with no test is flagged at every level of aggregation.
 
 Tests are fetched when a rule is expanded (`GET /projects/{id}/blocs/{b}/rules/{r}/tests`),
-so a 600 rule page stays light. Filters run on the server: text, uncovered only,
+so the tree carries counters only. It still weighs about 1.8 kB per rule, 1.53 MB for the
+850 rules of a real run, which is why responses are gzipped: 69 kB on the wire, a factor
+of 22, since the markup repeats. The event stream is excluded, gzip would buffer it.
+Filters run on the server: text, uncovered only,
 unreviewed only. Description, reference and the reviewed flag stay editable in place.
 
-The **Tests** tab remains the search and single test editing view, with server side
+The **Recherche** tab remains the search and single test editing view, with server side
 filtering and pagination (`q`, `rule`, `bloc`, `status`, `page`, `per_page`). This is not
 a preference: one test card renders about 4.8 kB of HTML, so 1938 tests would send more
 than 9 MB to the browser.
