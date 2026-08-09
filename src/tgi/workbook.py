@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 
 _HEADER_FILL = PatternFill("solid", start_color="FF0F62FE")
 _HEADER_FONT = Font(color="FFFFFFFF", bold=True)
+# A very light grey: it has to survive printing and not fight with the status colours
+_BAND_FILL = PatternFill("solid", start_color="FFF2F4F8")
+# Zero based index of the "ID test" column, the block a reviewer follows across step rows
+_TEST_ID_COLUMN = 4
 _WRAP = Alignment(vertical="top", wrap_text=True)
 _TOP = Alignment(vertical="top")
 
@@ -101,14 +105,28 @@ def _write_header(sheet: Worksheet, columns: list[tuple[str, int]]) -> None:
     sheet.freeze_panes = "A2"
 
 
-def _finish_sheet(sheet: Worksheet, columns: list[tuple[str, int]]) -> None:
-    """Autofilter over the written range, and wrapped text on the long columns."""
+def _finish_sheet(sheet: Worksheet, columns: list[tuple[str, int]], band_on: int | None = None) -> None:
+    """Autofilter, wrapped text on the long columns, and one shade per block.
+
+    A reviewer reads 7000 rows of steps, and an even and odd banding is useless there: what
+    they follow is a test, which spans several rows. So the shade changes when the value of
+    one column changes, which draws each test, or each requirement, as a block.
+    """
     last_row = max(sheet.max_row, 1)
     sheet.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{last_row}"
     wrapped = {index for index, (_, width) in enumerate(columns, start=1) if width >= _WRAPPED_COLUMN_WIDTH}
+    previous: object = None
+    shaded = False
     for row in sheet.iter_rows(min_row=2, max_row=last_row):
+        if band_on is not None:
+            current = row[band_on].value
+            if current != previous:
+                shaded = not shaded
+                previous = current
         for cell in row:
             cell.alignment = _WRAP if cell.column in wrapped else _TOP
+            if shaded:
+                cell.fill = _BAND_FILL
 
 
 def _test_rows(scenario: Any, tests: list[dict[str, Any]]) -> list[list[Any]]:
@@ -223,7 +241,8 @@ def build_workbook(state: dict[str, Any]) -> bytes:
                 ", ".join(str(test["id"]) for test in row["tests"]),
             ]
         )
-    _finish_sheet(trace, _TRACE_COLUMNS)
+    # Banded per use case: the matrix is read use case by use case
+    _finish_sheet(trace, _TRACE_COLUMNS, band_on=2)
 
     # Then one sheet per functionality, one row per step
     chapters = list(tree["chapters"])
@@ -236,7 +255,8 @@ def build_workbook(state: dict[str, Any]) -> bytes:
             for scenario in group.scenarios:
                 for line in _test_rows(scenario, tests_by_scenario.get(scenario.id, [])):
                     sheet.append(line)
-        _finish_sheet(sheet, _TEST_COLUMNS)
+        # Banded per test, since a test spans one row per step
+        _finish_sheet(sheet, _TEST_COLUMNS, band_on=_TEST_ID_COLUMN)
 
     discards = [d for d in state.get("discards") or [] if isinstance(d, dict)]
     if discards:
