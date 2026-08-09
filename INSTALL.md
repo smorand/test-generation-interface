@@ -140,6 +140,13 @@ d'entreprise et les certificats.
 uv run tgi
 ```
 
+Pour simplifier, un raccourci est fourni à la racine du projet:
+
+- **Windows**: double-cliquez sur `tgi.bat` (ou lancez `.\tgi.bat` dans PowerShell).
+- **macOS ou Linux**: `./tgi.sh`
+
+Les deux font la même chose que `uv run tgi`.
+
 Laissez cette fenêtre ouverte, c'est le serveur. Ouvrez votre navigateur sur:
 
 **http://localhost:8080**
