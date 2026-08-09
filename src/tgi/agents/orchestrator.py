@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import re
-import statistics
 from dataclasses import asdict, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +17,7 @@ from tgi.agents.scenario_generator import ScenarioGeneratorAgent
 from tgi.config import settings
 from tgi.coverage_report import coverage_summary
 from tgi.grammar import Requirement, containers, extract_requirements, infer_grammar, section_of
+from tgi.locks import lock_for
 from tgi.services.llm import LLMJSONError
 from tgi.testset import merge_tests, normalize_label
 
@@ -36,11 +36,11 @@ def _test_offset(scenario_id: str) -> int:
     digits = "".join(ch for ch in scenario_id if ch.isdigit())
     return (int(digits) if digits else 1) * 100
 
+
 # SSE event queues per project: project_id -> asyncio.Queue
 _EVENT_QUEUES: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 
 # Locks per project to prevent concurrent pipeline runs
-_PROJECT_LOCKS: dict[str, asyncio.Lock] = {}
 
 # Projects whose event queue already overflowed, so the warning is logged once
 _SATURATED_QUEUES: set[str] = set()
@@ -53,9 +53,8 @@ def get_event_queue(project_id: str) -> asyncio.Queue[dict[str, Any]]:
 
 
 def get_project_lock(project_id: str) -> asyncio.Lock:
-    if project_id not in _PROJECT_LOCKS:
-        _PROJECT_LOCKS[project_id] = asyncio.Lock()
-    return _PROJECT_LOCKS[project_id]
+    """Serialise the read, modify, write cycles of one project."""
+    return lock_for(f"project:{project_id}")
 
 
 # Heading boundaries: markdown levels produced by the docx parser, or an
@@ -268,9 +267,7 @@ class Orchestrator:
             await self._state.update_scenario(
                 project_id, scenario_id, {"status": "needs_human", "error": str(exc)[:300]}
             )
-            await self._emit(
-                project_id, "scenario_status", {"scenario_id": scenario_id, "status": "needs_human"}
-            )
+            await self._emit(project_id, "scenario_status", {"scenario_id": scenario_id, "status": "needs_human"})
             return
 
         tests = merge_tests([], tests, similarity=settings.test_similarity_threshold).tests
@@ -339,14 +336,105 @@ class Orchestrator:
 
 
 _STOPWORDS = frozenset(
-    """
-    le la les un une des du de au aux et ou mais donc or ni car que qui quoi dont ou
-    pour par sur sous dans avec sans vers chez entre est sont ete etre avoir a ai as
-    ont fait quel quelle quels quelles combien pourquoi comment est-ce ce cet cette ces
-    il elle ils elles on nous vous je tu me te se leur leurs son sa ses mon ma mes
-    plus moins tres tout tous toute toutes autre autres meme aussi alors si non oui
-    test tests scenario scenarios exigence exigences regle regles
-    """.split()
+    [
+        "le",
+        "la",
+        "les",
+        "un",
+        "une",
+        "des",
+        "du",
+        "de",
+        "au",
+        "aux",
+        "et",
+        "ou",
+        "mais",
+        "donc",
+        "or",
+        "ni",
+        "car",
+        "que",
+        "qui",
+        "quoi",
+        "dont",
+        "ou",
+        "pour",
+        "par",
+        "sur",
+        "sous",
+        "dans",
+        "avec",
+        "sans",
+        "vers",
+        "chez",
+        "entre",
+        "est",
+        "sont",
+        "ete",
+        "etre",
+        "avoir",
+        "a",
+        "ai",
+        "as",
+        "ont",
+        "fait",
+        "quel",
+        "quelle",
+        "quels",
+        "quelles",
+        "combien",
+        "pourquoi",
+        "comment",
+        "est-ce",
+        "ce",
+        "cet",
+        "cette",
+        "ces",
+        "il",
+        "elle",
+        "ils",
+        "elles",
+        "on",
+        "nous",
+        "vous",
+        "je",
+        "tu",
+        "me",
+        "te",
+        "se",
+        "leur",
+        "leurs",
+        "son",
+        "sa",
+        "ses",
+        "mon",
+        "ma",
+        "mes",
+        "plus",
+        "moins",
+        "tres",
+        "tout",
+        "tous",
+        "toute",
+        "toutes",
+        "autre",
+        "autres",
+        "meme",
+        "aussi",
+        "alors",
+        "si",
+        "non",
+        "oui",
+        "test",
+        "tests",
+        "scenario",
+        "scenarios",
+        "exigence",
+        "exigences",
+        "regle",
+        "regles",
+    ]
 )
 # Enough context to answer without shipping the whole project
 _CHAT_MAX_SCENARIOS = 4

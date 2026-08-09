@@ -10,6 +10,7 @@ are known, so the gap is arithmetic. The model is only asked to close a gap it i
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,11 +80,9 @@ class CoverageAgent:
             f"- {requirement.ref} [{requirement.kind}] {requirement.statement[:_MAX_STATEMENT_CHARS]}"
             for requirement in batch
         )
-        import json as _json
-
         user_content = (
             f"Scénario: {scenario.get('title', '')} ({scenario.get('container') or 'non rattaché'})\n\n"
-            f"Tests déjà écrits:\n{_json.dumps([_compact_test(t) for t in tests], ensure_ascii=False, indent=1)}\n\n"
+            f"Tests déjà écrits:\n{json.dumps([_compact_test(t) for t in tests], ensure_ascii=False, indent=1)}\n\n"
             f"Exigences non couvertes:\n{gap_block}\n\n"
             "Complète ou ajoute le minimum de tests. JSON uniquement."
         )
@@ -107,7 +106,7 @@ class CoverageAgent:
             steps = _clean_steps(raw.get("steps"))
             if target is None or not steps:
                 continue
-            refs = [ref for ref in keep_known_references(raw.get("requirement_refs"), document)]
+            refs = keep_known_references(raw.get("requirement_refs"), document)
             merged = dict(target)
             merged.update(
                 {

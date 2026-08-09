@@ -74,7 +74,9 @@ def test_a_requirement_nobody_claims_is_reported_missing() -> None:
 def test_an_accepted_discard_leaves_the_corpus() -> None:
     """A human took it out of the truth, so it stops counting against coverage."""
     state = _state(
-        discards=[{"what": "hors périmètre", "reason": "hors_perimetre", "refs": ["F1.EU1.CU1.EM01"], "decision": "accepted"}]
+        discards=[
+            {"what": "hors périmètre", "reason": "hors_perimetre", "refs": ["F1.EU1.CU1.EM01"], "decision": "accepted"}
+        ]
     )
     state["scenarios"][0]["untestable"] = []
     summary = coverage_summary(state)

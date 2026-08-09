@@ -1,132 +1,109 @@
-{% set p = pagination %}
-<div>
+<div id="tests-panel">
   <div class="flex flex-wrap items-center gap-3 mb-3 text-sm">
     <span class="text-gray-300"><strong>{{ tests_total }}</strong> tests</span>
-    <span class="text-gray-500">pour {{ rules_count }} règles</span>
-    {% if rules_count %}<span class="text-gray-500">{{ '%.1f'|format(tests_total / rules_count) }} par règle</span>{% endif %}
-    {% if p.total != tests_total %}<span class="text-blue-400">{{ p.total }} correspondent au filtre</span>{% endif %}
+    {% if matching_total != tests_total %}
+      <span class="text-gray-500">{{ matching_total }} correspondent au filtre</span>
+    {% endif %}
 
     <form class="ml-auto flex items-center gap-2"
-      hx-get="/projects/{{ project_id }}/partials/tests"
-      hx-target="#tests-container" hx-swap="innerHTML"
-      hx-trigger="submit, change from:select, keyup changed delay:400ms from:input[name=q]">
-      <select name="rule" class="input text-xs" style="width:110px">
-        <option value="">toutes règles</option>
-        {% for rid in rule_options %}<option value="{{ rid }}" {% if rid == rule %}selected{% endif %}>{{ rid }}</option>{% endfor %}
+      hx-get="/projects/{{ project_id }}/partials/tests" hx-target="#tests-container"
+      hx-swap="innerHTML" hx-trigger="submit, change delay:400ms from:input, change from:select">
+      <input type="hidden" name="per_page" value="{{ pagination.per_page }}" />
+      <select class="input text-xs" name="scenario">
+        <option value="">tout scénario</option>
+        {% for sid, title in scenario_options %}
+          <option value="{{ sid }}" {% if scenario == sid %}selected{% endif %}>{{ sid }} · {{ title }}</option>
+        {% endfor %}
       </select>
-      <select name="bloc" class="input text-xs" style="width:110px">
-        <option value="">tous blocs</option>
-        {% for bid in bloc_options %}<option value="{{ bid }}" {% if bid == bloc %}selected{% endif %}>{{ bid }}</option>{% endfor %}
+      <select class="input text-xs" name="requirement">
+        <option value="">toute exigence</option>
+        {% for ref in requirement_options %}
+          <option value="{{ ref }}" {% if requirement == ref %}selected{% endif %}>{{ ref }}</option>
+        {% endfor %}
       </select>
-      <select name="status" class="input text-xs" style="width:105px">
-        <option value="">tous statuts</option>
-        {% for st in ['draft', 'validated', 'rejected'] %}<option value="{{ st }}" {% if st == status %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      <select class="input text-xs" name="status">
+        <option value="">tout statut</option>
+        {% for value in ['draft', 'validated', 'rejected'] %}
+          <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
       </select>
-      <input type="text" name="q" class="input text-xs" style="width:200px"
-        placeholder="Filtrer: texte, TEST-012…" value="{{ q or '' }}" />
-      <input type="hidden" name="per_page" value="{{ p.per_page }}" />
+      <input class="input text-xs" style="width:170px" type="search" name="q" value="{{ q }}" placeholder="filtrer…" />
     </form>
   </div>
 
-  {% if tests %}
-  <div class="space-y-4">
   {% for test in tests %}
-  {% set covered = test.business_rule | rule_ids %}
-  <div class="card test-card" id="test-{{ test.id }}"
-    x-data='testEditor("{{ project_id }}", {{ test | tojson }})'>
-    <div class="flex items-start justify-between mb-2">
-      <div class="flex items-center gap-2">
-        <span class="font-mono text-xs text-blue-400">{{ test.id }}</span>
-        <span class="text-xs text-gray-500">{{ test.bloc_id }}</span>
-        <span class="badge {% if test.status == 'validated' %}badge-green{% elif test.status == 'rejected' %}badge-red{% else %}badge-gray{% endif %}">
-          {{ test.status }}
-        </span>
+    <div class="card mb-3" x-data='testEditor("{{ project_id }}", {{ test|tojson }})'>
+      <div x-show="!editing">
+        <div class="flex items-baseline gap-2 mb-1">
+          <span class="font-mono text-xs text-gray-500 shrink-0">{{ test.id }}</span>
+          <span class="text-gray-100 flex-1">{{ test.name }}</span>
+          <span class="badge badge-gray shrink-0 text-xs">{{ test.status }}</span>
+          <button class="btn-secondary text-xs shrink-0" @click="editing = true">Éditer</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 mb-2">
+          {% if test.scenario_id %}<span class="font-mono">{{ test.scenario_id }}</span>{% endif %}
+          {% for ref in test.requirement_refs %}
+            <span class="font-mono text-blue-400">{{ ref }}</span>
+          {% endfor %}
+        </div>
+        {% if test.description %}<div class="text-sm text-gray-400 mb-2">{{ test.description }}</div>{% endif %}
+        <ol class="text-xs text-gray-400 ml-4 list-decimal">
+          {% for step in test.steps %}
+            <li>{{ step.description }}{% if step.expected_result %}
+              <span class="text-gray-500">→ {{ step.expected_result }}</span>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        {% if test.data_rows %}
+          <table class="text-xs mt-2 md-table">
+            <thead><tr>{% for key in test.data_rows[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% for row in test.data_rows %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
       </div>
-      <div class="flex gap-2">
-        <button class="btn-secondary text-xs" @click="editing = !editing" x-text="editing ? 'Annuler' : '✏ Éditer'"></button>
-        <button class="btn-secondary text-xs" x-show="editing" @click="saveTest()">💾 Sauvegarder</button>
-      </div>
-    </div>
 
-    <!-- View mode -->
-    <div x-show="!editing">
-      <div class="text-sm font-semibold mb-1" x-text="test.name"></div>
-      <div class="flex flex-wrap items-center gap-1 mb-2">
-        <span class="text-xs text-gray-500 mr-1">couvre</span>
-        {% for rid in covered %}<span class="badge badge-gray font-mono">{{ rid }}</span>{% endfor %}
-        {% if not covered %}<span class="text-xs text-orange-400">aucune règle citée</span>{% endif %}
-      </div>
-      <div class="text-xs text-gray-300 mb-3" x-text="test.description"></div>
-      <ol class="space-y-2">
-        <template x-for="step in test.steps" :key="step.order">
-          <li class="flex gap-3 text-xs">
-            <span class="text-blue-400 font-mono w-5 shrink-0" x-text="step.order"></span>
-            <div class="flex-1">
-              <div class="text-gray-200" x-text="step.description"></div>
-              <div class="text-green-400 mt-0.5">→ <span x-text="step.expected_result"></span></div>
-            </div>
-          </li>
-        </template>
-      </ol>
-    </div>
-
-    <!-- Edit mode -->
-    <div x-show="editing" class="space-y-3">
-      <div>
-        <label class="label">Nom</label>
-        <input type="text" class="input w-full text-sm" x-model="draft.name" />
-      </div>
-      <div>
-        <label class="label">Règles couvertes</label>
-        <input type="text" class="input w-full text-sm" x-model="draft.business_rule" />
-      </div>
-      <div>
-        <label class="label">Description</label>
-        <textarea class="input w-full text-sm h-16 resize-none" x-model="draft.description"></textarea>
-      </div>
-      <div>
-        <label class="label">Statut</label>
-        <select class="input text-sm" x-model="draft.status">
+      <div x-show="editing" x-cloak>
+        <input type="text" class="input w-full mb-2" x-model="draft.name" placeholder="Nom du test" />
+        <textarea class="input w-full mb-2 text-sm" rows="2" x-model="draft.description" placeholder="Description"></textarea>
+        <select class="input mb-2 text-sm" x-model="draft.status">
           <option value="draft">draft</option>
           <option value="validated">validated</option>
           <option value="rejected">rejected</option>
         </select>
-      </div>
-      <div>
-        <label class="label">Étapes</label>
-        <template x-for="(step, idx) in draft.steps" :key="idx">
-          <div class="flex gap-2 mb-2">
-            <span class="text-gray-500 text-xs w-5 pt-2" x-text="step.order"></span>
-            <div class="flex-1 space-y-1">
-              <input type="text" class="input w-full text-xs" x-model="step.description" placeholder="Action" />
-              <input type="text" class="input w-full text-xs" x-model="step.expected_result" placeholder="Résultat attendu" />
-            </div>
+        <template x-for="(step, index) in draft.steps" :key="index">
+          <div class="flex gap-2 mb-1">
+            <span class="text-xs text-gray-600 pt-2" x-text="index + 1"></span>
+            <input type="text" class="input flex-1 text-xs" x-model="step.description" placeholder="Action" />
+            <input type="text" class="input flex-1 text-xs" x-model="step.expected_result" placeholder="Résultat attendu" />
           </div>
         </template>
-        <button class="btn-secondary text-xs mt-1" @click="addStep()">+ Étape</button>
+        <div class="flex gap-2 mt-2">
+          <button class="btn-secondary text-xs" @click="addStep()">+ Étape</button>
+          <button class="btn-primary text-xs" @click="save()">Enregistrer</button>
+          <button class="btn-secondary text-xs" @click="cancel()">Annuler</button>
+        </div>
       </div>
+
+      <div class="text-xs text-gray-600 mt-3">Modifié: {{ test.updated_at[:10] if test.updated_at else '—' }}</div>
     </div>
-
-    <div class="text-xs text-gray-600 mt-3">Créé: {{ test.created_at[:10] }} &bull; Modifié: {{ test.updated_at[:10] }}</div>
-  </div>
   {% endfor %}
-  </div>
 
-  {% if p.pages > 1 %}
-  {% set base = '/projects/' ~ project_id ~ '/partials/tests?q=' ~ (q or '') ~ '&rule=' ~ (rule or '') ~ '&bloc=' ~ (bloc or '') ~ '&status=' ~ (status or '') ~ '&per_page=' ~ p.per_page %}
-  <div class="flex items-center justify-center gap-3 mt-4 text-xs">
-    <button class="btn-secondary" {% if not p.has_previous %}disabled{% endif %}
-      hx-get="{{ base }}&page={{ [p.page - 1, 1] | max }}" hx-target="#tests-container" hx-swap="innerHTML">‹ précédent</button>
-    <span class="text-gray-400">{{ p.start }} à {{ p.end }} sur {{ p.total }} &bull; page {{ p.page }}/{{ p.pages }}</span>
-    <button class="btn-secondary" {% if not p.has_next %}disabled{% endif %}
-      hx-get="{{ base }}&page={{ [p.page + 1, p.pages] | min }}" hx-target="#tests-container" hx-swap="innerHTML">suivant ›</button>
-  </div>
+  {% set base = '/projects/' ~ project_id ~ '/partials/tests?q=' ~ (q or '') ~ '&requirement=' ~ (requirement or '') ~ '&scenario=' ~ (scenario or '') ~ '&status=' ~ (status or '') ~ '&per_page=' ~ pagination.per_page %}
+  {% if pagination.pages > 1 %}
+    <div class="flex items-center justify-center gap-3 mt-4 text-xs">
+      <button class="btn-secondary" {% if pagination.page <= 1 %}disabled{% endif %}
+        hx-get="{{ base }}&page={{ [pagination.page - 1, 1] | max }}" hx-target="#tests-container" hx-swap="innerHTML">‹ précédent</button>
+      <span class="text-gray-400">{{ pagination.start }} à {{ pagination.end }} sur {{ pagination.total }} &bull; page {{ pagination.page }}/{{ pagination.pages }}</span>
+      <button class="btn-secondary" {% if pagination.page >= pagination.pages %}disabled{% endif %}
+        hx-get="{{ base }}&page={{ [pagination.page + 1, pagination.pages] | min }}" hx-target="#tests-container" hx-swap="innerHTML">suivant ›</button>
+    </div>
   {% endif %}
 
-  {% else %}
-  <div class="text-gray-500 text-sm">
-    {% if q or rule or bloc or status %}Aucun test ne correspond au filtre.
-    {% else %}Aucun test généré. Lancez la génération pour commencer.{% endif %}
-  </div>
+  {% if not tests %}
+    <div class="text-gray-500 text-sm">
+      {% if q or requirement or scenario or status %}Aucun test ne correspond au filtre.
+      {% else %}Aucun test généré pour le moment.{% endif %}
+    </div>
   {% endif %}
 </div>

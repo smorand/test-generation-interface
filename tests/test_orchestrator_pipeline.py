@@ -1,75 +1,76 @@
-"""Tests for the orchestrator pipeline flow (fake LLM, real state + git)."""
+"""Tests for the pipeline flow: distil, validate, generate per scenario, close gaps.
+
+The LLM is faked, the state and git are real, so the invariants under test are the ones
+that broke in production: no requirement lost, no scenario silently stuck, coverage counted
+rather than claimed.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tgi.agents.orchestrator import Orchestrator, get_event_queue, get_project_lock
+from tgi.agents.orchestrator import Orchestrator, get_event_queue
 from tgi.services.git_service import GitService
 from tgi.services.state_manager import StateManager
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+DOC = """
+### F01.EU01.CU01 Visualiser son portefeuille
+F01.EU01.CU01.RM01 : Le système affiche les relations.
+F01.EU01.CU01.RM02 : Le système masque les inactives.
+
+### F01.EU01.CU02 Supprimer une relation
+F01.EU01.CU02.RM01 : La suppression demande confirmation.
+F01.EU01.CU02.RM02 : Une suppression est journalisée.
+"""
+
 
 class _ScriptedLLM:
-    """LLM stub returning role-specific canned JSON, keyed by system prompt content."""
+    """Returns a canned answer per agent, recognised by its purpose."""
 
-    def __init__(self, judge_status: str = "ok") -> None:
-        self._judge_status = judge_status
+    def __init__(self, **answers: Any) -> None:
+        self.answers = {
+            "distiller": {
+                "context": "Gestion de portefeuille.",
+                "scenarios": [
+                    {
+                        "title": "Voir son portefeuille",
+                        "container": "F01.EU01.CU01",
+                        "requirement_refs": ["F01.EU01.CU01.RM01", "F01.EU01.CU01.RM02"],
+                        "kind": "nominal",
+                    }
+                ],
+                "discards": [{"what": "cartouche", "reason": "sans_valeur_test", "refs": []}],
+            },
+            "scenario_generator": {
+                "tests": [
+                    {
+                        "name": "cas nominal",
+                        "description": "d",
+                        "requirement_refs": ["F01.EU01.CU01.RM01"],
+                        "steps": [{"order": 1, "description": "agir", "expected_result": "vu"}],
+                    }
+                ]
+            },
+            "coverage": {"updated": [], "added": [], "untestable": []},
+        }
+        self.answers.update(answers)
+        self.calls: list[str] = []
 
     async def chat(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> str:
-        return "chat reponse"
+        return "reponse"
 
     async def chat_json(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> Any:
-        lower = system_prompt.lower()
-        if "règle" in lower or "regle" in lower or "extrais" in user_content.lower():
-            return {"rules": [{"id": "R1", "description": "regle"}]}
-        return {}
-
-
-class _StubAgent:
-    """Generic stub whose single async method returns a canned value."""
-
-    def __init__(self, method: str, result: Any) -> None:
-        self._method = method
-        self._result = result
-        self.calls = 0
-
-    def __getattr__(self, name: str) -> Any:
-        if name == self._method:
-
-            async def _call(**kwargs: Any) -> Any:
-                self.calls += 1
-                if isinstance(self._result, Exception):
-                    raise self._result
-                return self._result
-
-            return _call
-        raise AttributeError(name)
-
-
-class _SequenceAgent:
-    """Stub returning a different canned value on each successive call."""
-
-    def __init__(self, method: str, results: list[Any]) -> None:
-        self._method = method
-        self._results = results
-        self.calls = 0
-
-    def __getattr__(self, name: str) -> Any:
-        if name == self._method:
-
-            async def _call(**kwargs: Any) -> Any:
-                index = min(self.calls, len(self._results) - 1)
-                self.calls += 1
-                result = self._results[index]
-                if isinstance(result, Exception):
-                    raise result
-                return result
-
-            return _call
-        raise AttributeError(name)
+        purpose = str(kwargs.get("purpose", ""))
+        self.calls.append(purpose)
+        answer = self.answers.get(purpose, {})
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
 @pytest.fixture
@@ -77,350 +78,257 @@ def orchestrator(projects_dir: Path) -> Orchestrator:
     return Orchestrator(StateManager(), GitService(), _ScriptedLLM())  # type: ignore[arg-type]
 
 
-async def _new_project(orchestrator: Orchestrator) -> str:
-    pid = await orchestrator._state.create(
-        doc_path="/tmp/d.txt",
-        doc_text="# A\nregle a\n\n# B\nregle b",
-        model_generator="gen",
-        model_judge="judge",
+async def _new_project(orchestrator: Orchestrator, doc: str = DOC) -> str:
+    project_id = await orchestrator._state.create(
+        doc_path="/tmp/doc.md", doc_text=doc, model_generator="m", model_judge="m"
     )
-    await orchestrator._git.init(pid)
-    return pid
+    await orchestrator._git.init(project_id)
+    return project_id
 
 
-async def test_split_and_propose(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    blocs = await orchestrator.split_and_propose(pid)
-    assert len(blocs) >= 1
-    state = await orchestrator._state.load(pid)
-    assert state["blocs"] == blocs
+# ---------------------------------------------------------------------------
+# Phase one
+# ---------------------------------------------------------------------------
 
 
-async def test_validate_split_emits_event(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-    await orchestrator.validate_split(pid)
-    queue = get_event_queue(pid)
-    events = []
+async def test_distil_writes_context_scenarios_requirements_and_discards(orchestrator: Orchestrator) -> None:
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+
+    state = await orchestrator._state.load(project_id)
+    assert state["context"] == "Gestion de portefeuille."
+    assert len(state["requirements"]) == 4  # extracted from the numbering, not from the model
+    assert state["containers"]["F01.EU01.CU01"] == "Visualiser son portefeuille"
+    assert state["axes"]["F"]["leaf_depth"] == 3
+    assert state["discards"][0]["decision"] == "proposed"
+    assert state["distilled_at"]
+
+
+async def test_distil_loses_no_requirement(orchestrator: Orchestrator) -> None:
+    """The model cited one use case out of two, the other must still be carried."""
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+
+    state = await orchestrator._state.load(project_id)
+    carried = {ref for scenario in state["scenarios"] for ref in scenario["requirement_refs"]}
+    assert carried == {r["ref"] for r in state["requirements"]}
+    derived = [s for s in state["scenarios"] if s.get("derived")]
+    assert [s["container"] for s in derived] == ["F01.EU01.CU02"]
+
+
+async def test_distil_commits_and_emits(orchestrator: Orchestrator) -> None:
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+
+    log = await orchestrator._git.log(project_id)
+    assert any("distil" in entry["message"] for entry in log)
+    queue = get_event_queue(project_id)
+    kinds = []
     while not queue.empty():
-        events.append(queue.get_nowait())
-    assert any(e["type"] == "split_validated" for e in events)
+        kinds.append(queue.get_nowait()["type"])
+    assert "distil_start" in kinds and "distil_done" in kinds
 
 
-async def test_run_pipeline_full(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
+async def test_validating_the_map_is_recorded(orchestrator: Orchestrator) -> None:
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    assert (await orchestrator._state.load(project_id))["validated"] is False
 
-    test_dict = {
-        "id": "TEST-001",
-        "bloc_id": "bloc-1",
-        "business_rule": "br",
-        "name": "n",
-        "description": "d",
-        "steps": [{"order": 1, "description": "s", "expected_result": "e"}],
-        "status": "draft",
-        "created_at": "2025-01-01T00:00:00Z",
-        "updated_at": "2025-01-01T00:00:00Z",
-    }
-    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
-    orchestrator._generator = _StubAgent("generate", [test_dict])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
-        "evaluate", {"status": "ok", "score": 100, "gaps": [], "uncovered_rules": [], "redundancies": []}
-    )
-
-    await orchestrator.run_pipeline(pid)
-
-    state = await orchestrator._state.load(pid)
-    assert all(b["status"] == "done" for b in state["blocs"])
-    assert all(b["score"] == 100 for b in state["blocs"])
-    assert all(b["judge_passes"] == 1 for b in state["blocs"])
+    await orchestrator.validate_map(project_id)
+    assert (await orchestrator._state.load(project_id))["validated"] is True
 
 
-async def test_run_pipeline_needs_human_when_gaps_persist(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-
-    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
-    orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
-        "evaluate",
-        {"status": "incomplete", "score": 50, "gaps": ["missing"], "uncovered_rules": ["R1"], "redundancies": []},
-    )
-
-    await orchestrator.run_pipeline(pid)
-    state = await orchestrator._state.load(pid)
-    assert all(b["status"] == "needs_human" for b in state["blocs"])
-    assert all(b["score"] == 50 for b in state["blocs"])
-    # One entry per judge pass
-    assert all(len(b["judge_history"]) == 3 for b in state["blocs"])
+# ---------------------------------------------------------------------------
+# Phases two and three
+# ---------------------------------------------------------------------------
 
 
-async def test_bloc_without_rules_is_done_without_generating(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
+async def test_run_generates_tests_and_counts_coverage(orchestrator: Orchestrator) -> None:
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
-    orchestrator._extractor = _StubAgent("extract", [])  # type: ignore[assignment]
-    generator = _StubAgent("generate", [])
-    judge = _StubAgent("evaluate", {"status": "ok", "score": 100})
-    orchestrator._generator = generator  # type: ignore[assignment]
-    orchestrator._judge = judge  # type: ignore[assignment]
-
-    await orchestrator.run_pipeline(pid)
-
-    state = await orchestrator._state.load(pid)
-    bloc = state["blocs"][0]
-    assert bloc["status"] == "done"
-    # No rule to cover: no score, and neither generator nor judge was called.
-    assert bloc["score"] is None
-    assert generator.calls == 0
-    assert judge.calls == 0
+    state = await orchestrator._state.load(project_id)
+    assert all(scenario["status"] in {"done", "needs_human"} for scenario in state["scenarios"])
+    summary = state["summary"]
+    assert summary["tests"] >= 1
+    assert summary["requirements"] == 4
+    # Only RM01 is claimed by the canned test, so coverage is partial and says so
+    assert summary["covered"] < summary["requirements"]
+    assert summary["coverage_percent"] < 100
 
 
-async def test_best_scoring_version_is_kept(orchestrator: Orchestrator) -> None:
-    """A later pass that scores worse must not overwrite the better earlier one."""
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-
-    def _test(test_id: str) -> dict[str, Any]:
-        return {
-            "id": test_id,
-            "bloc_id": "bloc-1",
-            "business_rule": "br",
-            "name": test_id,
-            "description": "d",
-            "steps": [{"order": 1, "description": "s", "expected_result": "e"}],
-            "status": "draft",
-            "created_at": "2025-01-01T00:00:00Z",
-            "updated_at": "2025-01-01T00:00:00Z",
+async def test_a_scenario_whose_requirements_are_all_covered_is_done(orchestrator: Orchestrator) -> None:
+    llm = _ScriptedLLM(
+        scenario_generator={
+            "tests": [
+                {
+                    "name": "couvre tout",
+                    "requirement_refs": [
+                        "F01.EU01.CU01.RM01",
+                        "F01.EU01.CU01.RM02",
+                        "F01.EU01.CU02.RM01",
+                        "F01.EU01.CU02.RM02",
+                    ],
+                    "steps": [{"order": 1, "description": "a", "expected_result": "b"}],
+                }
+            ]
         }
-
-    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
-    # v1 has TEST-001 only; regeneration adds TEST-002.
-    orchestrator._generator = _SequenceAgent("generate", [[_test("TEST-001")], [_test("TEST-002")]])  # type: ignore[assignment]
-    # Pass 1 scores 70, pass 2 scores 30, pass 3 scores 10: best is pass 1.
-    orchestrator._judge = _SequenceAgent(  # type: ignore[assignment]
-        "evaluate",
-        [
-            {"status": "incomplete", "score": 70, "gaps": ["g"], "uncovered_rules": ["R1"]},
-            {"status": "incomplete", "score": 30, "gaps": ["g"], "uncovered_rules": ["R1"]},
-            {"status": "incomplete", "score": 10, "gaps": ["g"], "uncovered_rules": ["R1"]},
-        ],
     )
+    orchestrator._llm = llm  # type: ignore[assignment]
+    orchestrator._distiller._client = llm  # type: ignore[assignment]
+    orchestrator._generator._client = llm  # type: ignore[assignment]
+    orchestrator._coverage._client = llm  # type: ignore[assignment]
 
-    await orchestrator._process_bloc(pid, "bloc-1")
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
-    state = await orchestrator._state.load(pid)
-    bloc = state["blocs"][0]
-    assert bloc["status"] == "needs_human"
-    assert bloc["score"] == 70
-    assert bloc["best_version"] == 1
-    # The v1 test set is restored, so the extra test from v2 is dropped.
-    assert [t["id"] for t in bloc["tests"]] == ["TEST-001"]
+    state = await orchestrator._state.load(project_id)
+    assert [s["status"] for s in state["scenarios"]] == ["done"] * len(state["scenarios"])
+    assert state["summary"]["coverage_percent"] == 100
+    assert state["summary"]["missing_count"] == 0
 
 
-async def test_unscored_judge_keeps_tests_for_human(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-
-    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
-    orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
-        "evaluate", {"status": "unknown", "score": None, "gaps": [], "uncovered_rules": ["R1"]}
+async def test_the_coverage_pass_completes_an_existing_test(orchestrator: Orchestrator) -> None:
+    """Completing beats adding: piling tests on gaps is what produced 2199 of them."""
+    llm = _ScriptedLLM(
+        coverage={
+            "updated": [
+                {
+                    "id": "TEST-0101",
+                    "name": "cas nominal complété",
+                    "requirement_refs": ["F01.EU01.CU01.RM02"],
+                    "steps": [
+                        {"order": 1, "description": "agir", "expected_result": "vu"},
+                        {"order": 2, "description": "vérifier le masquage", "expected_result": "masqué"},
+                    ],
+                    "rationale": "une étape suffit",
+                }
+            ],
+            "added": [],
+            "untestable": [],
+        }
     )
+    orchestrator._llm = llm  # type: ignore[assignment]
+    orchestrator._distiller._client = llm  # type: ignore[assignment]
+    orchestrator._generator._client = llm  # type: ignore[assignment]
+    orchestrator._coverage._client = llm  # type: ignore[assignment]
 
-    await orchestrator._process_bloc(pid, "bloc-1")
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
-    state = await orchestrator._state.load(pid)
-    bloc = state["blocs"][0]
-    assert bloc["status"] == "needs_human"
-    assert bloc["score"] is None
-
-
-async def test_process_bloc_error_status(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-
-    orchestrator._extractor = _StubAgent("extract", RuntimeError("extraction failed"))  # type: ignore[assignment]
-
-    state = await orchestrator._state.load(pid)
-    await orchestrator._process_bloc(pid, state["blocs"][0]["id"])
-    state = await orchestrator._state.load(pid)
-    assert state["blocs"][0]["status"] == "error"
+    state = await orchestrator._state.load(project_id)
+    first = next(s for s in state["scenarios"] if s["container"] == "F01.EU01.CU01")
+    assert len(first["tests"]) == 1  # completed, not duplicated
+    test = first["tests"][0]
+    assert len(test["steps"]) == 2
+    assert set(test["requirement_refs"]) == {"F01.EU01.CU01.RM01", "F01.EU01.CU01.RM02"}
+    assert test["coverage_note"] == "une étape suffit"
 
 
-async def test_process_bloc_llmjsonerror_gives_friendly_message(orchestrator: Orchestrator) -> None:
+async def test_a_requirement_declared_untestable_stops_blocking_the_scenario(
+    orchestrator: Orchestrator,
+) -> None:
+    llm = _ScriptedLLM(
+        coverage={
+            "updated": [],
+            "added": [],
+            "untestable": [{"ref": "F01.EU01.CU01.RM02", "reason": "non observable en boîte noire"}],
+        }
+    )
+    orchestrator._llm = llm  # type: ignore[assignment]
+    orchestrator._distiller._client = llm  # type: ignore[assignment]
+    orchestrator._generator._client = llm  # type: ignore[assignment]
+    orchestrator._coverage._client = llm  # type: ignore[assignment]
+
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
+
+    state = await orchestrator._state.load(project_id)
+    first = next(s for s in state["scenarios"] if s["container"] == "F01.EU01.CU01")
+    assert first["status"] == "done"
+    assert first["untestable"][0]["ref"] == "F01.EU01.CU01.RM02"
+    # It stays in the denominator until a human accepts it as a discard
+    assert state["summary"]["untestable"] == 1
+
+
+async def test_a_generator_failure_marks_the_scenario_not_the_run(orchestrator: Orchestrator) -> None:
     from tgi.services.llm import LLMJSONError
 
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
+    llm = _ScriptedLLM(scenario_generator=LLMJSONError("no JSON after 5 attempts"))
+    orchestrator._llm = llm  # type: ignore[assignment]
+    orchestrator._distiller._client = llm  # type: ignore[assignment]
+    orchestrator._generator._client = llm  # type: ignore[assignment]
+    orchestrator._coverage._client = llm  # type: ignore[assignment]
 
-    orchestrator._extractor = _StubAgent("extract", LLMJSONError("model x returned no valid JSON after 5 attempts"))  # type: ignore[assignment]
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
-    state = await orchestrator._state.load(pid)
-    bloc_id = state["blocs"][0]["id"]
-    await orchestrator._process_bloc(pid, bloc_id)
-    state = await orchestrator._state.load(pid)
-    bloc = state["blocs"][0]
-    assert bloc["status"] == "error"
-    # Human-readable message, not the raw exception string.
-    assert "JSON" in bloc["error"]
-    assert "Rejouer" in bloc["error"]
-
-
-async def test_run_pipeline_no_pending(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-    state = await orchestrator._state.load(pid)
-    blocs = state["blocs"]
-    for b in blocs:
-        b["status"] = "done"
-    await orchestrator._state.update_blocs(pid, blocs)
-    await orchestrator.run_pipeline(pid)  # should short-circuit
-    state = await orchestrator._state.load(pid)
-    assert all(b["status"] == "done" for b in state["blocs"])
+    state = await orchestrator._state.load(project_id)
+    assert all(s["status"] == "needs_human" for s in state["scenarios"])
+    assert all("no JSON" in (s.get("error") or "") for s in state["scenarios"])
+    assert "summary" in state  # the run still finished and reported
 
 
-async def test_handle_chat_simple(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-    resp = await orchestrator.handle_chat(pid, "simple demande", "gen")
-    assert "chat reponse" in resp
+async def test_an_unexpected_exception_is_reported_not_swallowed(
+    orchestrator: Orchestrator, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A swallowed exception left 58 scenarios stuck at running with no trace."""
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+
+    async def boom(self: Orchestrator, project_id: str, scenario_id: str) -> None:
+        raise ValueError("boum")
+
+    monkeypatch.setattr(Orchestrator, "_process_scenario", boom)
+    await orchestrator.run_pipeline(project_id)
+
+    state = await orchestrator._state.load(project_id)
+    assert all(s["status"] == "error" for s in state["scenarios"])
+    assert all("boum" in (s.get("error") or "") for s in state["scenarios"])
 
 
-async def test_rerun_bloc(orchestrator: Orchestrator) -> None:
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
+async def test_rerunning_a_scenario_replaces_its_tests(orchestrator: Orchestrator) -> None:
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
-    orchestrator._extractor = _StubAgent("extract", [{"id": "R1", "description": "d"}])  # type: ignore[assignment]
-    orchestrator._generator = _StubAgent("generate", [])  # type: ignore[assignment]
-    orchestrator._judge = _StubAgent(  # type: ignore[assignment]
-        "evaluate", {"status": "ok", "score": 88, "gaps": [], "uncovered_rules": [], "redundancies": []}
-    )
+    state = await orchestrator._state.load(project_id)
+    scenario_id = state["scenarios"][0]["id"]
+    before = [t["id"] for t in state["scenarios"][0]["tests"]]
 
-    state = await orchestrator._state.load(pid)
-    bloc_id = state["blocs"][0]["id"]
-    await orchestrator.rerun_bloc(pid, bloc_id)
-    bloc = await orchestrator._state.get_bloc(pid, bloc_id)
-    assert bloc is not None
-    assert bloc["status"] == "done"
-    assert bloc["score"] == 88
-
-
-async def test_rerun_clears_previous_verdict_and_error(orchestrator: Orchestrator) -> None:
-    """Rerunning a failed bloc from the UI must not keep its stale score or error."""
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-    state = await orchestrator._state.load(pid)
-    bloc_id = state["blocs"][0]["id"]
-
-    # Simulate a previous failed run with a stale verdict
-    await orchestrator._state.update_bloc(
-        pid,
-        bloc_id,
-        {
-            "status": "error",
-            "error": "boom",
-            "score": 12,
-            "judge_passes": 3,
-            "judge_history": [{"version": 1, "score": 12, "tests_count": 1}],
-        },
-    )
-
-    orchestrator._extractor = _StubAgent("extract", [])  # type: ignore[assignment]
-    await orchestrator.rerun_bloc(pid, bloc_id)
-
-    bloc = await orchestrator._state.get_bloc(pid, bloc_id)
-    assert bloc is not None
-    assert bloc["status"] == "done"  # no rules to cover
-    assert bloc["error"] is None
-    assert bloc["score"] is None
-    assert bloc["judge_history"] == []
-
-
-def test_get_project_lock_singleton() -> None:
-    lock_a = get_project_lock("p-lock")
-    lock_b = get_project_lock("p-lock")
-    assert lock_a is lock_b
-
-
-async def test_emit_keeps_the_freshest_events_when_nobody_listens(orchestrator: Orchestrator) -> None:
-    """A headless run must not spam warnings nor lose the latest status."""
-    import logging
-
-    from tgi.agents import orchestrator as orch_module
-
-    project_id = "p-saturated"
-    orch_module._SATURATED_QUEUES.discard(project_id)
-    queue = get_event_queue(project_id)
-    while not queue.empty():
-        queue.get_nowait()
-
-    # Fill the queue to its limit
-    for i in range(queue.maxsize):
-        queue.put_nowait({"type": "filler", "data": {"i": i}})
-
-    await orchestrator._emit(project_id, "bloc_status", {"bloc_id": "bloc-1", "status": "done"})
-
-    # Size is unchanged, the oldest was dropped and the newest is last
-    assert queue.qsize() == queue.maxsize
-    events = [queue.get_nowait() for _ in range(queue.qsize())]
-    assert events[-1]["type"] == "bloc_status"
-    assert events[0]["data"]["i"] == 1  # the very first filler is gone
-
-    # The warning is logged once per project, not on every event
-    assert project_id in orch_module._SATURATED_QUEUES
-    for i in range(queue.maxsize):
-        queue.put_nowait({"type": "filler", "data": {"i": i}})
-    logger = logging.getLogger("tgi.agents.orchestrator")
-    records: list[logging.LogRecord] = []
-    handler = logging.Handler()
-    handler.emit = records.append  # type: ignore[method-assign]
-    logger.addHandler(handler)
-    try:
-        await orchestrator._emit(project_id, "bloc_status", {"bloc_id": "bloc-2", "status": "done"})
-    finally:
-        logger.removeHandler(handler)
-    assert [r for r in records if r.levelno >= logging.WARNING] == []
+    await orchestrator.rerun_scenario(project_id, scenario_id)
+    state = await orchestrator._state.load(project_id)
+    after = [t["id"] for t in state["scenarios"][0]["tests"]]
+    assert after == before  # ids are derived from the scenario, so a rerun is idempotent
+    assert len(after) == 1
 
 
 async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestrator) -> None:
-    """The chat answers with real numbers, and never writes anything."""
-    pid = await _new_project(orchestrator)
-    await orchestrator.split_and_propose(pid)
-    state = await orchestrator._state.load(pid)
-    bloc_id = state["blocs"][0]["id"]
-    await orchestrator._state.update_bloc(
-        pid,
-        bloc_id,
-        {
-            "status": "needs_human",
-            "score": 62,
-            "judge_passes": 3,
-            "rules": [{"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "notifie le RRC"}],
-        },
-    )
+    project_id = await _new_project(orchestrator)
+    await orchestrator.distil(project_id)
+    await orchestrator.run_pipeline(project_id)
 
     captured: dict[str, str] = {}
 
-    class _CapturingLLM(_ScriptedLLM):
+    class _Capturing(_ScriptedLLM):
         async def chat(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> str:
             captured["user"] = user_content
             captured["system"] = system_prompt
-            return "## Réponse\n- **62 %** de couverture"
+            return "## Réponse\n- **1** test"
 
-    orchestrator._llm = _CapturingLLM()  # type: ignore[assignment]
-    before = len(await orchestrator._git.log(pid))
+    orchestrator._llm = _Capturing()  # type: ignore[assignment]
+    before = len(await orchestrator._git.log(project_id))
 
-    answer = await orchestrator.handle_chat(pid, "pourquoi le score est de 62 ?", model="m")
+    answer = await orchestrator.handle_chat(project_id, "quelles exigences ne sont pas couvertes ?", model="m")
 
-    assert answer.startswith("## Réponse")  # markdown returned as is, rendered client side
-    # The run reached the model: score, passes, statuses and the document reference
-    assert "62" in captured["user"]
-    assert "needs_human" in captured["user"]
-    assert "F01.EU01.CU02.RM01" in captured["user"]
+    assert answer.startswith("## Réponse")
     assert "synthese_du_run" in captured["user"]
-    assert "extrait_document" in captured["user"]
-    # The prompt states it modifies nothing
+    assert "F01.EU01.CU01.RM02" in captured["user"]  # the uncovered reference travels
+    assert "contexte_du_document" in captured["user"]
     assert "ne modifies rien" in captured["system"]
-    # And nothing was written: no empty commit any more
-    assert len(await orchestrator._git.log(pid)) == before
+    assert len(await orchestrator._git.log(project_id)) == before  # nothing was written

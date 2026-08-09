@@ -22,14 +22,15 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from tgi.agents.orchestrator import Orchestrator, get_event_queue
 from tgi.config import Settings, settings
-from tgi.deliverable import build_deliverable, natural_key, other_rules_of, tests_by_rule
+from tgi.coverage_report import coverage_summary, requirement_rows
+from tgi.deliverable import build_tree, filter_requirements, filter_scenarios, kind_options, natural_key
+from tgi.grammar import references_in
 from tgi.logging_config import setup_logging
 from tgi.progress import compute_progress
 from tgi.services.doc_parser import doc_parser
 from tgi.services.git_service import git_service
 from tgi.services.llm import llm_client
 from tgi.services.state_manager import state_manager
-from tgi.testset import rule_ids_of
 from tgi.tracing import configure_tracing
 from tgi.workbook import build_workbook
 
@@ -42,32 +43,12 @@ logger = logging.getLogger(__name__)
 
 # Guard rail on the page weight: a test card is about 5 kB of HTML.
 _MAX_PER_PAGE = 200
+# A volume target beyond this is a mistake, not an intention
+_MAX_TESTS_PER_SCENARIO = 20
 
 _MODULE_DIR = Path(__file__).parent
 _STATIC_DIR = _MODULE_DIR / "static"
 _TEMPLATES_DIR = _MODULE_DIR / "templates"
-
-
-def _tests_per_rule(tests: list[dict[str, Any]]) -> dict[str, int]:
-    """How many tests cover each rule, keyed by "bloc_id/rule_id".
-
-    A test can legitimately cover several rules, so it counts once per rule it cites.
-    """
-    counts: dict[str, int] = {}
-    for test in tests:
-        bloc_id = str(test.get("bloc_id", ""))
-        for rule_id in rule_ids_of(test):
-            key = f"{bloc_id}/{rule_id}"
-            counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
-def _rule_filter_options(tests: list[dict[str, Any]]) -> list[str]:
-    """Rule ids that actually appear in the tests, for the filter dropdown."""
-    seen: set[str] = set()
-    for test in tests:
-        seen.update(rule_ids_of(test))
-    return sorted(seen, key=natural_key)
 
 
 def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], dict[str, Any]]:
@@ -96,54 +77,46 @@ def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], di
 def _filter_tests(
     tests: list[dict[str, Any]],
     query: str = "",
-    rule: str = "",
-    bloc: str = "",
+    requirement: str = "",
+    scenario: str = "",
     status: str = "",
 ) -> list[dict[str, Any]]:
-    """Apply the tests tab filters. A test matching any of its rules is kept."""
+    """Server side filter on the flat test list.
+
+    One test card renders about 5 kB of HTML, so browser side filtering is not an option.
+    """
     selected = tests
-    if rule:
-        selected = [t for t in selected if rule in rule_ids_of(t)]
-    if bloc:
-        selected = [t for t in selected if str(t.get("bloc_id", "")) == bloc]
+    if requirement:
+        wanted = requirement.upper()
+        selected = [t for t in selected if wanted in {str(r).upper() for r in t.get("requirement_refs") or []}]
+    if scenario:
+        selected = [t for t in selected if str(t.get("scenario_id")) == scenario]
     if status:
-        selected = [t for t in selected if str(t.get("status", "")) == status]
+        selected = [t for t in selected if str(t.get("status")) == status]
     terms = [term for term in query.lower().split() if term]
     if terms:
 
         def haystack(test: dict[str, Any]) -> str:
+            steps = " ".join(
+                f"{step.get('description', '')} {step.get('expected_result', '')}" for step in test.get("steps") or []
+            )
             return " ".join(
-                str(test.get(field, "")) for field in ("id", "bloc_id", "name", "description", "business_rule")
+                [
+                    str(test.get("id", "")),
+                    str(test.get("name", "")),
+                    str(test.get("description", "")),
+                    " ".join(str(ref) for ref in test.get("requirement_refs") or []),
+                    steps,
+                ]
             ).lower()
 
         selected = [t for t in selected if all(term in haystack(t) for term in terms)]
     return selected
 
 
-def _filter_rules(
-    rules: list[dict[str, Any]],
-    tests: list[dict[str, Any]],
-    query: str = "",
-    uncovered: bool = False,
-    unreviewed: bool = False,
-) -> list[dict[str, Any]]:
-    """Apply the deliverable filters before the hierarchy is built."""
-    selected = rules
-    if unreviewed:
-        selected = [r for r in selected if not r.get("reviewed")]
-    if uncovered:
-        index = tests_by_rule(tests)
-        selected = [r for r in selected if not index.get(f"{r.get('bloc_id', '')}/{r.get('id', '')}")]
-    terms = [term for term in query.lower().split() if term]
-    if terms:
-
-        def haystack(rule: dict[str, Any]) -> str:
-            return " ".join(
-                str(rule.get(field, "")) for field in ("id", "source_ref", "description", "bloc_id", "bloc_title")
-            ).lower()
-
-        selected = [r for r in selected if all(term in haystack(r) for term in terms)]
-    return selected
+def _is_container(state: dict[str, Any], ref: str) -> bool:
+    """True when the reference names a use case of the document, per the inferred grammar."""
+    return ref in (state.get("containers") or {})
 
 
 class ConditionalGZipMiddleware:
@@ -189,9 +162,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     # A test can cite several rules: the template needs them as a list
-    templates.env.filters["rule_ids"] = lambda value: sorted(rule_ids_of({"business_rule": value or ""}))
     # Rules a test also covers, to show shared coverage without double counting
-    templates.env.filters["other_rules"] = other_rules_of
     orchestrator = Orchestrator(state_manager, git_service, llm_client)
 
     @asynccontextmanager
@@ -255,7 +226,8 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                     "id": pid,
                     "doc_path": state.get("doc_path", ""),
                     "created_at": state.get("created_at", ""),
-                    "bloc_count": len(state.get("blocs", [])),
+                    "scenario_count": len(state.get("scenarios", [])),
+                    "tests_count": sum(len(s.get("tests") or []) for s in state.get("scenarios", [])),
                 }
             )
         return templates.TemplateResponse(
@@ -274,6 +246,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         file: UploadFile = File(...),
         model_generator: str = Form(default=""),
         model_judge: str = Form(default=""),
+        tests_per_scenario: int = Form(default=0),
     ) -> JSONResponse:
         model_gen = model_generator or app_settings.model_generator
         model_jdg = model_judge or app_settings.model_judge
@@ -302,13 +275,17 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             doc_text=doc_text,
             model_generator=model_gen,
             model_judge=model_jdg,
+            tests_per_scenario=max(1, min(tests_per_scenario, _MAX_TESTS_PER_SCENARIO)) if tests_per_scenario else None,
         )
 
         # Init git repo
         await git_service.init(project_id, "init: project initialization")
 
-        # Propose bloc split
-        await orchestrator.split_and_propose(project_id)
+        # Phase one reads the whole document, which takes seconds to a minute: run it in
+        # the background so the browser gets its project page immediately.
+        task = asyncio.create_task(orchestrator.distil(project_id))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
 
         return JSONResponse({"project_id": project_id, "redirect": f"/projects/{project_id}"})
 
@@ -348,11 +325,20 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             },
         )
 
-    @application.post("/projects/{project_id}/validate-split")
-    async def validate_split(project_id: str) -> JSONResponse:
+    @application.post("/projects/{project_id}/validate-map")
+    async def validate_map(project_id: str) -> JSONResponse:
         await _load_or_404(project_id)
-        await orchestrator.validate_split(project_id)
+        await orchestrator.validate_map(project_id)
         return JSONResponse({"status": "ok"})
+
+    @application.post("/projects/{project_id}/redistil")
+    async def redistil(project_id: str) -> JSONResponse:
+        """Read the document again, for instance after changing the model."""
+        await _load_or_404(project_id)
+        task = asyncio.create_task(orchestrator.distil(project_id))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+        return JSONResponse({"status": "started"})
 
     @application.post("/projects/{project_id}/run")
     async def run_pipeline(project_id: str) -> JSONResponse:
@@ -363,13 +349,13 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         task.add_done_callback(_BACKGROUND_TASKS.discard)
         return JSONResponse({"status": "started"})
 
-    @application.post("/projects/{project_id}/blocs/{bloc_id}/rerun")
-    async def rerun_bloc(project_id: str, bloc_id: str) -> JSONResponse:
+    @application.post("/projects/{project_id}/scenarios/{scenario_id}/rerun")
+    async def rerun_scenario(project_id: str, scenario_id: str) -> JSONResponse:
         await _load_or_404(project_id)
-        task = asyncio.create_task(orchestrator.rerun_bloc(project_id, bloc_id))
+        task = asyncio.create_task(orchestrator.rerun_scenario(project_id, scenario_id))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
-        return JSONResponse({"status": "started", "bloc_id": bloc_id})
+        return JSONResponse({"status": "started", "scenario_id": scenario_id})
 
     @application.get("/projects/{project_id}/tests")
     async def get_tests(project_id: str) -> JSONResponse:
@@ -387,21 +373,32 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         await git_service.commit(project_id, f"fix(test): human edit on {test_id}")
         return JSONResponse(updated)
 
-    @application.put("/projects/{project_id}/blocs/{bloc_id}/rules/{rule_id}")
-    async def update_rule(project_id: str, bloc_id: str, rule_id: str, request: Request) -> JSONResponse:
-        """Edit a rule: wording, document reference, or reviewed flag."""
+    @application.put("/projects/{project_id}/requirements/{ref}")
+    async def update_requirement(project_id: str, ref: str, request: Request) -> JSONResponse:
+        """Edit a requirement: its wording, or the fact a human has reviewed it."""
         await _load_or_404(project_id)
         body = await request.json()
-        updated = await state_manager.update_rule(project_id, bloc_id, rule_id, body)
+        updated = await state_manager.update_requirement(project_id, ref, body)
         if not updated:
-            raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found in {bloc_id}")
-        await git_service.commit(project_id, f"fix(rule): human edit on {bloc_id}/{rule_id}")
+            raise HTTPException(status_code=404, detail=f"Requirement {ref} not found")
+        await git_service.commit(project_id, f"fix(requirement): human edit on {ref}")
         return JSONResponse(updated)
 
-    @application.get("/projects/{project_id}/rules")
-    async def get_rules(project_id: str) -> JSONResponse:
+    @application.get("/projects/{project_id}/requirements")
+    async def get_requirements(project_id: str) -> JSONResponse:
+        state = await _load_or_404(project_id)
+        return JSONResponse({"requirements": requirement_rows(state)})
+
+    @application.post("/projects/{project_id}/discards/{index}")
+    async def decide_discard(project_id: str, index: int, request: Request) -> JSONResponse:
+        """Arbitrate a proposed discard: accepting it takes it out of the corpus of truth."""
         await _load_or_404(project_id)
-        return JSONResponse({"rules": await state_manager.get_all_rules(project_id)})
+        body = await request.json()
+        decided = await state_manager.decide_discard(project_id, index, str(body.get("decision", "")))
+        if not decided:
+            raise HTTPException(status_code=404, detail="Discard not found or unknown decision")
+        await git_service.commit(project_id, f"decide: discard {index} {decided['decision']}")
+        return JSONResponse(decided)
 
     @application.post("/projects/{project_id}/chat")
     async def chat(project_id: str, request: Request) -> JSONResponse:
@@ -443,24 +440,35 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Write global state
-            zf.writestr("state.json", json.dumps(state, indent=2, ensure_ascii=False))
+            # Artefact 1: the document as markdown, what was actually read
+            zf.writestr("1-document.md", state.get("doc_text", ""))
 
-            # Write per-bloc test files
-            for bloc in state.get("blocs", []):
-                bloc_tests = bloc.get("tests", [])
-                if bloc_tests:
-                    bloc_file = json.dumps(bloc_tests, indent=2, ensure_ascii=False)
-                    zf.writestr(f"tests/{bloc['id']}.json", bloc_file)
+            # Artefact 2: the distilled corpus, the substrate every later phase used
+            distilled = {
+                "context": state.get("context", ""),
+                "axes": state.get("axes", {}),
+                "containers": state.get("containers", {}),
+                "requirements": state.get("requirements", []),
+                "discards": state.get("discards", []),
+            }
+            zf.writestr("2-distilled.json", json.dumps(distilled, indent=2, ensure_ascii=False))
 
-            # Write all tests in one file
+            # Artefact 3: scenarios and requirements
+            zf.writestr(
+                "3-scenarios.json",
+                json.dumps(state.get("scenarios", []), indent=2, ensure_ascii=False),
+            )
+            zf.writestr(
+                "3-requirements.json",
+                json.dumps(requirement_rows(state), indent=2, ensure_ascii=False),
+            )
+
+            # Artefact 4: the tests, flat for tooling and as a workbook for review
             all_tests = await state_manager.get_all_tests(project_id)
-            zf.writestr("tests/all_tests.json", json.dumps(all_tests, indent=2, ensure_ascii=False))
+            zf.writestr("4-tests.json", json.dumps(all_tests, indent=2, ensure_ascii=False))
+            zf.writestr("4-tests.xlsx", build_workbook(state))
 
-            # Reviewable workbook: one sheet per functionality, one row per test step
-            all_rules = await state_manager.get_all_rules(project_id)
-            scores = {b["id"]: b.get("score") for b in state.get("blocs", [])}
-            zf.writestr("tests.xlsx", build_workbook(all_rules, all_tests, scores))
+            zf.writestr("state.json", json.dumps(state, indent=2, ensure_ascii=False))
 
         buf.seek(0)
         return StreamingResponse(
@@ -473,17 +481,100 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     # HTMX partial endpoints
     # -----------------------------------------------------------------------
 
-    @application.get("/projects/{project_id}/partials/blocs", response_class=HTMLResponse)
-    async def partial_blocs(request: Request, project_id: str) -> HTMLResponse:
+    @application.get("/projects/{project_id}/partials/map", response_class=HTMLResponse)
+    async def partial_map(request: Request, project_id: str) -> HTMLResponse:
+        """The distilled document a human validates before any expensive generation."""
         state = await _load_or_404(project_id)
+        declared = {ref for ref in references_in(state.get("doc_text", "")) if _is_container(state, ref)}
+        mapped = {str(s.get("container")) for s in state.get("scenarios") or [] if s.get("container")}
         return templates.TemplateResponse(
             request,
-            "partials/blocs.html",
+            "partials/map.html",
             {
-                "blocs": state["blocs"],
                 "project_id": project_id,
-                "pass_score": app_settings.judge_pass_score,
-                "bad_score": app_settings.judge_bad_score,
+                "context": state.get("context") or "",
+                "axes": state.get("axes") or {},
+                "containers": state.get("containers") or {},
+                "scenarios": state.get("scenarios") or [],
+                "requirements_count": len(state.get("requirements") or []),
+                "discards": list(enumerate(state.get("discards") or [])),
+                "untitled": sorted(
+                    (ref for ref, title in (state.get("containers") or {}).items() if not title), key=natural_key
+                ),
+                "missing_containers": sorted(declared - mapped, key=natural_key),
+                "validated": bool(state.get("validated")),
+                "distilled": bool(state.get("distilled_at")),
+            },
+        )
+
+    @application.get("/projects/{project_id}/partials/scenarios", response_class=HTMLResponse)
+    async def partial_scenarios(request: Request, project_id: str, q: str = "", gaps: bool = False) -> HTMLResponse:
+        """The scenario axis: functionality, use case, scenario, then its tests on demand."""
+        state = await _load_or_404(project_id)
+        selected = filter_scenarios([s for s in state.get("scenarios") or [] if isinstance(s, dict)], q, gaps)
+        return templates.TemplateResponse(
+            request,
+            "partials/scenarios.html",
+            {
+                "project_id": project_id,
+                "tree": build_tree({**state, "scenarios": selected}),
+                "summary": coverage_summary(state),
+                "q": q,
+                "gaps": gaps,
+            },
+        )
+
+    @application.get(
+        "/projects/{project_id}/scenarios/{scenario_id}/tests",
+        response_class=HTMLResponse,
+    )
+    async def partial_scenario_tests(request: Request, project_id: str, scenario_id: str) -> HTMLResponse:
+        """Tests of one scenario, loaded when the scenario is expanded."""
+        state = await _load_or_404(project_id)
+        scenario = next((s for s in state.get("scenarios") or [] if str(s.get("id")) == scenario_id), None)
+        if scenario is None:
+            raise HTTPException(status_code=404, detail=f"Scenario {scenario_id} not found")
+        statements = {str(r.get("ref")): str(r.get("statement", "")) for r in state.get("requirements") or []}
+        return templates.TemplateResponse(
+            request,
+            "partials/scenario_tests.html",
+            {
+                "project_id": project_id,
+                "scenario": scenario,
+                "tests": scenario.get("tests") or [],
+                "statements": statements,
+            },
+        )
+
+    @application.get("/projects/{project_id}/partials/requirements", response_class=HTMLResponse)
+    async def partial_requirements(
+        request: Request,
+        project_id: str,
+        q: str = "",
+        status: str = "",
+        kind: str = "",
+        page: int = 1,
+        per_page: int = 50,
+    ) -> HTMLResponse:
+        """The requirement axis: the traceability matrix, filtered and paged server side."""
+        state = await _load_or_404(project_id)
+        rows = requirement_rows(state)
+        matching = filter_requirements(rows, q, status, kind)
+        page_items, pagination = _paginate(matching, page, per_page)
+        return templates.TemplateResponse(
+            request,
+            "partials/requirements.html",
+            {
+                "project_id": project_id,
+                "rows": page_items,
+                "total": len(rows),
+                "matching": len(matching),
+                "summary": coverage_summary(state),
+                "kind_options": kind_options(rows),
+                "pagination": pagination,
+                "q": q,
+                "status": status,
+                "kind": kind,
             },
         )
 
@@ -492,77 +583,36 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         request: Request,
         project_id: str,
         q: str = "",
-        rule: str = "",
-        bloc: str = "",
+        requirement: str = "",
+        scenario: str = "",
         status: str = "",
         page: int = 1,
         per_page: int = 50,
     ) -> HTMLResponse:
         """Flat searchable list. Filtered and paginated server side, see _paginate."""
-        await _load_or_404(project_id)
+        state = await _load_or_404(project_id)
         all_tests = await state_manager.get_all_tests(project_id)
-        all_rules = await state_manager.get_all_rules(project_id)
-        matching = _filter_tests(all_tests, q, rule, bloc, status)
+        matching = _filter_tests(all_tests, q, requirement, scenario, status)
         page_items, pagination = _paginate(matching, page, per_page)
+        scenarios = [s for s in state.get("scenarios") or [] if isinstance(s, dict)]
         return templates.TemplateResponse(
             request,
             "partials/tests.html",
             {
                 "tests": page_items,
                 "project_id": project_id,
-                "rules_count": len(all_rules),
                 "tests_total": len(all_tests),
-                "rule_options": _rule_filter_options(all_tests),
-                "bloc_options": sorted(
-                    {str(t.get("bloc_id", "")) for t in all_tests if t.get("bloc_id")}, key=natural_key
+                "matching_total": len(matching),
+                "scenario_options": [(str(s.get("id")), str(s.get("title", ""))[:70]) for s in scenarios],
+                "requirement_options": sorted(
+                    {ref for test in all_tests for ref in test.get("requirement_refs") or []}, key=natural_key
                 ),
                 "pagination": pagination,
                 "q": q,
-                "rule": rule,
-                "bloc": bloc,
+                "requirement": requirement,
+                "scenario": scenario,
                 "status": status,
             },
-        )
-
-    @application.get("/projects/{project_id}/partials/rules", response_class=HTMLResponse)
-    async def partial_rules(
-        request: Request,
-        project_id: str,
-        q: str = "",
-        uncovered: bool = False,
-        unreviewed: bool = False,
-    ) -> HTMLResponse:
-        """The deliverable: functionality, use case, rule, then its tests on demand."""
-        state = await _load_or_404(project_id)
-        all_rules = await state_manager.get_all_rules(project_id)
-        all_tests = await state_manager.get_all_tests(project_id)
-        selected = _filter_rules(all_rules, all_tests, q, uncovered, unreviewed)
-        scores = {b["id"]: b.get("score") for b in state["blocs"]}
-        return templates.TemplateResponse(
-            request,
-            "partials/rules.html",
-            {
-                "project_id": project_id,
-                "deliverable": build_deliverable(selected, all_tests, scores),
-                "q": q,
-                "uncovered": uncovered,
-                "unreviewed": unreviewed,
-            },
-        )
-
-    @application.get(
-        "/projects/{project_id}/blocs/{bloc_id}/rules/{rule_id}/tests",
-        response_class=HTMLResponse,
-    )
-    async def partial_rule_tests(request: Request, project_id: str, bloc_id: str, rule_id: str) -> HTMLResponse:
-        """Tests covering one rule, loaded when the rule is expanded."""
-        await _load_or_404(project_id)
-        all_tests = await state_manager.get_all_tests(project_id)
-        covering = tests_by_rule(all_tests).get(f"{bloc_id}/{rule_id}", [])
-        return templates.TemplateResponse(
-            request,
-            "partials/rule_tests.html",
-            {"tests": covering, "rule_id": rule_id, "bloc_id": bloc_id, "project_id": project_id},
         )
 
     @application.get("/projects/{project_id}/partials/progress", response_class=HTMLResponse)
@@ -592,7 +642,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
 
 # Keep strong references to fire-and-forget tasks so they are not garbage collected.
-_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 # Module-level ASGI app for uvicorn (tgi.tgi:app)
 app = create_app()

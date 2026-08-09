@@ -59,3 +59,18 @@ class FakeLLMClient:
 def fake_llm() -> Iterator[FakeLLMClient]:
     """Provide a fresh fake LLM client."""
     yield FakeLLMClient()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_locks() -> Iterator[None]:
+    """Each test runs on its own event loop, so it needs its own locks.
+
+    An asyncio.Lock binds to the loop that first awaits it. Without this, a lock kept in a
+    module level registry leaks into the next test and raises "bound to a different event
+    loop", which made failures depend on test order.
+    """
+    from tgi import locks
+
+    locks.reset()
+    yield
+    locks.reset()

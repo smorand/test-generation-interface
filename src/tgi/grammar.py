@@ -20,6 +20,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from tgi.deliverable import natural_key
+
 logger = logging.getLogger(__name__)
 
 # A segment is letters then digits, with an optional letter suffix: RM01, RM07a, VAL01
@@ -29,7 +31,7 @@ _PREFIX_RE = re.compile(r"^[A-Za-z]+")
 # The reference must be matched greedily and segment by segment: a lazy pattern stops at
 # the first letter and turns "F03.EU08.CU01 Notification" into the reference "F".
 _HEADING_RE = re.compile(
-    rf"^#{{1,6}}\s*(?P<ref>{_SEGMENT}(?:\.{_SEGMENT})*)\s*[:\-–]?\s+(?P<title>.+)$",
+    rf"^#{{1,6}}\s*(?P<ref>{_SEGMENT}(?:\.{_SEGMENT})*)\s*[:\-\u2013]?\s+(?P<title>.+)$",
     re.MULTILINE,
 )
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -142,12 +144,12 @@ def infer_grammar(text: str) -> Grammar:
         head = _PREFIX_RE.match(segments[0])
         if head is None:
             continue
-        axis = head.group(0).upper()
-        per_axis_count[axis] += 1
-        per_axis_depth[axis][len(segments) - 1] += 1
+        family_prefix = head.group(0).upper()
+        per_axis_count[family_prefix] += 1
+        per_axis_depth[family_prefix][len(segments) - 1] += 1
         tail = _PREFIX_RE.match(segments[-1])
         if tail:
-            per_axis_leaves[axis][tail.group(0).upper()] += 1
+            per_axis_leaves[family_prefix][tail.group(0).upper()] += 1
         for depth, segment in enumerate(segments):
             match = _PREFIX_RE.match(segment)
             if match:
@@ -160,30 +162,28 @@ def infer_grammar(text: str) -> Grammar:
     levels = {depth: found for depth, found in levels.items() if found}
 
     axes: dict[str, Axis] = {}
-    for axis, depths in per_axis_depth.items():
-        if per_axis_count[axis] < _MIN_PREFIX_SUPPORT:
+    for prefix, depths in per_axis_depth.items():
+        if per_axis_count[prefix] < _MIN_PREFIX_SUPPORT:
             continue
         leaf_depth = max(depth for depth, count in depths.items() if count >= _MIN_PREFIX_SUPPORT) if depths else 0
-        leaves = tuple(
-            prefix for prefix, count in per_axis_leaves[axis].most_common() if count >= _MIN_PREFIX_SUPPORT
-        )
-        axes[axis] = Axis(
-            prefix=axis,
+        leaves = tuple(leaf for leaf, count in per_axis_leaves[prefix].most_common() if count >= _MIN_PREFIX_SUPPORT)
+        axes[prefix] = Axis(
+            prefix=prefix,
             leaf_depth=leaf_depth,
             container_depth=leaf_depth - 1,
             leaf_prefixes=leaves,
-            count=per_axis_count[axis],
+            count=per_axis_count[prefix],
         )
 
     grammar = Grammar(levels=levels, axes=axes)
-    for axis in axes.values():
+    for family in axes.values():
         logger.info(
             "Numbering family %s: leaves %s at depth %d, container at depth %d, %d references",
-            axis.prefix,
-            "/".join(axis.leaf_prefixes),
-            axis.leaf_depth,
-            axis.container_depth,
-            axis.count,
+            family.prefix,
+            "/".join(family.leaf_prefixes),
+            family.leaf_depth,
+            family.container_depth,
+            family.count,
         )
     return grammar
 
@@ -224,7 +224,7 @@ def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requ
         following = _REFERENCE_RE.search(tail)
         if following:
             tail = tail[: following.start()]
-        statement = tail.split(" ###")[0].split(" ##")[0].lstrip(" :-–.").strip()
+        statement = tail.split(" ###")[0].split(" ##")[0].lstrip(" :-\u2013.").strip()
         axis = grammar.axis_of(ref)
         found[ref] = Requirement(
             ref=ref,
@@ -306,6 +306,4 @@ def section_of(text: str, ref: str, max_chars: int = 6000) -> str:
 
 def natural_sort_key(value: Any) -> tuple[tuple[int, int | str], ...]:
     """Sort identifiers so RM9 comes before RM10, shared with the deliverable tree."""
-    from tgi.deliverable import natural_key
-
     return natural_key(value)

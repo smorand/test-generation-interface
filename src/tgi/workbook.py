@@ -1,8 +1,9 @@
-"""Build the reviewable workbook: one sheet per functionality, one row per test step.
+"""The reviewable workbook: the two reading axes, one sheet family each.
 
-The JSON export serves tooling. This serves the human who has to sign off a test plan,
-so it follows the specification's own numbering and stays sortable and filterable: no
-merged cells, a frozen header, an autofilter on every sheet.
+The JSON export serves tooling. This serves the human who has to sign off a test plan, so
+it follows the specification's own numbering and stays sortable: no merged cells, a frozen
+header, an autofilter on every sheet. The traceability sheet is what proves nothing was
+forgotten, and it is the sheet a reviewer opens first.
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from tgi.deliverable import ORPHAN_TESTS, UNNUMBERED, build_deliverable, other_rules_of, tests_by_rule
+from tgi.coverage_report import coverage_summary, requirement_rows
+from tgi.deliverable import UNPLACED, build_tree, natural_key
 
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
@@ -25,41 +27,46 @@ _HEADER_FONT = Font(color="FFFFFFFF", bold=True)
 _WRAP = Alignment(vertical="top", wrap_text=True)
 _TOP = Alignment(vertical="top")
 
+# Columns at least this wide hold prose, so their cells wrap
+_WRAPPED_COLUMN_WIDTH = 40
+
 _TEST_COLUMNS = [
     ("Cas d'utilisation", 18),
-    ("Référence règle", 22),
-    ("Règle", 60),
-    ("Bloc", 10),
-    ("Score bloc", 11),
+    ("Scénario", 12),
+    ("Intention du scénario", 42),
+    ("Nature", 10),
     ("ID test", 12),
     ("Nom du test", 40),
-    ("Description", 50),
+    ("Description", 46),
     ("Étape", 7),
-    ("Action", 50),
-    ("Résultat attendu", 50),
+    ("Action", 48),
+    ("Résultat attendu", 48),
+    ("Exigences validées", 30),
     ("Statut", 11),
-    ("Couvre aussi", 16),
 ]
 
 _SUMMARY_COLUMNS = [
-    ("Fonctionnalité", 16),
-    ("Cas d'utilisation", 20),
-    ("Règles", 9),
-    ("Couvertes", 11),
-    ("Couverture", 12),
-    ("Tests", 8),
+    ("Indicateur", 34),
+    ("Valeur", 16),
 ]
 
-_ORPHAN_COLUMNS = [
-    ("ID test", 12),
-    ("Bloc", 10),
-    ("Règles citées", 20),
-    ("Nom du test", 45),
-    ("Description", 60),
+_TRACE_COLUMNS = [
+    ("Référence exigence", 22),
+    ("Type", 8),
+    ("Cas d'utilisation", 18),
+    ("Énoncé", 60),
+    ("Statut", 12),
+    ("Motif si non testable", 40),
+    ("Scénarios", 34),
+    ("Tests", 30),
 ]
 
-# Columns at least this wide hold prose, so their cells wrap
-_WRAPPED_COLUMN_WIDTH = 40
+_DISCARD_COLUMNS = [
+    ("Élément écarté", 60),
+    ("Motif", 20),
+    ("Références", 26),
+    ("Décision", 12),
+]
 
 # Excel refuses these in a sheet name, and caps it at 31 characters
 _FORBIDDEN_IN_SHEET_NAME = re.compile(r"[\[\]:*?/\\]")
@@ -104,38 +111,53 @@ def _finish_sheet(sheet: Worksheet, columns: list[tuple[str, int]]) -> None:
             cell.alignment = _WRAP if cell.column in wrapped else _TOP
 
 
-def _test_rows(rule: Any, tests: list[dict[str, Any]], use_case: str) -> list[list[Any]]:
+def _test_rows(scenario: Any, tests: list[dict[str, Any]]) -> list[list[Any]]:
     """One row per step, repeating the test columns so filters keep working."""
     rows: list[list[Any]] = []
     for test in tests:
-        shared = ", ".join(other_rules_of(test, rule.rule_id))
-        steps = [s for s in (test.get("steps") or []) if isinstance(s, dict)] or [{}]
+        refs = ", ".join(str(ref) for ref in test.get("requirement_refs") or [])
+        steps = [step for step in (test.get("steps") or []) if isinstance(step, dict)] or [{}]
         for step in steps:
             rows.append(
                 [
-                    use_case,
-                    rule.source_ref or rule.rule_id,
-                    rule.description,
-                    rule.bloc_id,
-                    rule.bloc_score,
+                    scenario.container or UNPLACED,
+                    scenario.id,
+                    scenario.title,
+                    scenario.kind,
                     test.get("id", ""),
                     test.get("name", ""),
                     test.get("description", ""),
                     step.get("order", ""),
                     step.get("description", ""),
                     step.get("expected_result", ""),
+                    refs,
                     test.get("status", ""),
-                    shared,
+                ]
+            )
+        for data_row in test.get("data_rows") or []:
+            rows.append(
+                [
+                    scenario.container or UNPLACED,
+                    scenario.id,
+                    scenario.title,
+                    scenario.kind,
+                    test.get("id", ""),
+                    test.get("name", ""),
+                    "jeu de données",
+                    "",
+                    " | ".join(f"{k}: {v}" for k, v in data_row.items()),
+                    "",
+                    refs,
+                    test.get("status", ""),
                 ]
             )
     if not tests:
         rows.append(
             [
-                use_case,
-                rule.source_ref or rule.rule_id,
-                rule.description,
-                rule.bloc_id,
-                rule.bloc_score,
+                scenario.container or UNPLACED,
+                scenario.id,
+                scenario.title,
+                scenario.kind,
                 "",
                 "AUCUN TEST",
                 "",
@@ -149,66 +171,87 @@ def _test_rows(rule: Any, tests: list[dict[str, Any]], use_case: str) -> list[li
     return rows
 
 
-def build_workbook(rules: list[dict[str, Any]], tests: list[dict[str, Any]], bloc_scores: dict[str, Any]) -> bytes:
+def build_workbook(state: dict[str, Any]) -> bytes:
     """Return the xlsx bytes for this project."""
-    deliverable = build_deliverable(rules, tests, bloc_scores)
-    index = tests_by_rule(tests)
+    tree = build_tree(state)
+    summary = coverage_summary(state)
+    tests_by_scenario: dict[str, list[dict[str, Any]]] = {
+        str(scenario.get("id")): [t for t in scenario.get("tests") or [] if isinstance(t, dict)]
+        for scenario in state.get("scenarios") or []
+        if isinstance(scenario, dict)
+    }
 
     workbook = Workbook()
     used_names: set[str] = set()
 
-    summary = workbook.active
-    summary.title = sheet_title("Synthèse", used_names)
-    _write_header(summary, _SUMMARY_COLUMNS)
+    # Sheet one: does the deliverable hold together
+    overview = workbook.active
+    overview.title = sheet_title("Synthèse", used_names)
+    _write_header(overview, _SUMMARY_COLUMNS)
+    for label, value in (
+        ("Scénarios", summary["scenarios"]),
+        ("Tests", summary["tests"]),
+        ("Étapes de test", summary["steps"]),
+        ("Tests par scénario", summary["tests_per_scenario"]),
+        ("Exigences du document", summary["requirements"]),
+        ("Exigences couvertes", summary["covered"]),
+        ("Couverture", f"{summary['coverage_percent']} %"),
+        ("Exigences non couvertes", summary["missing_count"]),
+        ("Déclarées non testables", summary["untestable"]),
+        ("Écartées par décision humaine", summary["discarded"]),
+    ):
+        overview.append([label, value])
+    overview.append([])
+    overview.append(["Par type d'exigence", ""])
+    for kind, counts in summary["by_kind"].items():
+        overview.append([f"  {kind} couvertes / total", f"{counts['covered']} / {counts['total']}"])
+    _finish_sheet(overview, _SUMMARY_COLUMNS)
 
-    chapters = list(deliverable["chapters"])
-    if deliverable.get("unnumbered"):
-        chapters.append(deliverable["unnumbered"])
+    # Sheet two: the traceability matrix, the proof nothing was forgotten
+    trace = workbook.create_sheet(sheet_title("Traçabilité", used_names))
+    _write_header(trace, _TRACE_COLUMNS)
+    for row in requirement_rows(state):
+        trace.append(
+            [
+                row["ref"],
+                row["kind"],
+                row["parent"],
+                row["statement"],
+                row["status"],
+                row["reason"],
+                ", ".join(row["scenarios"]),
+                ", ".join(str(test["id"]) for test in row["tests"]),
+            ]
+        )
+    _finish_sheet(trace, _TRACE_COLUMNS)
 
+    # Then one sheet per functionality, one row per step
+    chapters = list(tree["chapters"])
+    if tree.get("unplaced"):
+        chapters.append(tree["unplaced"])
     for chapter in chapters:
-        for group in chapter.groups:
-            summary.append(
-                [
-                    chapter.key,
-                    group.title,
-                    group.rules_count,
-                    group.covered_count,
-                    f"{group.coverage_percent} %",
-                    group.tests_count,
-                ]
-            )
-    totals = deliverable["totals"]
-    summary.append([])
-    summary.append(
-        ["TOTAL", "", totals["rules"], totals["covered"], f"{totals['coverage_percent']} %", totals["tests"]]
-    )
-    _finish_sheet(summary, _SUMMARY_COLUMNS)
-
-    for chapter in chapters:
-        name = UNNUMBERED if chapter.key == UNNUMBERED else chapter.key
-        sheet = workbook.create_sheet(sheet_title(name, used_names))
+        sheet = workbook.create_sheet(sheet_title(chapter.key, used_names))
         _write_header(sheet, _TEST_COLUMNS)
         for group in chapter.groups:
-            for rule in group.rules:
-                for row in _test_rows(rule, index.get(rule.key, []), group.title):
-                    sheet.append(row)
+            for scenario in group.scenarios:
+                for line in _test_rows(scenario, tests_by_scenario.get(scenario.id, [])):
+                    sheet.append(line)
         _finish_sheet(sheet, _TEST_COLUMNS)
 
-    orphans = deliverable["orphan_tests"]
-    if orphans:
-        sheet = workbook.create_sheet(sheet_title(ORPHAN_TESTS, used_names))
-        _write_header(sheet, _ORPHAN_COLUMNS)
-        for test in orphans:
+    discards = [d for d in state.get("discards") or [] if isinstance(d, dict)]
+    if discards:
+        sheet = workbook.create_sheet(sheet_title("Écarts", used_names))
+        _write_header(sheet, _DISCARD_COLUMNS)
+        for discard in sorted(discards, key=lambda d: natural_key(d.get("reason", ""))):
             sheet.append(
                 [
-                    test.get("id", ""),
-                    test.get("bloc_id", ""),
-                    test.get("business_rule", "") or "aucune",
-                    test.get("name", ""),
-                    test.get("description", ""),
+                    discard.get("what", ""),
+                    discard.get("reason", ""),
+                    ", ".join(str(ref) for ref in discard.get("refs") or []),
+                    discard.get("decision", "proposed"),
                 ]
             )
-        _finish_sheet(sheet, _ORPHAN_COLUMNS)
+        _finish_sheet(sheet, _DISCARD_COLUMNS)
 
     buffer = io.BytesIO()
     workbook.save(buffer)

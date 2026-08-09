@@ -6,9 +6,10 @@ without a server or a browser.
 
 from __future__ import annotations
 
-import statistics
 from datetime import UTC, datetime
 from typing import Any
+
+from tgi.deliverable import coverage_percent
 
 _FINAL_STATUSES = ("done", "needs_human", "error")
 _SECONDS_PER_MINUTE = 60
@@ -38,46 +39,51 @@ def format_duration(seconds: float) -> str:
 def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Counts, percentages and a naive time estimate for the current run.
 
-    The estimate is elapsed / processed blocs x remaining blocs. It only appears once a
-    bloc has finished, and it is announced as an estimate: early on it is wrong, since
-    the first blocs run in parallel.
+    The estimate is elapsed / processed x remaining. It only appears once a scenario has
+    finished, and it is announced as an estimate: early on it is wrong, since the first
+    scenarios run in parallel.
     """
-    blocs = state.get("blocs") or []
-    total = len(blocs)
+    scenarios = [s for s in state.get("scenarios") or [] if isinstance(s, dict)]
+    total = len(scenarios)
     counts = {"pending": 0, "running": 0, "done": 0, "needs_human": 0, "error": 0}
-    scores: list[int] = []
-    rules = tests = 0
-    for bloc in blocs:
-        status = str(bloc.get("status", "pending"))
-        counts[status] = counts.get(status, 0) + 1
-        if isinstance(bloc.get("score"), int):
-            scores.append(int(bloc["score"]))
-        rules += len(bloc.get("rules") or [])
-        tests += len(bloc.get("tests") or [])
+    requirements: set[str] = set()
+    covered: set[str] = set()
+    tests = steps = 0
 
-    processed = sum(counts.get(status, 0) for status in _FINAL_STATUSES)
-    percent = round(processed / total * 100) if total else 0
+    for scenario in scenarios:
+        status = str(scenario.get("status", "pending"))
+        counts[status] = counts.get(status, 0) + 1
+        refs = {str(ref) for ref in scenario.get("requirement_refs") or []}
+        requirements |= refs
+        covered |= refs - {str(ref) for ref in scenario.get("uncovered_refs") or []}
+        scenario_tests = [test for test in scenario.get("tests") or [] if isinstance(test, dict)]
+        tests += len(scenario_tests)
+        steps += sum(len(test.get("steps") or []) for test in scenario_tests)
+
+    processed = sum(counts[status] for status in _FINAL_STATUSES)
 
     def share(count: int) -> float:
-        return round(count / total * 100, 1) if total else 0.0
+        return round(100 * count / total, 1) if total else 0.0
 
     progress: dict[str, Any] = {
         "total": total,
         "processed": processed,
-        "percent": percent,
-        "pending": counts.get("pending", 0),
-        "running": counts.get("running", 0),
-        "done": counts.get("done", 0),
-        "needs_human": counts.get("needs_human", 0),
-        "error": counts.get("error", 0),
-        "done_percent": share(counts.get("done", 0)),
-        "needs_human_percent": share(counts.get("needs_human", 0)),
-        "error_percent": share(counts.get("error", 0)),
-        "running_percent": share(counts.get("running", 0)),
-        "rules": rules,
+        "percent": round(100 * processed / total) if total else 0,
+        "pending": counts["pending"],
+        "running": counts["running"],
+        "done": counts["done"],
+        "needs_human": counts["needs_human"],
+        "error": counts["error"],
+        "done_percent": share(counts["done"]),
+        "needs_human_percent": share(counts["needs_human"]),
+        "error_percent": share(counts["error"]),
+        "running_percent": share(counts["running"]),
+        "requirements": len(requirements),
+        "covered": len(covered),
+        "coverage_percent": coverage_percent(len(covered), len(requirements)),
         "tests": tests,
-        "tests_per_rule": round(tests / rules, 1) if rules else 0.0,
-        "score_median": round(statistics.median(scores)) if scores else None,
+        "steps": steps,
+        "tests_per_scenario": round(tests / total, 1) if total else 0.0,
         "elapsed_label": None,
         "remaining_label": None,
         "finished": total > 0 and processed == total,
@@ -87,9 +93,8 @@ def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict
     if started:
         current = now or datetime.now(UTC)
         elapsed = (current - started).total_seconds()
-        if elapsed >= 0:
-            progress["elapsed_label"] = format_duration(elapsed)
-            remaining_blocs = total - processed
-            if processed and remaining_blocs > 0:
-                progress["remaining_label"] = format_duration(elapsed / processed * remaining_blocs)
+        progress["elapsed_label"] = format_duration(elapsed)
+        remaining = total - processed
+        if processed and remaining > 0:
+            progress["remaining_label"] = format_duration(elapsed / processed * remaining)
     return progress

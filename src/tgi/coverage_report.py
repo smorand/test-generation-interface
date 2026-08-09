@@ -62,11 +62,7 @@ def coverage_summary(state: dict[str, Any]) -> dict[str, Any]:
     discarded = discarded_refs(state)
 
     accountable = [r for r in requirements if str(r.get("ref")) not in discarded]
-    missing = [
-        str(r["ref"])
-        for r in accountable
-        if str(r["ref"]) not in covered and str(r["ref"]) not in untestable
-    ]
+    missing = [str(r["ref"]) for r in accountable if str(r["ref"]) not in covered and str(r["ref"]) not in untestable]
     statuses: dict[str, int] = {}
     for scenario in scenarios:
         status = str(scenario.get("status", "pending"))
@@ -141,7 +137,9 @@ def requirement_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "statement": str(requirement.get("statement") or ""),
                 "status": status,
                 "reason": untestable.get(ref, ""),
-                "tests": [{"id": t.get("id"), "name": t.get("name"), "scenario_id": t.get("scenario_id")} for t in covering],
+                "tests": [
+                    {"id": t.get("id"), "name": t.get("name"), "scenario_id": t.get("scenario_id")} for t in covering
+                ],
                 "scenarios": sorted({scenario_titles.get(str(t.get("scenario_id")), "") for t in covering} - {""}),
             }
         )

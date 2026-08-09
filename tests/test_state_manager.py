@@ -105,7 +105,10 @@ async def test_concurrent_scenario_updates_no_lost_update(manager: StateManager)
     )
 
     await asyncio.gather(
-        *(manager.update_scenario(pid, f"SC-{i:03d}", {"status": "done", "tests": [{"id": f"T{i}"}]}) for i in range(1, 11))
+        *(
+            manager.update_scenario(pid, f"SC-{i:03d}", {"status": "done", "tests": [{"id": f"T{i}"}]})
+            for i in range(1, 11)
+        )
     )
 
     state = await manager.load(pid)

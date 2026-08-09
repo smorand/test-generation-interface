@@ -1,0 +1,43 @@
+{% if not tests %}
+  <div class="text-xs text-orange-400">Aucun test pour ce scénario.</div>
+{% else %}
+  <div class="space-y-2">
+    {% for test in tests %}
+      <div class="border-l-2 pl-3" style="border-color:#374151">
+        <div class="flex items-baseline gap-2">
+          <span class="font-mono text-xs text-gray-500 shrink-0">{{ test.id }}</span>
+          <span class="text-gray-300 flex-1 text-sm">{{ test.name }}</span>
+          <span class="badge badge-gray shrink-0 text-xs">{{ test.status }}</span>
+        </div>
+        {% if test.requirement_refs %}
+          <div class="text-xs text-gray-500 mt-1">
+            valide
+            {% for ref in test.requirement_refs %}
+              <span class="font-mono text-blue-400" title="{{ statements.get(ref, '') }}">{{ ref }}</span>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% if test.description %}<div class="text-xs text-gray-400 mt-1">{{ test.description }}</div>{% endif %}
+        {% if test.coverage_note %}
+          <div class="text-xs text-gray-600 mt-1">complété pour la couverture: {{ test.coverage_note }}</div>
+        {% endif %}
+        <ol class="text-xs text-gray-400 mt-1 ml-4 list-decimal">
+          {% for step in test.steps %}
+            <li>{{ step.description }}{% if step.expected_result %}
+              <span class="text-gray-500">→ {{ step.expected_result }}</span>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        {% if test.data_rows %}
+          <table class="text-xs mt-2 md-table">
+            <thead><tr>{% for key in test.data_rows[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% for row in test.data_rows %}
+                <tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}

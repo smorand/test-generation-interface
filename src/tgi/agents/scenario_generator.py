@@ -165,6 +165,8 @@ class ScenarioGeneratorAgent:
     @staticmethod
     def payload_size(scenario: dict[str, Any], requirements: list[Requirement], evidence: str) -> int:
         """Rough prompt size, used to keep a scenario within the output budget."""
-        return len(json.dumps(scenario, ensure_ascii=False)) + len(evidence) + sum(
-            len(requirement.statement) for requirement in requirements
+        return (
+            len(json.dumps(scenario, ensure_ascii=False))
+            + len(evidence)
+            + sum(len(requirement.statement) for requirement in requirements)
         )

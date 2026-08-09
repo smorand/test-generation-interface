@@ -10,11 +10,11 @@ from typing import Any
 import aiofiles
 
 from tgi.config import settings
+from tgi.locks import lock_for
 
 logger = logging.getLogger(__name__)
 
 # Global lock: only one git operation at a time across all projects
-_GIT_LOCK = asyncio.Lock()
 
 # Number of fields in a git log --pretty line (hash|message|date|author)
 _LOG_FIELD_COUNT = 4
@@ -47,7 +47,7 @@ class GitService:
 
     async def init(self, project_id: str, initial_message: str = "init: project initialization") -> None:
         """Initialize a git repo for the project and make first commit."""
-        async with _GIT_LOCK:
+        async with lock_for("git"):
             repo = self.repo_dir(project_id)
             repo.mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +72,7 @@ class GitService:
 
     async def commit(self, project_id: str, message: str) -> str | None:
         """Stage all changes and commit. Returns commit hash or None."""
-        async with _GIT_LOCK:
+        async with lock_for("git"):
             await self._run_git(project_id, "add", "-A")
             rc, _, err = await self._run_git(project_id, "commit", "-m", message)
             if rc != 0:
@@ -117,7 +117,7 @@ class GitService:
 
     async def rollback(self, project_id: str, commit_hash: str) -> bool:
         """Hard reset to a specific commit. Returns True on success."""
-        async with _GIT_LOCK:
+        async with lock_for("git"):
             rc, _, err = await self._run_git(project_id, "reset", "--hard", commit_hash)
             if rc != 0:
                 logger.error("git rollback to %s failed: %s", commit_hash, err)

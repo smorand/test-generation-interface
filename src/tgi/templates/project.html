@@ -44,9 +44,9 @@
     </div>
     <button
       class="btn-secondary text-sm"
-      x-show="!splitValidated"
-      @click="validateSplit()"
-    >✓ Valider le découpage</button>
+      x-show="!mapValidated && mapReady"
+      @click="validateMap()"
+    >✓ Valider la carte</button>
     <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
   </div>
 
@@ -72,24 +72,25 @@
     </div>
 
     <!-- BLOCS tab -->
-    <div x-show="activeTab === 'blocs'">
-      <div id="blocs-container"
-        hx-get="/projects/{{ project_id }}/partials/blocs"
-        hx-trigger="load, every 5s"
-        hx-swap="innerHTML"
-      >
-        <div class="text-gray-500 text-sm">Chargement des blocs…</div>
-      </div>
+    <div x-show="activeTab === 'map'">
+      <div id="map-container"
+        hx-get="/projects/{{ project_id }}/partials/map"
+        hx-trigger="load, every 5s [activeTab === 'map' && !mapReady]"
+        hx-swap="innerHTML"></div>
     </div>
 
-    <!-- TESTS tab -->
-    <div x-show="activeTab === 'rules'">
-      <div id="rules-container"
-        hx-get="/projects/{{ project_id }}/partials/rules"
-        hx-trigger="load, every 30s [document.visibilityState === 'visible' && activeTab === 'rules']"
-        hx-swap="innerHTML">
-        <div class="text-gray-500 text-sm">Chargement des règles…</div>
-      </div>
+    <div x-show="activeTab === 'scenarios'">
+      <div id="scenarios-container"
+        hx-get="/projects/{{ project_id }}/partials/scenarios"
+        hx-trigger="load"
+        hx-swap="innerHTML"></div>
+    </div>
+
+    <div x-show="activeTab === 'requirements'">
+      <div id="requirements-container"
+        hx-get="/projects/{{ project_id }}/partials/requirements"
+        hx-trigger="load"
+        hx-swap="innerHTML"></div>
     </div>
 
     <div x-show="activeTab === 'tests'">
@@ -273,22 +274,20 @@ function testEditor(projectId, initialTest) {
   };
 }
 
-function ruleEditor(projectId, blocId, ruleId) {
+function discardRow(projectId, index) {
   return {
-    // Edition d'une regle: enregistrement immediat, retour visuel sur le champ modifie
-    async save(payload, el) {
-      const previous = el.style.borderColor;
-      try {
-        const r = await fetch(`/projects/${projectId}/blocs/${blocId}/rules/${ruleId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        el.style.borderColor = r.ok ? '#4ade80' : '#f87171';
-      } catch (e) {
-        el.style.borderColor = '#f87171';
+    label: '',
+    // Accepter un ecart retire l'element du corpus de verite: la decision est envoyee, pas devinee
+    async decide(decision) {
+      const r = await fetch(`/projects/${projectId}/discards/${index}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      if (r.ok) {
+        this.label = decision;
+        if (document.querySelector('#requirements-container')) htmx.trigger('#requirements-container', 'load');
       }
-      setTimeout(() => { el.style.borderColor = previous; }, 1200);
     },
   };
 }
@@ -296,10 +295,12 @@ function ruleEditor(projectId, blocId, ruleId) {
     function projectApp(projectId) {
       return {
         projectId,
-        activeTab: 'blocs',
+        activeTab: 'map',
+        mapReady: {{ 'true' if state.get('distilled_at') else 'false' }},
+        mapValidated: {{ 'true' if state.get('validated') else 'false' }},
         // Un onglet affiche l'etat au moment de son activation, pas celui du chargement de la page
         refreshTab(tab) {
-          const targets = { rules: '#rules-container', tests: '#tests-container', history: '#history-container' };
+          const targets = { map: '#map-container', scenarios: '#scenarios-container', requirements: '#requirements-container', tests: '#tests-container', history: '#history-container' };
           const target = targets[tab];
           if (target && document.querySelector(target)) {
             htmx.trigger(target, 'load');
@@ -307,14 +308,14 @@ function ruleEditor(projectId, blocId, ruleId) {
         },
         tabs: [
           { id: 'doc', label: '📄 DOC' },
-          { id: 'blocs', label: '📦 BLOCS' },
-          { id: 'rules', label: '📋 RÈGLES & TESTS' },
+          { id: 'map', label: '🧭 CARTE' },
+          { id: 'scenarios', label: '🎬 SCÉNARIOS & TESTS' },
+          { id: 'requirements', label: '📋 EXIGENCES' },
           { id: 'tests', label: '🔍 RECHERCHE' },
           { id: 'chat', label: '💬 CHAT' },
           { id: 'history', label: '🕑 HISTORIQUE' },
         ],
         pipelineRunning: false,
-        splitValidated: {{ 'true' if state.get('validated') else 'false' }},
         statusMessage: '',
         chatMessages: [],
         chatInput: '',
@@ -338,38 +339,45 @@ function ruleEditor(projectId, blocId, ruleId) {
         },
 
         handleEvent(evt) {
-          if (evt.type === 'pipeline_start') {
+          if (evt.type === 'distil_start') {
+            this.statusMessage = 'Lecture du document…';
+          } else if (evt.type === 'distil_done') {
+            this.mapReady = true;
+            this.statusMessage = `Carte prête: ${evt.data.scenarios} scénarios, ${evt.data.requirements} exigences`;
+            htmx.trigger('#map-container', 'load');
+          } else if (evt.type === 'map_validated') {
+            this.mapValidated = true;
+            this.statusMessage = 'Carte validée';
+            htmx.trigger('#map-container', 'load');
+          } else if (evt.type === 'pipeline_start') {
             this.pipelineRunning = true;
-            this.statusMessage = 'Pipeline démarré…';
+            this.statusMessage = `Génération de ${evt.data.total} scénarios…`;
             htmx.trigger('#progress-container', 'load');
           } else if (evt.type === 'pipeline_done') {
             this.pipelineRunning = false;
-            this.statusMessage = 'Pipeline terminé';
+            this.statusMessage = `Terminé: ${evt.data.tests} tests, ${evt.data.coverage_percent} % des exigences couvertes`;
+            this.refreshAll();
+          } else if (evt.type === 'scenario_status') {
+            const parts = [`${evt.data.scenario_id}: ${evt.data.status}`];
+            if (evt.data.tests !== undefined) parts.push(`${evt.data.tests} tests`);
+            if (evt.data.uncovered) parts.push(`${evt.data.uncovered} non couvertes`);
+            this.statusMessage = parts.join(' · ');
             htmx.trigger('#progress-container', 'load');
-            htmx.trigger('#blocs-container', 'load');
-            htmx.trigger('#tests-container', 'load');
-            htmx.trigger('#rules-container', 'load');
-          } else if (evt.type === 'bloc_status') {
-            const score = evt.data.score;
-            const suffix = (score === null || score === undefined) ? '' : ` (score ${score}%)`;
-            this.statusMessage = `Bloc ${evt.data.bloc_id}: ${evt.data.status}${suffix}`;
-            htmx.trigger('#blocs-container', 'load');
-            htmx.trigger('#progress-container', 'load');
-            if (evt.data.status === 'done' || evt.data.status === 'needs_human') {
-              htmx.trigger('#tests-container', 'load');
-              htmx.trigger('#rules-container', 'load');
-            }
-          } else if (evt.type === 'bloc_step') {
-            const score = evt.data.score;
-            const suffix = (score === null || score === undefined) ? '' : ` score ${score}%`;
-            this.statusMessage = `${evt.data.bloc_id}: ${evt.data.step}${suffix}`;
+            if (evt.data.status !== 'running') this.refreshAll();
           }
         },
 
-        async validateSplit() {
-          await fetch(`/projects/${this.projectId}/validate-split`, { method: 'POST' });
-          this.splitValidated = true;
-          this.statusMessage = 'Découpage validé';
+        refreshAll() {
+          ['#progress-container', '#scenarios-container', '#requirements-container', '#tests-container'].forEach((sel) => {
+            if (document.querySelector(sel)) htmx.trigger(sel, 'load');
+          });
+        },
+
+        async validateMap() {
+          await fetch(`/projects/${this.projectId}/validate-map`, { method: 'POST' });
+          this.mapValidated = true;
+          this.statusMessage = 'Carte validée';
+          htmx.trigger('#map-container', 'load');
         },
 
         async runPipeline() {

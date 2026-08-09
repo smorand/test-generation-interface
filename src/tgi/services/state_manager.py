@@ -14,6 +14,7 @@ from typing import Any
 import aiofiles
 
 from tgi.config import settings
+from tgi.locks import lock_for
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,8 @@ def _replace_with_retry(source: Path, target: Path) -> None:
 
 
 def _state_lock(project_id: str) -> asyncio.Lock:
-    lock = _STATE_LOCKS.get(project_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _STATE_LOCKS[project_id] = lock
-    return lock
+    """One writer at a time per project, on the loop currently running."""
+    return lock_for(f"state:{project_id}")
 
 
 class StateManager:

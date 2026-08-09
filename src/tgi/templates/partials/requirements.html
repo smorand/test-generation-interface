@@ -1,0 +1,80 @@
+<div id="requirements-panel">
+  <div class="flex flex-wrap items-center gap-4 mb-4 text-sm">
+    <span class="text-gray-300"><strong>{{ summary.covered }}/{{ summary.requirements }}</strong> exigences couvertes</span>
+    <span class="text-gray-500">{{ summary.coverage_percent }} %</span>
+    {% if summary.missing_count %}<span class="badge badge-orange">{{ summary.missing_count }} non couvertes</span>{% endif %}
+    {% if summary.untestable %}<span class="badge badge-gray">{{ summary.untestable }} non testables</span>{% endif %}
+    {% if summary.discarded %}<span class="badge badge-red">{{ summary.discarded }} écartées</span>{% endif %}
+    {% if matching != total %}<span class="text-gray-500">{{ matching }} correspondent au filtre</span>{% endif %}
+
+    <form class="ml-auto flex items-center gap-2"
+      hx-get="/projects/{{ project_id }}/partials/requirements" hx-target="#requirements-container"
+      hx-swap="innerHTML" hx-trigger="submit, change delay:400ms from:input, change from:select">
+      <input type="hidden" name="per_page" value="{{ pagination.per_page }}" />
+      <select class="input text-xs" name="status">
+        <option value="">tout statut</option>
+        {% for value, label in [('covered','couvertes'),('missing','non couvertes'),('untestable','non testables'),('discarded','écartées')] %}
+          <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select class="input text-xs" name="kind">
+        <option value="">tout type</option>
+        {% for value, count in kind_options %}
+          <option value="{{ value }}" {% if kind == value %}selected{% endif %}>{{ value }} ({{ count }})</option>
+        {% endfor %}
+      </select>
+      <input class="input text-xs" style="width:170px" type="search" name="q" value="{{ q }}" placeholder="filtrer…" />
+    </form>
+  </div>
+
+  {% if not rows %}
+    <div class="text-gray-500 text-sm">Aucune exigence ne correspond au filtre.</div>
+  {% else %}
+  <table class="w-full text-xs md-table">
+    <thead>
+      <tr>
+        <th style="width:170px">Référence</th>
+        <th style="width:50px">Type</th>
+        <th>Énoncé</th>
+        <th style="width:110px">Statut</th>
+        <th style="width:210px">Couverte par</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="font-mono text-blue-400 align-top">{{ row.ref }}</td>
+          <td class="align-top text-gray-500">{{ row.kind }}</td>
+          <td class="align-top text-gray-300">
+            {{ row.statement }}
+            {% if row.reason %}<div class="text-gray-600 mt-1">motif: {{ row.reason }}</div>{% endif %}
+          </td>
+          <td class="align-top">
+            {% if row.status == 'covered' %}<span class="badge badge-green">couverte</span>
+            {% elif row.status == 'missing' %}<span class="badge badge-orange">non couverte</span>
+            {% elif row.status == 'untestable' %}<span class="badge badge-gray">non testable</span>
+            {% else %}<span class="badge badge-red">écartée</span>{% endif %}
+          </td>
+          <td class="align-top">
+            {% for test in row.tests %}
+              <span class="font-mono text-gray-400" title="{{ test.name }}">{{ test.id }}</span>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+            {% if not row.tests %}<span class="text-gray-600">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% set base = "/projects/" ~ project_id ~ "/partials/requirements?q=" ~ q ~ "&status=" ~ status ~ "&kind=" ~ kind ~ "&per_page=" ~ pagination.per_page %}
+  {% if pagination.pages > 1 %}
+    <div class="flex items-center justify-center gap-3 mt-4 text-xs">
+      <button class="btn-secondary" {% if pagination.page <= 1 %}disabled{% endif %}
+        hx-get="{{ base }}&page={{ [pagination.page - 1, 1] | max }}" hx-target="#requirements-container" hx-swap="innerHTML">‹ précédent</button>
+      <span class="text-gray-400">{{ pagination.start }} à {{ pagination.end }} sur {{ pagination.total }} &bull; page {{ pagination.page }}/{{ pagination.pages }}</span>
+      <button class="btn-secondary" {% if pagination.page >= pagination.pages %}disabled{% endif %}
+        hx-get="{{ base }}&page={{ [pagination.page + 1, pagination.pages] | min }}" hx-target="#requirements-container" hx-swap="innerHTML">suivant ›</button>
+    </div>
+  {% endif %}
+  {% endif %}
+</div>

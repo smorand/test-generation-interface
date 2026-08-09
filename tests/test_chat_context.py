@@ -4,40 +4,58 @@ from __future__ import annotations
 
 from typing import Any
 
-from tgi.agents.orchestrator import _chat_context, _chat_summary, _question_terms, _relevant_blocs
+from tgi.agents.orchestrator import _chat_context, _chat_summary, _question_terms, _relevant_scenarios
 
 
-def _bloc(
-    bloc_id: str,
+def _scenario(
+    scenario_id: str,
     title: str,
     status: str = "done",
-    score: int | None = 90,
-    rules: list[dict[str, Any]] | None = None,
+    container: str = "F01.EU01.CU01",
+    refs: list[str] | None = None,
+    uncovered: list[str] | None = None,
     tests: list[dict[str, Any]] | None = None,
-    chunk: str = "contenu du bloc",
     **extra: Any,
 ) -> dict[str, Any]:
+    requirement_refs = refs if refs is not None else ["F01.EU01.CU01.RM01"]
+    missing = uncovered or []
+    # Coverage is counted from what a test claims, so a default test claims the scenario's
+    # requirements minus the ones declared uncovered.
+    default_tests = [
+        {
+            "id": "TEST-0001",
+            "name": "un test",
+            "requirement_refs": [ref for ref in requirement_refs if ref not in missing],
+            "steps": [{"order": 1}],
+        }
+    ]
     return {
-        "id": bloc_id,
+        "id": scenario_id,
         "title": title,
+        "container": container,
+        "kind": "nominal",
         "status": status,
-        "score": score,
-        "judge_passes": 1,
-        "rules": rules if rules is not None else [{"id": "R1", "source_ref": "", "description": "une regle"}],
-        "tests": tests if tests is not None else [{"id": "T1", "business_rule": "R1", "name": "un test"}],
-        "chunk": chunk,
+        "requirement_refs": requirement_refs,
+        "uncovered_refs": missing,
+        "tests": default_tests if tests is None else tests,
         **extra,
     }
 
 
-def _state(blocs: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
+def _state(scenarios: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    refs = sorted({ref for s in scenarios for ref in s.get("requirement_refs") or []})
+    state = {
         "project_id": "p1",
         "doc_path": "sfd.docx",
         "model_generator": "Qwen3.6-27B",
-        "model_judge": "Qwen3.6-27B",
-        "blocs": blocs,
+        "tests_per_scenario": 5,
+        "context": "Application de gestion de portefeuille.",
+        "scenarios": scenarios,
+        "requirements": [{"ref": ref, "kind": "RM", "statement": f"enonce de {ref}", "parent": ""} for ref in refs],
+        "discards": [],
     }
+    state.update(extra)
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +66,8 @@ def _state(blocs: list[dict[str, Any]]) -> dict[str, Any]:
 def test_question_terms_drops_stopwords_and_accents() -> None:
     terms = _question_terms("Quelles sont les règles sur les notifications ?")
     assert "notifications" in terms
-    assert "regles" in terms  # accent removed
-    assert "les" not in terms and "sont" not in terms
+    assert "regles" not in terms  # the vocabulary of the tool itself carries no signal
+    assert "les" not in terms
 
 
 def test_question_terms_ignores_short_words() -> None:
@@ -57,62 +75,60 @@ def test_question_terms_ignores_short_words() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Bloc selection
+# Scenario selection
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_bloc_number_wins() -> None:
-    blocs = [_bloc("bloc-1", "Habilitations"), _bloc("bloc-2", "Notifications"), _bloc("bloc-3", "Batch")]
-    assert [b["id"] for b in _relevant_blocs(blocs, "pourquoi le bloc 2 n'est pas terminé ?")] == ["bloc-2"]
-    assert [b["id"] for b in _relevant_blocs(blocs, "détaille bloc-3")] == ["bloc-3"]
+def test_an_explicit_scenario_id_wins() -> None:
+    scenarios = [_scenario("SC-001", "Habilitations"), _scenario("SC-002", "Notifications")]
+    assert [s["id"] for s in _relevant_scenarios(scenarios, "que fait SC-2 ?")] == ["SC-002"]
+    assert [s["id"] for s in _relevant_scenarios(scenarios, "détaille SC-001")] == ["SC-001"]
 
 
-def test_rule_id_mention_selects_its_bloc() -> None:
-    blocs = [
-        _bloc("bloc-1", "A", rules=[{"id": "R1", "description": "a"}]),
-        _bloc("bloc-2", "B", rules=[{"id": "R7", "description": "b"}]),
+def test_a_requirement_reference_selects_its_scenario() -> None:
+    scenarios = [
+        _scenario("SC-001", "A", refs=["F01.EU01.CU01.RM01"]),
+        _scenario("SC-002", "B", refs=["F02.EU01.CU01.RM07"]),
     ]
-    assert [b["id"] for b in _relevant_blocs(blocs, "que couvre R7 ?")] == ["bloc-2"]
+    assert [s["id"] for s in _relevant_scenarios(scenarios, "qui couvre F02.EU01.CU01.RM07 ?")] == ["SC-002"]
 
 
-def test_document_reference_selects_its_bloc() -> None:
-    blocs = [
-        _bloc("bloc-1", "A", rules=[{"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "a"}]),
-        _bloc("bloc-2", "B", rules=[{"id": "R1", "source_ref": "F02.EU01.CU01.RM01", "description": "b"}]),
+def test_a_use_case_reference_selects_its_scenarios() -> None:
+    scenarios = [
+        _scenario("SC-001", "A", container="F01.EU01.CU01"),
+        _scenario("SC-002", "B", container="F03.EU05.CU01"),
     ]
-    assert [b["id"] for b in _relevant_blocs(blocs, "explique F02.EU01.CU01.RM01")] == ["bloc-2"]
+    assert [s["id"] for s in _relevant_scenarios(scenarios, "explique F03.EU05.CU01")] == ["SC-002"]
 
 
-def test_word_overlap_weights_title_then_rules_then_chunk() -> None:
-    blocs = [
-        _bloc("bloc-1", "Notifications aux conseillers", rules=[{"id": "R1", "description": "autre chose"}]),
-        _bloc("bloc-2", "Batch", rules=[{"id": "R1", "description": "gestion des notifications"}]),
-        _bloc("bloc-3", "Autre", rules=[{"id": "R1", "description": "rien"}], chunk="notifications" * 2),
+def test_word_overlap_weights_the_title_first() -> None:
+    scenarios = [
+        _scenario("SC-001", "Notifications aux conseillers"),
+        _scenario("SC-002", "Batch", tests=[{"id": "T", "name": "notifications", "steps": []}]),
     ]
-    selected = [b["id"] for b in _relevant_blocs(blocs, "parle moi des notifications")]
-    assert selected[0] == "bloc-1"  # title carries the most weight
-    assert set(selected) == {"bloc-1", "bloc-2", "bloc-3"}
+    selected = [s["id"] for s in _relevant_scenarios(scenarios, "parle moi des notifications")]
+    assert selected[0] == "SC-001"
 
 
 def test_selection_is_capped() -> None:
-    blocs = [_bloc(f"bloc-{i}", "Notifications") for i in range(1, 8)]
-    assert len(_relevant_blocs(blocs, "notifications")) == 3
-    assert len(_relevant_blocs(blocs, "notifications", limit=2)) == 2
+    scenarios = [_scenario(f"SC-{i:03d}", "Notifications") for i in range(1, 9)]
+    assert len(_relevant_scenarios(scenarios, "notifications")) == 4
+    assert len(_relevant_scenarios(scenarios, "notifications", limit=2)) == 2
 
 
-def test_without_any_signal_the_blocs_needing_attention_come_first() -> None:
-    blocs = [
-        _bloc("bloc-1", "A", score=95),
-        _bloc("bloc-2", "B", status="error", score=None),
-        _bloc("bloc-3", "C", score=62),
+def test_without_any_signal_the_scenarios_needing_attention_come_first() -> None:
+    scenarios = [
+        _scenario("SC-001", "A"),
+        _scenario("SC-002", "B", status="error"),
+        _scenario("SC-003", "C", status="needs_human", uncovered=["F01.EU01.CU01.RM01"]),
     ]
-    selected = [b["id"] for b in _relevant_blocs(blocs, "alors ?")]
-    assert selected[0] == "bloc-2"  # error first
-    assert selected[1] == "bloc-3"  # then the lowest score
+    selected = [s["id"] for s in _relevant_scenarios(scenarios, "alors ?")]
+    assert selected[0] == "SC-002"
+    assert selected[1] == "SC-003"
 
 
-def test_no_blocs_no_selection() -> None:
-    assert _relevant_blocs([], "peu importe") == []
+def test_no_scenario_no_selection() -> None:
+    assert _relevant_scenarios([], "peu importe") == []
 
 
 # ---------------------------------------------------------------------------
@@ -120,28 +136,28 @@ def test_no_blocs_no_selection() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_summary_reports_statuses_totals_and_scores() -> None:
+def test_summary_reports_statuses_coverage_and_volume() -> None:
     state = _state(
         [
-            _bloc("bloc-1", "A", score=100),
-            _bloc("bloc-2", "B", status="needs_human", score=60),
-            _bloc("bloc-3", "C", status="error", score=None, error="boom"),
+            _scenario("SC-001", "A", refs=["R.A1", "R.A2"]),
+            _scenario("SC-002", "B", status="needs_human", refs=["R.B1"], uncovered=["R.B1"], tests=[]),
         ]
     )
     summary = _chat_summary(state)
-    assert summary["blocs_total"] == 3
-    assert summary["statuts"] == {"done": 1, "needs_human": 1, "error": 1}
-    assert summary["regles_total"] == 3
-    assert summary["tests_total"] == 3
-    assert summary["score"] == {"median": 80, "min": 60, "max": 100, "nombre_evalues": 2}
-    assert summary["modele_generateur"] == "Qwen3.6-27B"
-    # The error message travels, it is what the human will ask about
-    assert summary["blocs"][2]["erreur"] == "boom"
+    assert summary["scenarios"] == 2
+    assert summary["statuts"] == {"done": 1, "needs_human": 1}
+    assert summary["exigences"] == 3
+    assert summary["exigences_couvertes"] == 2
+    assert summary["exigences_non_couvertes"] == 1
+    assert "R.B1" in summary["references_non_couvertes"]
+    assert summary["couverture_pourcent"] == 67
+    assert summary["cible_tests_par_scenario"] == 5
 
 
-def test_summary_without_any_score() -> None:
-    summary = _chat_summary(_state([_bloc("bloc-1", "A", status="pending", score=None)]))
-    assert "score" not in summary
+def test_summary_of_an_empty_project_does_not_divide_by_zero() -> None:
+    summary = _chat_summary(_state([]))
+    assert summary["scenarios"] == 0
+    assert summary["couverture_pourcent"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -149,33 +165,18 @@ def test_summary_without_any_score() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_context_carries_summary_coverage_and_details() -> None:
-    state = _state(
-        [
-            _bloc(
-                "bloc-1",
-                "Notifications",
-                rules=[{"id": "R1", "source_ref": "F01.EU01.CU02.RM01", "description": "notifie le RRC"}],
-            ),
-            _bloc("bloc-2", "Batch"),
-        ]
-    )
+def test_context_carries_summary_document_context_and_details() -> None:
+    state = _state([_scenario("SC-001", "Notifier le RRC", refs=["F01.EU01.CU02.RM01"])])
     context = _chat_context(state, "les notifications sont elles couvertes ?")
-    assert context["synthese_du_run"]["blocs_total"] == 2
-    assert any(row["use_case"] == "F01.EU01.CU02" for row in context["couverture_par_cas_utilisation"])
-    details = context["blocs_detailles_pour_cette_question"]
-    assert details[0]["id"] == "bloc-1"
-    assert details[0]["regles"][0]["reference_document"] == "F01.EU01.CU02.RM01"
-    assert details[0]["tests"][0]["id"] == "T1"
+    assert context["synthese_du_run"]["scenarios"] == 1
+    assert "portefeuille" in context["contexte_du_document"]
+    detail = context["scenarios_detailles_pour_cette_question"][0]
+    assert detail["id"] == "SC-001"
+    assert detail["exigences"][0]["ref"] == "F01.EU01.CU02.RM01"
+    assert detail["exigences"][0]["enonce"].startswith("enonce")
+    assert detail["tests"][0]["id"] == "TEST-0001"
 
 
-def test_context_truncates_the_document_excerpt() -> None:
-    state = _state([_bloc("bloc-1", "A", chunk="x" * 5000)])
-    excerpt = _chat_context(state, "peu importe")["blocs_detailles_pour_cette_question"][0]["extrait_document"]
-    assert len(excerpt) < 2000
-    assert excerpt.endswith("(tronqué)")
-
-
-def test_context_never_ships_every_bloc() -> None:
-    state = _state([_bloc(f"bloc-{i}", "Notifications") for i in range(1, 20)])
-    assert len(_chat_context(state, "notifications")["blocs_detailles_pour_cette_question"]) == 3
+def test_context_never_ships_every_scenario() -> None:
+    state = _state([_scenario(f"SC-{i:03d}", "Notifications") for i in range(1, 20)])
+    assert len(_chat_context(state, "notifications")["scenarios_detailles_pour_cette_question"]) == 4

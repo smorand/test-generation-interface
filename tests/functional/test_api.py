@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import zipfile
@@ -110,11 +111,13 @@ async def test_history_endpoint(client: AsyncClient) -> None:
     assert len(commits) >= 1
 
 
-async def test_validate_split(client: AsyncClient) -> None:
-    pid = await _upload_sample(client)
-    resp = await client.post(f"/projects/{pid}/validate-split")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+async def test_validate_map(client: AsyncClient) -> None:
+    project_id = await _project_with_scenarios(client)
+    assert (await client.post(f"/projects/{project_id}/validate-map")).status_code == 200
+
+    from tgi.services.state_manager import state_manager
+
+    assert (await state_manager.load(project_id))["validated"] is True
 
 
 async def test_chat_uses_mocked_llm(client: AsyncClient) -> None:
@@ -131,20 +134,23 @@ async def test_chat_empty_message_422(client: AsyncClient) -> None:
 
 
 async def test_export_returns_zip(client: AsyncClient) -> None:
-    pid = await _upload_sample(client)
-    resp = await client.get(f"/projects/{pid}/export")
+    project_id = await _project_with_scenarios(client)
+    resp = await client.get(f"/projects/{project_id}/export")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        names = zf.namelist()
-    assert "state.json" in names
-    assert "tests/all_tests.json" in names
 
-
-async def test_partials_blocs(client: AsyncClient) -> None:
-    pid = await _upload_sample(client)
-    resp = await client.get(f"/projects/{pid}/partials/blocs")
-    assert resp.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as archive:
+        names = archive.namelist()
+    # The four artefacts of the pipeline, in reading order
+    for expected in (
+        "1-document.md",
+        "2-distilled.json",
+        "3-scenarios.json",
+        "3-requirements.json",
+        "4-tests.json",
+        "4-tests.xlsx",
+    ):
+        assert expected in names
 
 
 async def test_rollback_missing_hash_422(client: AsyncClient) -> None:
@@ -154,42 +160,39 @@ async def test_rollback_missing_hash_422(client: AsyncClient) -> None:
 
 
 async def test_run_and_rerun_start(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tgi.agents import orchestrator as orch_module
+    """The routes hand the work to a background task and answer immediately."""
+    from tgi.agents.orchestrator import Orchestrator
 
-    async def _noop_pipeline(self: object, project_id: str) -> None:
-        return None
+    started: list[str] = []
 
-    async def _noop_rerun(self: object, project_id: str, bloc_id: str) -> None:
-        return None
+    async def fake_run(self: Orchestrator, project_id: str) -> None:
+        started.append(f"run:{project_id}")
 
-    monkeypatch.setattr(orch_module.Orchestrator, "run_pipeline", _noop_pipeline)
-    monkeypatch.setattr(orch_module.Orchestrator, "rerun_bloc", _noop_rerun)
+    async def fake_rerun(self: Orchestrator, project_id: str, scenario_id: str) -> None:
+        started.append(f"rerun:{scenario_id}")
 
-    pid = await _upload_sample(client)
-    resp = await client.post(f"/projects/{pid}/run")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "started"}
+    monkeypatch.setattr(Orchestrator, "run_pipeline", fake_run)
+    monkeypatch.setattr(Orchestrator, "rerun_scenario", fake_rerun)
 
-    resp2 = await client.post(f"/projects/{pid}/blocs/bloc-1/rerun")
-    assert resp2.status_code == 200
-    assert resp2.json()["bloc_id"] == "bloc-1"
+    project_id = await _project_with_scenarios(client)
+    assert (await client.post(f"/projects/{project_id}/run")).status_code == 200
+    assert (await client.post(f"/projects/{project_id}/scenarios/SC-001/rerun")).status_code == 200
+    await asyncio.sleep(0.05)
+    assert started == [f"run:{project_id}", "rerun:SC-001"]
 
 
 async def test_update_test_flow(client: AsyncClient) -> None:
-    from tgi.services.state_manager import state_manager
-
-    pid = await _upload_sample(client)
-    # Seed a test into the first bloc
-    state = await state_manager.load(pid)
-    state["blocs"][0]["tests"] = [{"id": "TEST-001", "status": "draft"}]
-    await state_manager.save(pid, state)
-
-    resp = await client.put(f"/projects/{pid}/tests/TEST-001", json={"status": "validated"})
+    project_id = await _project_with_scenarios(client)
+    resp = await client.put(
+        f"/projects/{project_id}/tests/TEST-0101",
+        json={"status": "validated", "name": "creation revue"},
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "validated"
 
-    missing = await client.put(f"/projects/{pid}/tests/NOPE", json={"status": "x"})
-    assert missing.status_code == 404
+    tests = (await client.get(f"/projects/{project_id}/tests")).json()["tests"]
+    assert [x["name"] for x in tests if x["id"] == "TEST-0101"] == ["creation revue"]
+    assert (await client.put(f"/projects/{project_id}/tests/PAS-LA", json={"status": "x"})).status_code == 404
 
 
 async def test_rollback_success(client: AsyncClient) -> None:
@@ -219,295 +222,104 @@ async def test_partials_tests_and_history(client: AsyncClient) -> None:
     assert resp_hist.status_code == 200
 
 
-async def test_blocs_partial_colour_codes_scores(client: AsyncClient) -> None:
-    """The blocs partial must show the score and the right colour per outcome."""
+async def _project_with_scenarios(client: AsyncClient) -> str:
+    """A project already distilled and generated, shaped like a real one."""
     from tgi.services.state_manager import state_manager
 
     project_id = await _upload_sample(client)
     state = await state_manager.load(project_id)
-    state["blocs"] = [
+    state["context"] = "Application de gestion des habilitations."
+    state["containers"] = {"VAL01.CU01": "Créer une habilitation", "VAL01.CU02": "Révoquer"}
+    state["axes"] = {"VAL": {"leaf_prefixes": ["RM"], "leaf_depth": 2, "count": 3}}
+    state["requirements"] = [
         {
-            "id": "b-green",
-            "title": "Passe",
-            "chunk": "c",
-            "rules": [{"id": "R1", "description": "d"}],
-            "tests": [],
-            "status": "done",
-            "score": 97,
-            "judge_passes": 1,
-            "best_version": 1,
-            "judge_history": [{"version": 1, "score": 97, "tests_count": 3}],
+            "ref": "VAL01.CU01.RM01",
+            "kind": "RM",
+            "axis": "VAL",
+            "parent": "VAL01.CU01",
+            "statement": "Le systeme cree une habilitation",
         },
         {
-            "id": "b-yellow",
-            "title": "Revue",
-            "chunk": "c",
-            "rules": [{"id": "R1", "description": "d"}],
-            "tests": [],
-            "status": "needs_human",
-            "score": 60,
-            "judge_passes": 3,
-            "best_version": 2,
-            "judge_history": [
-                {"version": 1, "score": 40, "tests_count": 2},
-                {"version": 2, "score": 60, "tests_count": 4},
-            ],
+            "ref": "VAL01.CU01.RM02",
+            "kind": "RM",
+            "axis": "VAL",
+            "parent": "VAL01.CU01",
+            "statement": "Sans test pour le moment",
         },
         {
-            "id": "b-red",
-            "title": "Faible",
-            "chunk": "c",
-            "rules": [{"id": "R1", "description": "d"}],
-            "tests": [],
-            "status": "needs_human",
-            "score": 12,
-            "judge_passes": 3,
-            "judge_history": [],
-        },
-        {
-            "id": "b-unscored",
-            "title": "Non evalue",
-            "chunk": "c",
-            "rules": [{"id": "R1", "description": "d"}],
-            "tests": [],
-            "status": "needs_human",
-            "score": None,
-            "judge_passes": 3,
-            "judge_history": [],
-        },
-        {
-            "id": "b-norules",
-            "title": "Sans regle",
-            "chunk": "c",
-            "rules": [],
-            "tests": [],
-            "status": "done",
-            "score": None,
-            "judge_passes": 0,
-            "judge_history": [],
-        },
-        {
-            "id": "b-error",
-            "title": "Casse",
-            "chunk": "c",
-            "rules": [],
-            "tests": [],
-            "status": "error",
-            "error": "Le modele n'a pas renvoye de JSON exploitable.",
-            "judge_passes": 0,
+            "ref": "VAL01.CU02.RM01",
+            "kind": "EM",
+            "axis": "VAL",
+            "parent": "VAL01.CU02",
+            "statement": "La revocation est journalisee",
         },
     ]
-    await state_manager.save(project_id, state)
-
-    resp = await client.get(f"/projects/{project_id}/partials/blocs")
-    assert resp.status_code == 200
-    html = resp.text
-
-    # Green: passed the threshold, score shown
-    assert "badge-green" in html
-    assert "Terminé, score 97%" in html
-    # Yellow: kept but flagged, best version reported
-    assert "badge-orange" in html
-    assert "Revue humaine, score 60%" in html
-    assert "version retenue v2" in html
-    # Red: score below the bad threshold
-    assert "badge-red" in html
-    assert "Couverture faible, score 12%" in html
-    # Unscored judge and rule-less bloc must not claim a percentage
-    assert "score non évalué" in html
-    assert "Aucune règle métier" in html
-    # Error stays rerunnable
-    assert "renvoye de JSON exploitable" in html  # apostrophes are HTML escaped
-    assert html.count("↺ Rejouer") == 6
-    # The score bar reflects the configured threshold
-    assert f"seuil {app_settings_pass_score()}%" in html
-
-
-def app_settings_pass_score() -> int:
-    from tgi.config import Settings
-
-    return Settings().judge_pass_score
-
-
-async def test_blocs_partial_shows_near_identical_rules(client: AsyncClient) -> None:
-    """A reviewer must see the close rules, with both texts, to arbitrate."""
-    from tgi.services.state_manager import state_manager
-
-    project_id = await _upload_sample(client)
-    state = await state_manager.load(project_id)
-    state["blocs"] = [
-        {
-            "id": "bloc-1",
-            "title": "Regles proches",
-            "chunk": "c",
-            "rules": [
-                {"id": "R3", "description": "Si le CDC est Banquier Conseil, supprimer la relation"},
-                {"id": "R9", "description": "Si le CDC n'est pas Banquier Conseil, supprimer la relation"},
-            ],
-            "tests": [],
-            "status": "done",
-            "score": 100,
-            "judge_passes": 1,
-            "similar_rules": [{"a": "R3", "b": "R9", "ratio": 0.907}],
-        }
+    state["discards"] = [
+        {"what": "Historique des versions", "reason": "sans_valeur_test", "refs": [], "decision": "proposed"}
     ]
-    await state_manager.save(project_id, state)
-
-    resp = await client.get(f"/projects/{project_id}/partials/blocs")
-    html = resp.text
-    assert "paire(s) de règles très proches" in html
-    assert "R3 ~ R9 (91%)" in html
-    # Both wordings are shown so the difference is visible
-    assert "Si le CDC est Banquier Conseil" in html
-    assert "pas Banquier Conseil" in html
-    # And the warning is explicit that nothing was merged
-    assert "jamais fusionnées" in html
-
-
-async def _project_with_rules(client: AsyncClient) -> str:
-    from tgi.services.state_manager import state_manager
-
-    project_id = await _upload_sample(client)
-    state = await state_manager.load(project_id)
-    state["blocs"] = [
+    state["scenarios"] = [
         {
-            "id": "bloc-1",
-            "title": "Habilitations",
-            "chunk": "c",
+            "id": "SC-001",
+            "title": "Creer une habilitation",
+            "container": "VAL01.CU01",
+            "kind": "nominal",
             "status": "done",
-            "score": 90,
-            "judge_passes": 1,
-            "rules": [
-                {"id": "R1", "source_ref": "VAL01.CU01.RM01", "description": "Le systeme cree une habilitation"},
-                {"id": "R2", "source_ref": "", "description": "Sans reference et sans test", "reviewed": True},
-            ],
+            "actors": ["RRC"],
+            "preconditions": "etre authentifie",
+            "requirement_refs": ["VAL01.CU01.RM01", "VAL01.CU01.RM02"],
+            "uncovered_refs": ["VAL01.CU01.RM02"],
+            "untestable": [],
             "tests": [
                 {
-                    "id": "TEST-001",
-                    "bloc_id": "bloc-1",
-                    "business_rule": "R1",
-                    "name": "creation",
+                    "id": "TEST-0101",
+                    "scenario_id": "SC-001",
+                    "name": "creation nominale",
                     "description": "d",
-                    "steps": [],
+                    "requirement_refs": ["VAL01.CU01.RM01"],
+                    "steps": [{"order": 1, "description": "agir", "expected_result": "vu"}],
+                    "data_rows": [],
                     "status": "draft",
                     "created_at": "2026-01-01T00:00:00Z",
                     "updated_at": "2026-01-01T00:00:00Z",
-                },
+                }
+            ],
+        },
+        {
+            "id": "SC-002",
+            "title": "Revoquer une habilitation",
+            "container": "VAL01.CU02",
+            "kind": "erreur",
+            "status": "done",
+            "derived": True,
+            "actors": [],
+            "preconditions": "",
+            "requirement_refs": ["VAL01.CU02.RM01"],
+            "uncovered_refs": [],
+            "untestable": [],
+            "tests": [
                 {
-                    "id": "TEST-002",
-                    "bloc_id": "bloc-1",
-                    "business_rule": "R1, R3",
-                    "name": "multi",
+                    "id": "TEST-0201",
+                    "scenario_id": "SC-002",
+                    "name": "revocation journalisee",
                     "description": "d",
-                    "steps": [],
-                    "status": "draft",
+                    "requirement_refs": ["VAL01.CU02.RM01"],
+                    "steps": [{"order": 1, "description": "revoquer", "expected_result": "journal"}],
+                    "data_rows": [{"cas": "sans droit", "attendu": "refus"}],
+                    "status": "validated",
                     "created_at": "2026-01-01T00:00:00Z",
                     "updated_at": "2026-01-01T00:00:00Z",
-                },
+                }
             ],
         },
     ]
+    state["distilled_at"] = "2026-01-01T00:00:00Z"
     await state_manager.save(project_id, state)
     return project_id
 
 
-async def test_rules_partial_shows_the_specification_hierarchy(client: AsyncClient) -> None:
-    """The deliverable follows the document numbering: functionality, use case, rule."""
-    project_id = await _project_with_rules(client)
-    resp = await client.get(f"/projects/{project_id}/partials/rules")
-    assert resp.status_code == 200
-    html = resp.text
-
-    assert "VAL01" in html  # functionality level
-    assert "VAL01.CU01" in html  # use case level
-    assert "RM01" in html  # rule label taken from the reference
-    assert "Hors numérotation" in html  # the rule without a reference has its chapter
-    assert "2 tests" in html  # R1 is covered by TEST-001 and by the multi rule TEST-002
-    assert "badge-orange" in html  # R2 is not
-    # Tests are loaded on expansion, not inlined
-    assert "/rules/R1/tests" in html
-    assert 'hx-trigger="toggle once"' in html
-    # TEST-002 cites R1 and R3: R1 exists, so it is shared coverage, not an orphan
-    assert "Tests non rattachés" not in html
-
-
-async def test_rules_partial_surfaces_orphan_tests(client: AsyncClient) -> None:
-    """A test citing only rules that do not exist in its bloc must be visible."""
-    from tgi.services.state_manager import state_manager
-
-    project_id = await _project_with_rules(client)
-    state = await state_manager.load(project_id)
-    state["blocs"][0]["tests"].append(
-        {
-            "id": "TEST-099",
-            "bloc_id": "bloc-1",
-            "business_rule": "R42",
-            "name": "cite une regle inexistante",
-            "description": "d",
-            "steps": [],
-            "status": "draft",
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-        }
-    )
-    await state_manager.save(project_id, state)
-
-    html = (await client.get(f"/projects/{project_id}/partials/rules")).text
-    assert "Tests non rattachés" in html
-    assert "TEST-099" in html
-    assert "R42" in html
-
-
-async def test_rules_partial_filters_server_side(client: AsyncClient) -> None:
-    project_id = await _project_with_rules(client)
-    only_uncovered = (await client.get(f"/projects/{project_id}/partials/rules?uncovered=1")).text
-    assert "Sans reference et sans test" in only_uncovered
-    assert "Le systeme cree une habilitation" not in only_uncovered
-
-    # The haystack includes the bloc title on purpose, so filter on a rule specific word
-    by_text = (await client.get(f"/projects/{project_id}/partials/rules?q=cree")).text
-    assert "Le systeme cree une habilitation" in by_text
-    assert "Sans reference et sans test" not in by_text
-
-    by_reference = (await client.get(f"/projects/{project_id}/partials/rules?q=VAL01.CU01")).text
-    assert "Le systeme cree une habilitation" in by_reference
-
-    nothing = (await client.get(f"/projects/{project_id}/partials/rules?q=zzzintrouvable")).text
-    assert "Aucune règle ne correspond au filtre" in nothing
-
-
-async def test_rule_tests_fragment_lists_the_covering_tests(client: AsyncClient) -> None:
-    project_id = await _project_with_rules(client)
-    html = (await client.get(f"/projects/{project_id}/blocs/bloc-1/rules/R1/tests")).text
-    assert "TEST-001" in html
-    assert "TEST-002" in html
-    # TEST-002 also covers R3, shown so the reader does not count it twice
-    assert "couvre aussi" in html
-    assert "R3" in html
-
-    empty = (await client.get(f"/projects/{project_id}/blocs/bloc-1/rules/R2/tests")).text
-    assert "Aucun test pour cette règle" in empty
-
-
-async def test_rule_can_be_edited_and_marked_reviewed(client: AsyncClient) -> None:
-    project_id = await _project_with_rules(client)
-    resp = await client.put(
-        f"/projects/{project_id}/blocs/bloc-1/rules/R1",
-        json={"description": "Formulation corrigee", "source_ref": "VAL01.CU01.RM09", "reviewed": True},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["description"] == "Formulation corrigee"
-
-    rules = (await client.get(f"/projects/{project_id}/rules")).json()["rules"]
-    edited = next(r for r in rules if r["id"] == "R1")
-    assert edited["source_ref"] == "VAL01.CU01.RM09"
-    assert edited["reviewed"] is True
-    assert edited["bloc_id"] == "bloc-1"
-
-
 async def test_rule_edit_is_scoped_to_its_bloc(client: AsyncClient) -> None:
     """R1 exists in every bloc: the pair (bloc, rule) is the identity."""
-    project_id = await _project_with_rules(client)
+    project_id = await _project_with_scenarios(client)
     missing = await client.put(f"/projects/{project_id}/blocs/bloc-99/rules/R1", json={"reviewed": True})
     assert missing.status_code == 404
     unknown = await client.put(f"/projects/{project_id}/blocs/bloc-1/rules/R404", json={"reviewed": True})
@@ -516,30 +328,28 @@ async def test_rule_edit_is_scoped_to_its_bloc(client: AsyncClient) -> None:
 
 async def test_tests_partial_filters_and_paginates_server_side(client: AsyncClient) -> None:
     """A test card is about 5 kB of HTML: filtering and paging must happen server side."""
-    project_id = await _project_with_rules(client)
+    project_id = await _project_with_scenarios(client)
     html = (await client.get(f"/projects/{project_id}/partials/tests")).text
-    assert "pour 2 règles" in html
-    assert "TEST-001" in html and "TEST-002" in html
-    assert 'value="R1"' in html and 'value="R3"' in html
+    assert "TEST-0101" in html and "TEST-0201" in html
+    assert 'value="SC-001"' in html and 'value="VAL01.CU01.RM01"' in html
     # The JSON payload lives in a single quoted attribute, otherwise it closes it early
     assert "x-data='testEditor(" in html
     assert 'x-data="testEditor(' not in html
 
-    by_rule = (await client.get(f"/projects/{project_id}/partials/tests?rule=R3")).text
-    assert "TEST-002" in by_rule
-    assert "TEST-001" not in by_rule
-    assert "1 correspondent au filtre" in by_rule
+    by_scenario = (await client.get(f"/projects/{project_id}/partials/tests?scenario=SC-002")).text
+    assert "TEST-0201" in by_scenario and "TEST-0101" not in by_scenario
+
+    by_requirement = (await client.get(f"/projects/{project_id}/partials/tests?requirement=VAL01.CU01.RM01")).text
+    assert "TEST-0101" in by_requirement and "TEST-0201" not in by_requirement
+
+    by_status = (await client.get(f"/projects/{project_id}/partials/tests?status=validated")).text
+    assert "TEST-0201" in by_status and "TEST-0101" not in by_status
 
     paged = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1")).text
-    assert "1 à 1 sur 2" in paged
-    assert "page 1/2" in paged
+    assert "1 à 1 sur 2" in paged and "page 1/2" in paged
 
-    second = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1&page=2")).text
-    assert "TEST-002" in second
-    assert "TEST-001" not in second
-
-    out_of_range = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1&page=99")).text
-    assert "page 2/2" in out_of_range  # clamped, never an empty page
+    clamped = (await client.get(f"/projects/{project_id}/partials/tests?per_page=1&page=99")).text
+    assert "page 2/2" in clamped  # never an empty page
 
     none = (await client.get(f"/projects/{project_id}/partials/tests?q=zzzintrouvable")).text
     assert "Aucun test ne correspond au filtre" in none
@@ -548,57 +358,70 @@ async def test_tests_partial_filters_and_paginates_server_side(client: AsyncClie
 async def test_progress_partial_reports_the_run(client: AsyncClient) -> None:
     from tgi.services.state_manager import state_manager
 
-    project_id = await _project_with_rules(client)
+    project_id = await _project_with_scenarios(client)
     state = await state_manager.load(project_id)
-    state["blocs"] = state["blocs"] + [
-        {"id": "bloc-2", "title": "b", "chunk": "c", "status": "pending", "rules": [], "tests": []},
-        {"id": "bloc-3", "title": "c", "chunk": "c", "status": "error", "rules": [], "tests": []},
-    ]
+    state["scenarios"].append(
+        {
+            "id": "SC-003",
+            "title": "en attente",
+            "container": "",
+            "status": "pending",
+            "requirement_refs": [],
+            "tests": [],
+        }
+    )
     await state_manager.save(project_id, state)
 
     html = (await client.get(f"/projects/{project_id}/partials/progress")).text
-    assert "2/3</strong> blocs (67 %)" in html
-    assert "erreur 1" in html
+    assert "2/3" in html
     assert "en attente 1" in html
-    assert "2 règles" in html and "2 tests" in html
+    assert "2 tests" in html
 
 
 async def test_export_contains_the_reviewable_workbook(client: AsyncClient) -> None:
-    import io as _io
-    import zipfile as _zipfile
-
     from openpyxl import load_workbook
 
-    project_id = await _project_with_rules(client)
+    project_id = await _project_with_scenarios(client)
     resp = await client.get(f"/projects/{project_id}/export")
-    assert resp.status_code == 200
-
-    with _zipfile.ZipFile(_io.BytesIO(resp.content)) as archive:
-        names = archive.namelist()
-        assert "tests.xlsx" in names
-        assert "tests/all_tests.json" in names  # JSON kept for tooling
-        workbook = load_workbook(_io.BytesIO(archive.read("tests.xlsx")))
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as archive:
+        workbook = load_workbook(io.BytesIO(archive.read("4-tests.xlsx")))
 
     assert workbook.sheetnames[0].startswith("Synth")
+    assert "Traçabilité" in workbook.sheetnames
     assert "VAL01" in workbook.sheetnames
-    assert "Hors numérotation" in workbook.sheetnames
-    sheet = workbook["VAL01"]
-    assert sheet.freeze_panes == "A2"
-    assert sheet.auto_filter.ref is not None
-    assert [c.value for c in sheet[1]][:3] == ["Cas d'utilisation", "Référence règle", "Règle"]
+    assert "Écarts" in workbook.sheetnames
+
+    # The traceability sheet is the proof nothing was forgotten
+    trace = workbook["Traçabilité"]
+    assert [c.value for c in trace[1]][:5] == [
+        "Référence exigence",
+        "Type",
+        "Cas d'utilisation",
+        "Énoncé",
+        "Statut",
+    ]
+    statuses = {row[0]: row[4] for row in trace.iter_rows(min_row=2, values_only=True)}
+    assert statuses["VAL01.CU01.RM01"] == "covered"
+    assert statuses["VAL01.CU01.RM02"] == "missing"
+
+    tests_sheet = workbook["VAL01"]
+    assert tests_sheet.freeze_panes == "A2"
+    assert tests_sheet.auto_filter.ref is not None
+    assert not tests_sheet.merged_cells.ranges
+    # A parameterised test carries its cases as rows, not as extra tests
+    assert any(row[6] == "jeu de données" for row in tests_sheet.iter_rows(min_row=2, values_only=True))
 
 
 async def test_fragments_are_compressed(client: AsyncClient) -> None:
-    """The rules tree is 1.53 MB for 850 rules and gzips 22 times smaller."""
-    project_id = await _project_with_rules(client)
+    """The scenario tree weighs 122 kB on a real project and gzips far smaller."""
+    project_id = await _project_with_scenarios(client)
 
-    plain = await client.get(f"/projects/{project_id}/partials/rules", headers={"Accept-Encoding": "identity"})
-    zipped = await client.get(f"/projects/{project_id}/partials/rules", headers={"Accept-Encoding": "gzip"})
+    plain = await client.get(f"/projects/{project_id}/partials/requirements", headers={"Accept-Encoding": "identity"})
+    zipped = await client.get(f"/projects/{project_id}/partials/requirements", headers={"Accept-Encoding": "gzip"})
     assert plain.status_code == zipped.status_code == 200
     assert zipped.headers.get("content-encoding") == "gzip"
-    # httpx decodes transparently, so compare the wire length the server reported
     assert int(zipped.headers["content-length"]) < len(plain.content)
-    assert "rules-panel" in zipped.text  # and it still decodes to the same page
+    assert "requirements-panel" in zipped.text
 
 
 async def test_the_event_stream_is_never_compressed() -> None:
@@ -642,40 +465,22 @@ async def test_the_event_stream_is_never_compressed() -> None:
 
 
 async def test_filter_dropdowns_are_ordered_numerically(client: AsyncClient) -> None:
-    """bloc-10 used to sit between bloc-1 and bloc-2 in the filter lists."""
+    """RM10 used to sit between RM1 and RM2 in the filter lists."""
     from tgi.services.state_manager import state_manager
 
-    project_id = await _project_with_rules(client)
+    project_id = await _project_with_scenarios(client)
     state = await state_manager.load(project_id)
-    template = state["blocs"][0]
-    for bloc_id in ("bloc-2", "bloc-9", "bloc-10", "bloc-20"):
-        state["blocs"].append(
-            {
-                **template,
-                "id": bloc_id,
-                "rules": [{"id": "R9", "source_ref": "", "description": f"regle de {bloc_id}"}],
-                "tests": [
-                    {
-                        "id": f"TEST-{bloc_id}",
-                        "bloc_id": bloc_id,
-                        "business_rule": "R9",
-                        "name": "t",
-                        "description": "d",
-                        "steps": [],
-                        "status": "draft",
-                        "created_at": "2026-01-01T00:00:00Z",
-                        "updated_at": "2026-01-01T00:00:00Z",
-                    }
-                ],
-            }
-        )
+    state["scenarios"][0]["tests"][0]["requirement_refs"] = [
+        "VAL01.CU01.RM10",
+        "VAL01.CU01.RM9",
+        "VAL01.CU01.RM2",
+    ]
     await state_manager.save(project_id, state)
 
     html = (await client.get(f"/projects/{project_id}/partials/tests")).text
-    blocs = re.findall(r'name="bloc"(.*?)</select>', html, re.S)[0]
-    assert re.findall(r'value="(bloc-[\d]+)"', blocs) == ["bloc-1", "bloc-2", "bloc-9", "bloc-10", "bloc-20"]
-
-    tree = (await client.get(f"/projects/{project_id}/partials/rules")).text
-    # Group titles of the unnumbered chapter, in the order the tree renders them
-    groups = re.findall(r'font-mono text-sm text-gray-200">(bloc-\d+) ·', tree)
-    assert groups == ["bloc-1", "bloc-2", "bloc-9", "bloc-10", "bloc-20"]
+    block = re.findall(r'name="requirement"(.*?)</select>', html, re.S)[0]
+    assert re.findall(r'value="(VAL01\.CU01\.RM\d+)"', block) == [
+        "VAL01.CU01.RM2",
+        "VAL01.CU01.RM9",
+        "VAL01.CU01.RM10",
+    ]

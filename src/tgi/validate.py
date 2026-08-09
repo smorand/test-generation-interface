@@ -172,7 +172,8 @@ async def _run_sample(projects_dir: Path, client: LLMClient) -> tuple[dict[str, 
         model_judge=settings.model_judge,
     )
     await git_service.init(project_id)
-    await orchestrator.split_and_propose(project_id)
+    await orchestrator.distil(project_id)
+    await orchestrator.validate_map(project_id)
 
     started = time.monotonic()
     await orchestrator.run_pipeline(project_id)

@@ -1,0 +1,99 @@
+<div id="map-panel">
+  <div class="flex flex-wrap items-center gap-4 mb-4 text-sm">
+    <span class="text-gray-300"><strong>{{ scenarios|length }}</strong> scénarios</span>
+    <span class="text-gray-500">{{ requirements_count }} exigences</span>
+    <span class="text-gray-500">{{ containers|length }} cas d'utilisation</span>
+    <span class="text-gray-500">{{ discards|length }} écarts proposés</span>
+    {% if validated %}
+      <span class="badge badge-green">carte validée</span>
+    {% elif distilled %}
+      <span class="badge badge-orange">à valider</span>
+    {% else %}
+      <span class="badge badge-gray"><span class="spinner"></span> lecture du document…</span>
+    {% endif %}
+    <button class="btn-secondary ml-auto text-xs"
+      hx-post="/projects/{{ project_id }}/redistil" hx-swap="none"
+      title="Relire le document, par exemple après avoir changé de modèle">↺ Relire</button>
+  </div>
+
+  {% if not distilled %}
+    <div class="text-gray-500 text-sm">
+      Le document est en cours de lecture. Cette étape lit la spécification en entier et en extrait
+      le contexte, les scénarios et les exigences. Elle prend de quelques secondes à une minute.
+    </div>
+  {% else %}
+
+  <div class="card mb-4">
+    <div class="text-xs uppercase text-gray-500 mb-2">Contexte retenu pour écrire les tests</div>
+    <div class="text-sm text-gray-200 whitespace-pre-wrap">{{ context or "Aucun contexte extrait." }}</div>
+  </div>
+
+  {% if axes %}
+  <div class="card mb-4">
+    <div class="text-xs uppercase text-gray-500 mb-2">Numérotation reconnue dans le document</div>
+    <div class="flex flex-wrap gap-3 text-sm">
+      {% for prefix, axis in axes.items() %}
+        <span class="badge badge-gray font-mono">{{ prefix }} → {{ axis.leaf_prefixes|join('/') }}
+          <span class="text-gray-500">({{ axis.count }} réf.)</span></span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if missing_containers or untitled %}
+  <div class="card mb-4" style="border-color:#f59e0b">
+    <div class="text-xs uppercase text-orange-400 mb-2">À regarder avant de lancer la génération</div>
+    {% if missing_containers %}
+      <div class="text-sm text-gray-300 mb-1">
+        {{ missing_containers|length }} cas d'utilisation déclarés dans le document n'ont aucun scénario:
+        <span class="font-mono text-xs">{{ missing_containers|join(', ') }}</span>
+      </div>
+    {% endif %}
+    {% if untitled %}
+      <div class="text-sm text-gray-300">
+        {{ untitled|length }} cas d'utilisation sans titre dans le document, à nommer:
+        <span class="font-mono text-xs">{{ untitled|join(', ') }}</span>
+      </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if discards %}
+  <div class="card mb-4">
+    <div class="text-xs uppercase text-gray-500 mb-2">
+      Écarts proposés · accepter retire l'élément du corpus de vérité
+    </div>
+    <div class="space-y-1">
+      {% for index, discard in discards %}
+        <div class="flex items-start gap-2 text-sm py-1" x-data="discardRow('{{ project_id }}', {{ index }})">
+          <span class="badge badge-gray shrink-0 text-xs">{{ discard.reason }}</span>
+          <span class="text-gray-300 flex-1">{{ discard.what }}
+            {% if discard.refs %}<span class="font-mono text-xs text-blue-400">{{ discard.refs|join(', ') }}</span>{% endif %}
+          </span>
+          <span class="shrink-0" x-text="label || '{{ discard.decision }}'"
+            :class="(label || '{{ discard.decision }}') === 'accepted' ? 'badge badge-red' : ((label || '{{ discard.decision }}') === 'rejected' ? 'badge badge-green' : 'badge badge-gray')"></span>
+          <button class="btn-secondary text-xs shrink-0" @click="decide('accepted')">écarter</button>
+          <button class="btn-secondary text-xs shrink-0" @click="decide('rejected')">garder</button>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="text-xs uppercase text-gray-500 mb-2">Scénarios extraits</div>
+    <div class="space-y-1">
+      {% for scenario in scenarios %}
+        <div class="flex items-baseline gap-2 text-sm py-1">
+          <span class="font-mono text-blue-400 shrink-0">{{ scenario.id }}</span>
+          <span class="badge badge-gray shrink-0 text-xs">{{ scenario.kind }}</span>
+          {% if scenario.derived %}<span class="badge badge-orange shrink-0 text-xs" title="Ajouté mécaniquement pour ne perdre aucune exigence">dérivé</span>{% endif %}
+          <span class="text-gray-200 flex-1">{{ scenario.title }}</span>
+          <span class="font-mono text-xs text-gray-500 shrink-0">{{ scenario.container or '—' }}</span>
+          <span class="text-xs text-gray-500 shrink-0">{{ scenario.requirement_refs|length }} exig.</span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>

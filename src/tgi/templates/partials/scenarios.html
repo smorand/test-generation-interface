@@ -1,0 +1,110 @@
+{% macro scenario_block(scenario) %}
+  <details class="scenario-node"
+    hx-get="/projects/{{ project_id }}/scenarios/{{ scenario.id }}/tests"
+    hx-trigger="toggle once" hx-target="find .scenario-tests" hx-swap="innerHTML">
+    <summary class="flex items-baseline gap-2 py-1 cursor-pointer">
+      <span class="font-mono text-blue-400 shrink-0">{{ scenario.id }}</span>
+      <span class="badge badge-gray shrink-0 text-xs">{{ scenario.kind }}</span>
+      <span class="text-gray-200 flex-1">{{ scenario.title }}</span>
+      {% if scenario.has_gap %}
+        <span class="badge badge-orange shrink-0" title="Des exigences de ce scénario ne sont couvertes par aucun test">
+          {{ scenario.uncovered_refs|length }} non couverte(s) ⚠
+        </span>
+      {% else %}
+        <span class="badge badge-green shrink-0">{{ scenario.coverage_percent }} %</span>
+      {% endif %}
+      <span class="badge badge-gray shrink-0">{{ scenario.tests_count }} test{% if scenario.tests_count != 1 %}s{% endif %}</span>
+      {% if scenario.status == 'error' %}<span class="badge badge-red shrink-0">erreur</span>{% endif %}
+    </summary>
+    <div class="pl-4 pb-3">
+      <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-2">
+        <span>{{ scenario.requirements_count }} exigences · {{ scenario.covered_count }} couvertes · {{ scenario.steps_count }} étapes</span>
+        {% if scenario.actors %}<span>acteurs: {{ scenario.actors|join(', ') }}</span>{% endif %}
+        {% if scenario.derived %}<span class="badge badge-orange">dérivé mécaniquement</span>{% endif %}
+        <button class="btn-secondary text-xs"
+          hx-post="/projects/{{ project_id }}/scenarios/{{ scenario.id }}/rerun" hx-swap="none">↺ Rejouer</button>
+      </div>
+      {% if scenario.preconditions %}
+        <div class="text-xs text-gray-400 mb-2">Préconditions: {{ scenario.preconditions }}</div>
+      {% endif %}
+      {% if scenario.error %}
+        <div class="text-xs text-red-400 mb-2">{{ scenario.error }}</div>
+      {% endif %}
+      {% if scenario.untestable %}
+        <div class="text-xs text-gray-400 mb-2">
+          Déclarées non testables en boîte noire:
+          {% for entry in scenario.untestable %}
+            <span class="font-mono text-blue-400">{{ entry.ref }}</span> ({{ entry.reason }}){% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="scenario-tests text-sm text-gray-500">
+        <span class="spinner"></span> chargement des tests…
+      </div>
+    </div>
+  </details>
+{% endmacro %}
+
+{% macro chapter_block(chapter, open) %}
+  <details class="mb-2" {% if open %}open{% endif %}>
+    <summary class="flex items-baseline gap-2 py-2 cursor-pointer">
+      <span class="font-mono text-base text-gray-100 shrink-0">{{ chapter.key }}</span>
+      <span class="text-gray-400 flex-1">{{ chapter.title }}</span>
+      <span class="text-xs text-gray-500 shrink-0">
+        {{ chapter.scenarios_count }} scénarios · {{ chapter.requirements_count }} exigences ·
+        {{ chapter.coverage_percent }} % · {{ chapter.tests_count }} tests
+      </span>
+      {% if chapter.has_gap %}<span class="badge badge-orange shrink-0">à compléter</span>{% endif %}
+    </summary>
+    <div class="pl-4">
+      {% for group in chapter.groups %}
+        <details class="use-case mb-1" {% if chapter.groups|length == 1 %}open{% endif %}>
+          <summary class="flex items-baseline gap-2 py-1 cursor-pointer">
+            <span class="font-mono text-sm text-gray-200">{{ group.key }}</span>
+            <span class="text-gray-400 flex-1 text-sm">{{ group.title }}</span>
+            <span class="text-xs text-gray-500 shrink-0">
+              {{ group.scenarios|length }} scénarios · {{ group.covered_count }}/{{ group.requirements_count }} exigences · {{ group.tests_count }} tests
+            </span>
+          </summary>
+          <div class="pl-4">
+            {% for scenario in group.scenarios %}{{ scenario_block(scenario) }}{% endfor %}
+          </div>
+        </details>
+      {% endfor %}
+    </div>
+  </details>
+{% endmacro %}
+
+<div id="scenarios-panel">
+  <div class="flex flex-wrap items-center gap-4 mb-4 text-sm">
+    <span class="text-gray-300"><strong>{{ summary.scenarios }}</strong> scénarios</span>
+    <span class="text-gray-500">{{ summary.tests }} tests ({{ summary.tests_per_scenario }} par scénario)</span>
+    <span class="text-gray-500">{{ summary.covered }}/{{ summary.requirements }} exigences couvertes ({{ summary.coverage_percent }} %)</span>
+    {% if summary.missing_count %}<span class="badge badge-orange">{{ summary.missing_count }} non couvertes</span>{% endif %}
+    {% if summary.untestable %}<span class="badge badge-gray">{{ summary.untestable }} non testables</span>{% endif %}
+
+    <form class="ml-auto flex items-center gap-2"
+      hx-get="/projects/{{ project_id }}/partials/scenarios" hx-target="#scenarios-container"
+      hx-swap="innerHTML" hx-trigger="submit, change delay:400ms from:input">
+      <input class="input text-xs" style="width:190px" type="search" name="q" value="{{ q }}"
+        placeholder="filtrer scénario, exigence…" />
+      <label class="flex items-center gap-1 text-xs text-gray-400">
+        <input type="checkbox" name="gaps" value="1" {% if gaps %}checked{% endif %} /> à compléter
+      </label>
+    </form>
+  </div>
+
+  {% if not tree.chapters and not tree.unplaced %}
+    <div class="text-gray-500 text-sm">
+      Aucun scénario ne correspond au filtre. Validez la carte puis lancez la génération.
+    </div>
+  {% endif %}
+
+  {% for chapter in tree.chapters %}{{ chapter_block(chapter, loop.first) }}{% endfor %}
+  {% if tree.unplaced %}{{ chapter_block(tree.unplaced, not tree.chapters) }}{% endif %}
+
+  <div class="text-xs text-gray-600 mt-4">
+    Les tests d'un scénario sont chargés au dépliage. Un scénario porte le cas principal et les
+    variantes que ses exigences imposent.
+  </div>
+</div>
