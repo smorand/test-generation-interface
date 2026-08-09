@@ -30,7 +30,9 @@ async def test_create_and_load(manager: StateManager) -> None:
     state = await manager.load(pid)
     assert state["project_id"] == pid
     assert state["doc_text"] == "contenu"
-    assert state["blocs"] == []
+    assert state["scenarios"] == []
+    assert state["requirements"] == []
+    assert state["tests_per_scenario"] == 5
     assert state["validated"] is False
     assert "created_at" in state
 
@@ -40,33 +42,34 @@ async def test_load_missing_raises(manager: StateManager) -> None:
         await manager.load("does-not-exist")
 
 
-async def test_update_and_get_bloc(manager: StateManager) -> None:
+async def test_update_and_get_scenario(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "status": "pending", "tests": []}])
-    await manager.update_bloc(pid, "bloc-1", {"status": "done", "rules": [{"id": "R1"}]})
-    bloc = await manager.get_bloc(pid, "bloc-1")
-    assert bloc is not None
-    assert bloc["status"] == "done"
-    assert bloc["rules"] == [{"id": "R1"}]
-    assert await manager.get_bloc(pid, "missing") is None
+    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
+    await manager.update_scenario(pid, "SC-001", {"status": "done", "tests": [{"id": "TEST-0001"}]})
+
+    scenario = await manager.get_scenario(pid, "SC-001")
+    assert scenario is not None
+    assert scenario["status"] == "done"
+    assert len(scenario["tests"]) == 1
+    assert await manager.get_scenario(pid, "SC-999") is None
 
 
 async def test_add_or_update_tests_dedup(manager: StateManager, projects_dir: Path) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "status": "pending", "tests": []}])
-    await manager.add_or_update_tests(pid, "bloc-1", [{"id": "TEST-001", "name": "a"}])
-    await manager.add_or_update_tests(pid, "bloc-1", [{"id": "TEST-001", "name": "b"}])
-    bloc = await manager.get_bloc(pid, "bloc-1")
-    assert bloc is not None
-    assert len(bloc["tests"]) == 1
-    assert bloc["tests"][0]["name"] == "b"
+    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
+    await manager.add_or_update_tests(pid, "SC-001", [{"id": "TEST-001", "name": "a"}])
+    await manager.add_or_update_tests(pid, "SC-001", [{"id": "TEST-001", "name": "b"}])
+    scenario = await manager.get_scenario(pid, "SC-001")
+    assert scenario is not None
+    assert len(scenario["tests"]) == 1
+    assert scenario["tests"][0]["name"] == "b"
     # Individual test file written
     assert (projects_dir / pid / "tests" / "TEST-001.json").exists()
 
 
 async def test_update_test(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "tests": [{"id": "TEST-001", "status": "draft"}]}])
+    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "tests": [{"id": "TEST-001", "status": "draft"}]}])
     updated = await manager.update_test(pid, "TEST-001", {"status": "validated"})
     assert updated is not None
     assert updated["status"] == "validated"
@@ -76,11 +79,12 @@ async def test_update_test(manager: StateManager) -> None:
 
 async def test_get_all_tests(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(
+    await manager.update_field(
         pid,
+        "scenarios",
         [
-            {"id": "bloc-1", "tests": [{"id": "T1"}]},
-            {"id": "bloc-2", "tests": [{"id": "T2"}, {"id": "T3"}]},
+            {"id": "SC-001", "tests": [{"id": "T1"}]},
+            {"id": "SC-002", "tests": [{"id": "T2"}, {"id": "T3"}]},
         ],
     )
     tests = await manager.get_all_tests(pid)
@@ -93,36 +97,29 @@ async def test_list_projects(manager: StateManager) -> None:
     assert pid in await manager.list_projects()
 
 
-async def test_concurrent_bloc_updates_no_lost_update(manager: StateManager) -> None:
-    """Parallel updates on the same project must not lose writes or read empty state.
-
-    Reproduces the pipeline race: several blocs processed at once, each doing a
-    load-modify-save cycle on the shared state.json.
-    """
+async def test_concurrent_scenario_updates_no_lost_update(manager: StateManager) -> None:
+    """Two scenarios finishing at the same time must not overwrite each other."""
     pid = await _create_sample(manager)
-    bloc_ids = [f"bloc-{i}" for i in range(20)]
-    await manager.update_blocs(pid, [{"id": bid, "status": "pending", "tests": []} for bid in bloc_ids])
+    await manager.update_field(
+        pid, "scenarios", [{"id": f"SC-{i:03d}", "status": "pending", "tests": []} for i in range(1, 11)]
+    )
 
-    async def mark_done(bloc_id: str) -> None:
-        await manager.update_bloc(pid, bloc_id, {"status": "done"})
-
-    async with asyncio.TaskGroup() as tg:
-        for bid in bloc_ids:
-            tg.create_task(mark_done(bid))
+    await asyncio.gather(
+        *(manager.update_scenario(pid, f"SC-{i:03d}", {"status": "done", "tests": [{"id": f"T{i}"}]}) for i in range(1, 11))
+    )
 
     state = await manager.load(pid)
-    statuses = {b["id"]: b["status"] for b in state["blocs"]}
-    assert len(statuses) == len(bloc_ids)
-    assert all(status == "done" for status in statuses.values()), statuses
+    assert [s["status"] for s in state["scenarios"]] == ["done"] * 10
+    assert sum(len(s["tests"]) for s in state["scenarios"]) == 10
 
 
 async def test_save_is_atomic_no_empty_read(manager: StateManager) -> None:
     """Interleaving many saves and loads never yields a truncated (empty) file."""
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "status": "pending", "tests": []}])
+    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
 
     async def writer(n: int) -> None:
-        await manager.update_bloc(pid, "bloc-1", {"status": f"s{n}"})
+        await manager.update_scenario(pid, "SC-001", {"status": f"s{n}"})
 
     async def reader() -> None:
         # load must always parse valid JSON, never hit an empty file
@@ -176,55 +173,65 @@ async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.Monkey
         await manager.save("p1", {"blocs": []})
 
 
-async def test_update_rule_is_scoped_to_the_bloc(manager: StateManager) -> None:
-    """R1 restarts at 1 in every bloc, so the rule id alone is ambiguous."""
+async def test_update_requirement_edits_the_statement(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(
+    await manager.update_field(
         pid,
+        "requirements",
         [
-            {"id": "bloc-1", "rules": [{"id": "R1", "description": "premiere"}], "tests": []},
-            {"id": "bloc-2", "rules": [{"id": "R1", "description": "seconde"}], "tests": []},
+            {"ref": "F01.EU01.CU01.RM01", "kind": "RM", "statement": "avant", "parent": "F01.EU01.CU01"},
+            {"ref": "F01.EU01.CU01.RM02", "kind": "RM", "statement": "autre", "parent": "F01.EU01.CU01"},
         ],
     )
-    updated = await manager.update_rule(pid, "bloc-2", "R1", {"description": "corrigee", "reviewed": True})
+
+    updated = await manager.update_requirement(pid, "F01.EU01.CU01.RM01", {"statement": "apres", "reviewed": True})
     assert updated is not None
-    rules = await manager.get_all_rules(pid)
-    by_bloc = {r["bloc_id"]: r for r in rules}
-    assert by_bloc["bloc-2"]["description"] == "corrigee"
-    assert by_bloc["bloc-2"]["reviewed"] is True
-    assert by_bloc["bloc-1"]["description"] == "premiere"  # intact
+    assert updated["statement"] == "apres"
+
+    state = await manager.load(pid)
+    assert state["requirements"][0]["statement"] == "apres"
+    assert state["requirements"][0]["reviewed"] is True
+    assert state["requirements"][1]["statement"] == "autre"  # the neighbour is untouched
 
 
-async def test_update_rule_ignores_unknown_fields(manager: StateManager) -> None:
+async def test_update_requirement_ignores_unknown_fields(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "rules": [{"id": "R1", "description": "d"}], "tests": []}])
-    updated = await manager.update_rule(pid, "bloc-1", "R1", {"description": "d2", "id": "PIRATE", "score": 99})
+    await manager.update_field(pid, "requirements", [{"ref": "R.A1", "kind": "RM", "statement": "x", "parent": ""}])
+
+    updated = await manager.update_requirement(pid, "R.A1", {"ref": "PIRATE", "parent": "PIRATE"})
     assert updated is not None
-    assert updated["id"] == "R1"
-    assert "score" not in updated
+    assert updated["ref"] == "R.A1"
+    assert updated["parent"] == ""
 
 
-async def test_update_rule_missing_returns_none(manager: StateManager) -> None:
+async def test_update_requirement_missing_returns_none(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(pid, [{"id": "bloc-1", "rules": [], "tests": []}])
-    assert await manager.update_rule(pid, "bloc-1", "R404", {"reviewed": True}) is None
-    assert await manager.update_rule(pid, "bloc-404", "R1", {"reviewed": True}) is None
+    assert await manager.update_requirement(pid, "PAS.LA1", {"statement": "x"}) is None
 
 
-async def test_get_all_rules_carries_the_bloc(manager: StateManager) -> None:
+async def test_get_all_tests_carries_the_scenario(manager: StateManager) -> None:
     pid = await _create_sample(manager)
-    await manager.update_blocs(
+    await manager.update_field(
         pid,
+        "scenarios",
         [
-            {
-                "id": "bloc-1",
-                "title": "Titre A",
-                "rules": [{"id": "R1", "description": "a"}, "pas un dict"],
-                "tests": [],
-            },
-            {"id": "bloc-2", "title": "Titre B", "rules": [{"id": "R1", "description": "b"}], "tests": []},
+            {"id": "SC-001", "tests": [{"id": "TEST-0001", "name": "a"}]},
+            {"id": "SC-002", "tests": [{"id": "TEST-0002", "name": "b", "scenario_id": "SC-002"}]},
         ],
     )
-    rules = await manager.get_all_rules(pid)
-    assert len(rules) == 2  # l'entree invalide est ignoree
-    assert {r["bloc_title"] for r in rules} == {"Titre A", "Titre B"}
+    tests = await manager.get_all_tests(pid)
+    assert {t["id"]: t["scenario_id"] for t in tests} == {"TEST-0001": "SC-001", "TEST-0002": "SC-002"}
+
+
+async def test_a_discard_decision_is_recorded_not_applied(manager: StateManager) -> None:
+    """Accepting a discard takes references out of the corpus, so it is stored explicitly."""
+    pid = await _create_sample(manager)
+    await manager.update_field(pid, "discards", [{"what": "cartouche", "reason": "sans_valeur_test", "refs": []}])
+
+    decided = await manager.decide_discard(pid, 0, "accepted")
+    assert decided is not None
+    assert decided["decision"] == "accepted"
+    assert "decided_at" in decided
+
+    assert await manager.decide_discard(pid, 9, "accepted") is None
+    assert await manager.decide_discard(pid, 0, "n'importe quoi") is None

@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # chunk_overlap only applies where a section must be cut by paragraphs.
     chunk_size: int = 4000
     chunk_overlap: int = 200
+    # Target volume per scenario, honoured by generation and shown in the interface.
+    # At 5, the reference specification yields about 290 tests against 2199 before.
+    tests_per_scenario: int = 5
     max_tests_per_rule: int = 4
     test_similarity_threshold: float = 0.9
     # Rules worded almost the same are only flagged for the reviewer, never

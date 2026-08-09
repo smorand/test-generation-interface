@@ -1,0 +1,311 @@
+"""Read the numbering a specification gives itself, without assuming its vocabulary.
+
+A functional specification numbers its own content, and that numbering is the only
+trustworthy skeleton available: measured on a real document, extraction finds 51 of 51 use
+cases and 401 of 401 requirements with no orphan, where a model asked the same question
+found 46 and fabricated references as soon as it was interrogated about a named one.
+
+So the levels are inferred rather than hardcoded. Counting prefixes per position over the
+whole identifier population of the reference document gives position 0 as F or E, position 1
+as EU, M, N or T, position 2 as CU, position 3 as RM or EM. The prefix dominating the
+deepest shared position is the leaf, the one above it is the container, and a document
+writing UC instead of CU is read just as well.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# A segment is letters then digits, with an optional letter suffix: RM01, RM07a, VAL01
+_SEGMENT = r"[A-Za-z]{1,6}\d+[a-z]?"
+_REFERENCE_RE = re.compile(rf"\b{_SEGMENT}(?:\.{_SEGMENT})+\b")
+_PREFIX_RE = re.compile(r"^[A-Za-z]+")
+# The reference must be matched greedily and segment by segment: a lazy pattern stops at
+# the first letter and turns "F03.EU08.CU01 Notification" into the reference "F".
+_HEADING_RE = re.compile(
+    rf"^#{{1,6}}\s*(?P<ref>{_SEGMENT}(?:\.{_SEGMENT})*)\s*[:\-–]?\s+(?P<title>.+)$",
+    re.MULTILINE,
+)
+_WHITESPACE_RE = re.compile(r"\s+")
+
+# A prefix seen once is a typo or a stray label, not a level of the numbering
+_MIN_PREFIX_SUPPORT = 3
+# How much text after an identifier is kept as its statement
+_STATEMENT_CHARS = 300
+
+
+@dataclass(frozen=True)
+class Level:
+    """One level of the numbering, for example CU at depth 2."""
+
+    depth: int
+    prefix: str
+    count: int
+
+
+@dataclass(frozen=True)
+class Axis:
+    """One family of identifiers, with its own depth.
+
+    Measured on the reference document, families do not share a depth: the functional one
+    is F.EU.CU.RM, four segments, while screens are E.M or E.N, two. A single global depth
+    silently drops the shorter families, which is how 205 screen references ended up
+    treated as noise.
+    """
+
+    prefix: str
+    leaf_depth: int
+    container_depth: int
+    leaf_prefixes: tuple[str, ...]
+    count: int
+
+
+@dataclass
+class Requirement:
+    """A numbered element of the specification, quoted from the document."""
+
+    ref: str
+    kind: str
+    statement: str
+    parent: str
+    axis: str = ""
+    title: str = ""
+
+
+@dataclass
+class Grammar:
+    """The numbering scheme a document actually uses, one entry per family."""
+
+    levels: dict[int, list[Level]] = field(default_factory=dict)
+    axes: dict[str, Axis] = field(default_factory=dict)
+
+    @property
+    def known(self) -> bool:
+        return bool(self.axes)
+
+    def axis_of(self, ref: str) -> Axis | None:
+        match = _PREFIX_RE.match(ref)
+        return self.axes.get(match.group(0).upper()) if match else None
+
+    def is_container(self, ref: str) -> bool:
+        """True when the reference names a container rather than a statement."""
+        axis = self.axis_of(ref)
+        return axis is not None and len(ref.split(".")) <= axis.container_depth + 1
+
+    def container_of(self, ref: str) -> str:
+        """The container a leaf belongs to, empty when the family has none."""
+        axis = self.axis_of(ref)
+        if axis is None or axis.container_depth < 0:
+            return ""
+        segments = ref.split(".")
+        if len(segments) <= axis.container_depth:
+            return ""
+        return ".".join(segments[: axis.container_depth + 1])
+
+    def prefix_at(self, ref: str, depth: int) -> str:
+        segments = ref.split(".")
+        if depth >= len(segments):
+            return ""
+        match = _PREFIX_RE.match(segments[depth])
+        return match.group(0).upper() if match else ""
+
+    def kind_of(self, ref: str) -> str:
+        """The prefix of the last segment: RM, EM, M, N, and so on."""
+        return self.prefix_at(ref, len(ref.split(".")) - 1)
+
+
+def references_in(text: str) -> list[str]:
+    """Every dotted identifier the text contains, in order of appearance."""
+    return [match.group(0).upper() for match in _REFERENCE_RE.finditer(text)]
+
+
+def infer_grammar(text: str) -> Grammar:
+    """Derive the numbering families from the identifiers the document contains.
+
+    Each family is inferred on its own: its leaves sit at the deepest position it reaches
+    with broad support, its container one position above. A prefix seen once or twice is a
+    typo or a stray label, never a level.
+    """
+    by_depth: defaultdict[int, Counter[str]] = defaultdict(Counter)
+    per_axis_depth: defaultdict[str, Counter[int]] = defaultdict(Counter)
+    per_axis_leaves: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    per_axis_count: Counter[str] = Counter()
+
+    for ref in references_in(text):
+        segments = ref.split(".")
+        head = _PREFIX_RE.match(segments[0])
+        if head is None:
+            continue
+        axis = head.group(0).upper()
+        per_axis_count[axis] += 1
+        per_axis_depth[axis][len(segments) - 1] += 1
+        tail = _PREFIX_RE.match(segments[-1])
+        if tail:
+            per_axis_leaves[axis][tail.group(0).upper()] += 1
+        for depth, segment in enumerate(segments):
+            match = _PREFIX_RE.match(segment)
+            if match:
+                by_depth[depth][match.group(0).upper()] += 1
+
+    levels = {
+        depth: [Level(depth, prefix, count) for prefix, count in counter.most_common() if count >= _MIN_PREFIX_SUPPORT]
+        for depth, counter in by_depth.items()
+    }
+    levels = {depth: found for depth, found in levels.items() if found}
+
+    axes: dict[str, Axis] = {}
+    for axis, depths in per_axis_depth.items():
+        if per_axis_count[axis] < _MIN_PREFIX_SUPPORT:
+            continue
+        leaf_depth = max(depth for depth, count in depths.items() if count >= _MIN_PREFIX_SUPPORT) if depths else 0
+        leaves = tuple(
+            prefix for prefix, count in per_axis_leaves[axis].most_common() if count >= _MIN_PREFIX_SUPPORT
+        )
+        axes[axis] = Axis(
+            prefix=axis,
+            leaf_depth=leaf_depth,
+            container_depth=leaf_depth - 1,
+            leaf_prefixes=leaves,
+            count=per_axis_count[axis],
+        )
+
+    grammar = Grammar(levels=levels, axes=axes)
+    for axis in axes.values():
+        logger.info(
+            "Numbering family %s: leaves %s at depth %d, container at depth %d, %d references",
+            axis.prefix,
+            "/".join(axis.leaf_prefixes),
+            axis.leaf_depth,
+            axis.container_depth,
+            axis.count,
+        )
+    return grammar
+
+
+def titles_in(text: str) -> dict[str, str]:
+    """Titles a document gives to its identifiers through headings."""
+    titles: dict[str, str] = {}
+    for match in _HEADING_RE.finditer(text):
+        ref = match.group("ref").upper().rstrip(".")
+        title = match.group("title").strip()
+        if title and ref not in titles:
+            titles[ref] = title
+    return titles
+
+
+def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requirement]:
+    """Every numbered element with the sentence that states it, quoted from the document.
+
+    Deduplicated on the reference: a specification repeats an identifier in reminders and
+    cross references, and the first statement is the declaring one.
+    """
+    grammar = grammar or infer_grammar(text)
+    titles = titles_in(text)
+    flat = _WHITESPACE_RE.sub(" ", text)
+
+    found: dict[str, Requirement] = {}
+    for match in _REFERENCE_RE.finditer(flat):
+        ref = match.group(0).upper()
+        if ref in found:
+            continue
+        # A container is not a requirement: F03.EU05.CU01 names a use case, and only what
+        # sits below it states something testable.
+        if grammar.is_container(ref):
+            continue
+        # The statement stops at the next identifier: a specification lists them one after
+        # another, and reading past the boundary attributes a neighbour's sentence.
+        tail = flat[match.end() : match.end() + _STATEMENT_CHARS]
+        following = _REFERENCE_RE.search(tail)
+        if following:
+            tail = tail[: following.start()]
+        statement = tail.split(" ###")[0].split(" ##")[0].lstrip(" :-–.").strip()
+        axis = grammar.axis_of(ref)
+        found[ref] = Requirement(
+            ref=ref,
+            kind=grammar.kind_of(ref),
+            statement=statement,
+            parent=grammar.container_of(ref),
+            axis=axis.prefix if axis else "",
+            title=titles.get(ref, ""),
+        )
+    return list(found.values())
+
+
+def containers(requirements: list[Requirement], text: str = "") -> dict[str, str]:
+    """Container references, with the title the document gives them when it gives one.
+
+    A container appearing only inside its leaves' identifiers has no title, and the human
+    names it: measured on the reference document, 49 of 51 use cases carry a heading.
+    """
+    titles = titles_in(text) if text else {}
+    result: dict[str, str] = {}
+    for requirement in requirements:
+        if requirement.parent:
+            result.setdefault(requirement.parent, titles.get(requirement.parent, ""))
+    for ref, title in titles.items():
+        if ref in result and title:
+            result[ref] = title
+    return result
+
+
+def axes_of(requirements: list[Requirement]) -> dict[str, list[Requirement]]:
+    """Group requirements by the family their numbering belongs to.
+
+    The reference document numbers four families and the first pipeline recognised one:
+    functional (F, EU, CU, RM or EM), screens (E with M or N), batch processes (T), then
+    prose. Grouping by the prefix at depth 0 separates them without naming any of them.
+    """
+    grouped: defaultdict[str, list[Requirement]] = defaultdict(list)
+    for requirement in requirements:
+        match = _PREFIX_RE.match(requirement.ref)
+        grouped[match.group(0).upper() if match else "?"].append(requirement)
+    return {prefix: sorted(items, key=lambda r: r.ref) for prefix, items in sorted(grouped.items())}
+
+
+def keep_known_references(candidates: Any, text: str) -> list[str]:
+    """Keep only the identifiers the document really contains, case insensitively.
+
+    The guard that makes model output usable: asked about one named use case, a model
+    returned 17 references where the document declares 1. It costs a regex and no call.
+    """
+    known = {ref.upper() for ref in references_in(text)}
+    known.update(ref.upper() for ref in re.findall(rf"\b{_SEGMENT}\b", text))
+    if not isinstance(candidates, list):
+        return []
+    kept: list[str] = []
+    for candidate in candidates:
+        ref = str(candidate).strip().upper()
+        if ref in known and ref not in kept:
+            kept.append(ref)
+    return kept
+
+
+def section_of(text: str, ref: str, max_chars: int = 6000) -> str:
+    """The document section a reference titles, cut at the next heading of the same rank.
+
+    This is the evidence a generator needs: the paragraphs the specification wrote under
+    that use case, not a chunk of fixed size that happens to overlap it.
+    """
+    target = ref.upper()
+    for match in _HEADING_RE.finditer(text):
+        if match.group("ref").upper().rstrip(".") != target:
+            continue
+        hashes = len(text[match.start() : match.end()]) - len(text[match.start() : match.end()].lstrip("#"))
+        rest = text[match.end() :]
+        boundary = re.search(rf"^#{{1,{max(hashes, 1)}}}\s", rest, re.MULTILINE)
+        section = rest[: boundary.start()] if boundary else rest
+        return (match.group(0) + section)[:max_chars].strip()
+    return ""
+
+
+def natural_sort_key(value: Any) -> tuple[tuple[int, int | str], ...]:
+    """Sort identifiers so RM9 comes before RM10, shared with the deliverable tree."""
+    from tgi.deliverable import natural_key
+
+    return natural_key(value)

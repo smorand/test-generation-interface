@@ -52,7 +52,15 @@ def normalize_label(value: Any) -> str:
 
 
 def rule_ids_of(test: dict[str, Any]) -> frozenset[str]:
-    """Rule ids a test claims to cover, read from its business_rule field."""
+    """What a test claims to cover.
+
+    Two shapes coexist: requirement_refs carries the document's own identifiers, which is
+    what the current pipeline writes, and business_rule carried the per bloc rule ids of the
+    first one. Reading both keeps deduplication working on either.
+    """
+    refs = test.get("requirement_refs")
+    if isinstance(refs, list) and refs:
+        return frozenset(str(ref).upper() for ref in refs if str(ref).strip())
     return frozenset(_RULE_ID_RE.findall(str(test.get("business_rule", "")).upper()))
 
 

@@ -99,6 +99,7 @@ class StateManager:
         doc_text: str,
         model_generator: str,
         model_judge: str,
+        tests_per_scenario: int | None = None,
     ) -> str:
         project_id = str(uuid.uuid4())
         state: dict[str, Any] = {
@@ -107,7 +108,13 @@ class StateManager:
             "doc_text": doc_text,
             "model_generator": model_generator,
             "model_judge": model_judge,
-            "blocs": [],
+            "tests_per_scenario": tests_per_scenario or settings.tests_per_scenario,
+            "context": "",
+            "scenarios": [],
+            "requirements": [],
+            "containers": {},
+            "discards": [],
+            "axes": {},
             "validated": False,
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -115,81 +122,78 @@ class StateManager:
         logger.info("Created project %s", project_id)
         return project_id
 
-    async def update_blocs(self, project_id: str, blocs: list[dict[str, Any]]) -> None:
+    async def update_field(self, project_id: str, field: str, value: Any) -> None:
+        """Set one top level field of the state under the project lock."""
         async with _state_lock(project_id):
             state = await self.load(project_id)
-            state["blocs"] = blocs
+            state[field] = value
             await self.save(project_id, state)
 
-    async def update_bloc(self, project_id: str, bloc_id: str, updates: dict[str, Any]) -> None:
+    async def update_scenario(self, project_id: str, scenario_id: str, updates: dict[str, Any]) -> None:
         async with _state_lock(project_id):
             state = await self.load(project_id)
-            for bloc in state["blocs"]:
-                if bloc["id"] == bloc_id:
-                    bloc.update(updates)
+            for scenario in state.get("scenarios") or []:
+                if str(scenario.get("id")) == scenario_id:
+                    scenario.update(updates)
                     break
             await self.save(project_id, state)
 
-    async def get_bloc(self, project_id: str, bloc_id: str) -> dict[str, Any] | None:
+    async def get_scenario(self, project_id: str, scenario_id: str) -> dict[str, Any] | None:
         state = await self.load(project_id)
-        for bloc in state["blocs"]:
-            if bloc["id"] == bloc_id:
-                found: dict[str, Any] = bloc
+        for scenario in state.get("scenarios") or []:
+            if str(scenario.get("id")) == scenario_id:
+                found: dict[str, Any] = scenario
                 return found
         return None
 
-    async def add_or_update_tests(self, project_id: str, bloc_id: str, tests: list[dict[str, Any]]) -> None:
-        """Merge new tests into bloc's test list, deduplicating by id."""
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            for bloc in state["blocs"]:
-                if bloc["id"] == bloc_id:
-                    existing = {t["id"]: t for t in bloc.get("tests", [])}
-                    for test in tests:
-                        existing[test["id"]] = test
-                    bloc["tests"] = list(existing.values())
-                    break
-            await self.save(project_id, state)
+    async def decide_discard(self, project_id: str, index: int, decision: str) -> dict[str, Any] | None:
+        """Record the human decision on a proposed discard.
 
-        # Also write individual test JSON files
-        for test in tests:
-            test_path = self.tests_dir(project_id) / f"{test['id']}.json"
-            async with aiofiles.open(test_path, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(test, indent=2, ensure_ascii=False))
-
-    async def replace_tests(self, project_id: str, bloc_id: str, tests: list[dict[str, Any]]) -> None:
-        """Replace a bloc's test list wholesale, dropping tests that are gone.
-
-        Needed to restore a previous (best scoring) version, which can hold fewer
-        tests than the currently accumulated set.
+        Accepting one takes its references out of the corpus of truth, which is why the
+        decision is stored rather than applied silently.
         """
-        kept_ids = {t["id"] for t in tests if isinstance(t, dict) and "id" in t}
-        removed_ids: set[str] = set()
+        if decision not in {"accepted", "rejected", "proposed"}:
+            return None
         async with _state_lock(project_id):
             state = await self.load(project_id)
-            for bloc in state["blocs"]:
-                if bloc["id"] == bloc_id:
-                    previous_ids = {t["id"] for t in bloc.get("tests", []) if isinstance(t, dict) and "id" in t}
-                    removed_ids = previous_ids - kept_ids
-                    bloc["tests"] = tests
-                    break
+            discards = state.get("discards") or []
+            if not 0 <= index < len(discards):
+                return None
+            discards[index]["decision"] = decision
+            discards[index]["decided_at"] = datetime.now(UTC).isoformat()
+            await self.save(project_id, state)
+            decided: dict[str, Any] = discards[index]
+        return decided
+
+    async def add_or_update_tests(self, project_id: str, scenario_id: str, tests: list[dict[str, Any]]) -> None:
+        """Merge tests into a scenario, replacing those whose id already exists."""
+        async with _state_lock(project_id):
+            state = await self.load(project_id)
+            for scenario in state.get("scenarios") or []:
+                if str(scenario.get("id")) != scenario_id:
+                    continue
+                existing = {str(t.get("id")): t for t in scenario.get("tests") or []}
+                for test in tests:
+                    existing[str(test.get("id"))] = test
+                scenario["tests"] = list(existing.values())
+                break
             await self.save(project_id, state)
 
+        # One file per test, so an exported test can be diffed on its own
         tests_dir = self.tests_dir(project_id)
+        tests_dir.mkdir(parents=True, exist_ok=True)
         for test in tests:
-            test_path = tests_dir / f"{test['id']}.json"
-            async with aiofiles.open(test_path, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(test, indent=2, ensure_ascii=False))
-        for test_id in removed_ids:
-            (tests_dir / f"{test_id}.json").unlink(missing_ok=True)
+            path = tests_dir / f"{test.get('id')}.json"
+            async with aiofiles.open(path, "w", encoding="utf-8") as handle:
+                await handle.write(json.dumps(test, indent=2, ensure_ascii=False))
 
     async def update_test(self, project_id: str, test_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         async with _state_lock(project_id):
             state = await self.load(project_id)
             updated_test: dict[str, Any] | None = None
-            for bloc in state["blocs"]:
-                for test in bloc.get("tests", []):
-                    if test["id"] == test_id:
+            for scenario in state.get("scenarios") or []:
+                for test in scenario.get("tests") or []:
+                    if test.get("id") == test_id:
                         test.update(updates)
                         test["updated_at"] = datetime.now(UTC).isoformat()
                         updated_test = test
@@ -210,54 +214,29 @@ class StateManager:
             state["run_started_at"] = datetime.now(UTC).isoformat()
             await self.save(project_id, state)
 
-    async def update_rule(
-        self,
-        project_id: str,
-        bloc_id: str,
-        rule_id: str,
-        updates: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Edit one rule of one bloc.
-
-        The key is the pair (bloc, rule): rule ids restart at R1 in every bloc, so a
-        rule id alone is ambiguous across a document.
-        """
-        allowed = {"description", "source_ref", "reviewed"}
+    async def update_requirement(self, project_id: str, ref: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Edit one requirement: its statement, or the fact a human reviewed it."""
+        allowed = {"statement", "reviewed", "kind"}
         async with _state_lock(project_id):
             state = await self.load(project_id)
             updated: dict[str, Any] | None = None
-            for bloc in state["blocs"]:
-                if bloc["id"] != bloc_id:
-                    continue
-                for rule in bloc.get("rules", []):
-                    if str(rule.get("id")) == rule_id:
-                        rule.update({k: v for k, v in updates.items() if k in allowed})
-                        updated = rule
-                        break
-                break
+            for requirement in state.get("requirements") or []:
+                if str(requirement.get("ref")) == ref:
+                    requirement.update({k: v for k, v in updates.items() if k in allowed})
+                    updated = requirement
+                    break
             if updated is not None:
                 await self.save(project_id, state)
         return updated
 
-    async def get_all_rules(self, project_id: str) -> list[dict[str, Any]]:
-        """Every rule of the project, each carrying its bloc for identification."""
-        state = await self.load(project_id)
-        rules: list[dict[str, Any]] = []
-        for bloc in state["blocs"]:
-            for rule in bloc.get("rules", []):
-                if not isinstance(rule, dict):
-                    continue
-                enriched = dict(rule)
-                enriched["bloc_id"] = bloc["id"]
-                enriched["bloc_title"] = bloc.get("title", "")
-                rules.append(enriched)
-        return rules
-
     async def get_all_tests(self, project_id: str) -> list[dict[str, Any]]:
+        """Every test of the project, each carrying the scenario it belongs to."""
         state = await self.load(project_id)
         tests: list[dict[str, Any]] = []
-        for bloc in state["blocs"]:
-            tests.extend(bloc.get("tests", []))
+        for scenario in state.get("scenarios") or []:
+            for test in scenario.get("tests") or []:
+                if isinstance(test, dict):
+                    tests.append({**test, "scenario_id": test.get("scenario_id") or scenario.get("id", "")})
         return tests
 
     async def list_projects(self) -> list[str]:
