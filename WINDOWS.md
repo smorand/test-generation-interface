@@ -96,6 +96,9 @@ Ne la fermez pas pendant l'utilisation.
 
 Ouvrir ensuite un navigateur à l'adresse : <http://localhost:8080>
 
+La fenêtre noire affiche d'ailleurs l'adresse à ouvrir, dans une ligne
+« Ouvrez http://127.0.0.1:8080 dans votre navigateur ».
+
 Pour arrêter : fermer la fenêtre noire.
 
 ---
@@ -179,6 +182,15 @@ uv. La fermer, en ouvrir une nouvelle.
 **Rien ne s'affiche sur <http://localhost:8080>** : la fenêtre noire est-elle toujours
 ouverte ? Si elle s'est fermée seule, relancer `tgi.bat` et lire le message d'erreur qui
 s'affiche avant la fermeture.
+
+**« Le port 8080 est déjà utilisé par un autre programme »** : un autre logiciel occupe ce
+port, c'est courant sur un poste de travail. Ajouter dans le fichier `.env` :
+
+```
+TGI_PORT=8081
+```
+
+puis relancer `tgi.bat`, et ouvrir <http://localhost:8081>.
 
 **Erreur de certificat, ou « SSL »** : un proxy d'entreprise inspecte la connexion. Ajouter
 dans le fichier `.env` le chemin du certificat fourni par votre équipe réseau :
