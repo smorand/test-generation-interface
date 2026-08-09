@@ -239,3 +239,31 @@ def test_coverage_never_claims_full_while_a_rule_is_uncovered() -> None:
     assert coverage_percent(404, 404) == 100
     assert coverage_percent(0, 0) == 0
     assert coverage_percent(1, 3) == 33
+
+
+def test_unnumbered_rules_group_by_their_reference_when_they_have_one() -> None:
+    """T01 and T05 are this specification's batch process labels, a second axis.
+
+    Grouping them by that label keeps 56 rules navigable instead of scattering them
+    across blocs. Rules with no reference at all still group by bloc.
+    """
+    rules = [
+        {"id": "R1", "bloc_id": "bloc-1", "bloc_title": "Traitements", "source_ref": "T05", "description": "a"},
+        {"id": "R2", "bloc_id": "bloc-2", "bloc_title": "Autre", "source_ref": "T05", "description": "b"},
+        {"id": "R3", "bloc_id": "bloc-1", "bloc_title": "Traitements", "source_ref": "T01", "description": "c"},
+        {"id": "R4", "bloc_id": "bloc-1", "bloc_title": "Traitements", "source_ref": "", "description": "d"},
+        {"id": "R5", "bloc_id": "bloc-3", "bloc_title": "Messages", "source_ref": "", "description": "e"},
+    ]
+    unnumbered = build_deliverable(rules, [], {})["unnumbered"]
+    assert unnumbered is not None
+    by_key = {group.key: group for group in unnumbered.groups}
+    # Two blocs, one label: the label wins, so the pair is not split
+    assert by_key["T05"].rules_count == 2
+    assert {rule.bloc_id for rule in by_key["T05"].rules} == {"bloc-1", "bloc-2"}
+    # T01 is carried by a single rule, so it does not earn a group: 77 groups of one rule
+    # were harder to scan than the blocs they came from
+    assert "T01" not in by_key
+    # Without a shared label, the bloc is the handle left: R3 (T01) and R4 (no reference)
+    assert by_key["bloc-1"].rules_count == 2
+    assert by_key["bloc-3"].rules_count == 1
+    assert "Messages" in by_key["bloc-3"].title

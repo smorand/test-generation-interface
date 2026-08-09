@@ -13,6 +13,7 @@ a rule id meaningful: rule ids restart at R1 in every bloc.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +27,8 @@ _SOURCE_REF_RE = re.compile(rf"^{_SEGMENT}(?:\.{_SEGMENT})*$")
 
 # Below this, a reference names no use case, so it cannot be placed in the tree
 _MIN_PLACEABLE_SEGMENTS = 3
+# A document label earns its own group only when several rules share it
+_MIN_RULES_PER_LABEL = 2
 
 UNNUMBERED = "Hors numérotation"
 ORPHAN_TESTS = "Tests non rattachés"
@@ -213,6 +216,17 @@ def build_deliverable(
     scores = bloc_scores or {}
     index = tests_by_rule(tests)
 
+    # A label is worth a group of its own only when several rules share it. Measured on a
+    # real run: grouping every label made 77 groups of one rule, harder to scan than the
+    # blocs they came from, while the 9 shared labels (T01 to T05, the batch processes)
+    # gathered 54 rules.
+    unplaceable_references = Counter(
+        str(rule.get("source_ref") or "").strip().upper()
+        for rule in rules
+        if isinstance(rule, dict) and str(rule.get("source_ref") or "").strip() and not parse_source_ref(rule.get("source_ref"))
+    )
+    shared_references = {ref for ref, count in unplaceable_references.items() if count >= _MIN_RULES_PER_LABEL}
+
     chapters: dict[str, Chapter] = {}
     groups: dict[str, Group] = {}
     unnumbered = Chapter(key=UNNUMBERED, title=UNNUMBERED)
@@ -236,11 +250,22 @@ def build_deliverable(
         )
 
         if parsed is None:
-            group = unnumbered_groups.get(bloc_id)
+            # A reference that names no use case can still be the document's own label on
+            # a second axis: this specification numbers its batch processes T01, T05, and
+            # 56 rules carry one. Grouping by that label keeps them navigable instead of
+            # scattering them across blocs. Rules with no reference at all fall back to
+            # their bloc, which is the only handle left to find them.
+            reference = entry.source_ref.strip().upper()
+            group_key = reference if reference in shared_references else bloc_id
+            group = unnumbered_groups.get(group_key)
             if group is None:
-                title = str(rule.get("bloc_title") or bloc_id)
-                group = Group(key=bloc_id, title=f"{bloc_id} · {title}")
-                unnumbered_groups[bloc_id] = group
+                title = (
+                    f"{reference} · référence hors cas d'utilisation"
+                    if reference
+                    else f"{bloc_id} · {rule.get('bloc_title') or bloc_id}"
+                )
+                group = Group(key=group_key, title=title)
+                unnumbered_groups[group_key] = group
                 unnumbered.groups.append(group)
             group.rules.append(entry)
             continue
