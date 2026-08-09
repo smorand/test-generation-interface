@@ -12,8 +12,17 @@ if TYPE_CHECKING:
     import pytest
 
 
-def test_settings_defaults() -> None:
-    s = Settings()
+def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Defaults must be the code's, not the developer's.
+
+    INSTALL.md tells a newcomer to create a .env, and Settings reads it, so asserting
+    defaults without isolating both the dotenv and the environment turned this test red
+    on any machine that had configured a model.
+    """
+    for name in list(os.environ):
+        if name.upper().startswith("TGI_"):
+            monkeypatch.delenv(name, raising=False)
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.app_name == "tgi"
     assert s.model_generator == "gemma-4-26b-a4b-it"
     assert s.model_judge == "gemma-4-26b-a4b-it"
