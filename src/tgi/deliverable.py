@@ -29,9 +29,21 @@ _SOURCE_REF_RE = re.compile(rf"^{_SEGMENT}(?:\.{_SEGMENT})*$")
 _MIN_PLACEABLE_SEGMENTS = 3
 # A document label earns its own group only when several rules share it
 _MIN_RULES_PER_LABEL = 2
+_DIGITS_RE = re.compile(r"(\d+)")
 
 UNNUMBERED = "Hors numérotation"
 ORPHAN_TESTS = "Tests non rattachés"
+
+
+def natural_key(value: Any) -> tuple[tuple[int, int | str], ...]:
+    """Sort key that reads numbers as numbers: bloc-9 comes before bloc-20.
+
+    Plain sorting puts bloc-10 between bloc-1 and bloc-2, which makes a 88 bloc project
+    unreadable. Digit runs become integers and text runs stay text, each tagged so the
+    two never compare against each other.
+    """
+    parts = _DIGITS_RE.split(str(value))
+    return tuple((0, int(part)) if part.isdigit() else (1, part.casefold()) for part in parts if part)
 
 
 def coverage_percent(covered: int, total: int) -> int:
@@ -200,7 +212,7 @@ def orphan_tests(tests: list[dict[str, Any]], rules: list[dict[str, Any]]) -> li
 
 def other_rules_of(test: dict[str, Any], current_rule_id: str) -> list[str]:
     """Rule ids a test also covers, besides the one it is displayed under."""
-    return sorted(rule_id for rule_id in rule_ids_of(test) if rule_id != current_rule_id)
+    return sorted((rule_id for rule_id in rule_ids_of(test) if rule_id != current_rule_id), key=natural_key)
 
 
 def build_deliverable(
@@ -223,7 +235,9 @@ def build_deliverable(
     unplaceable_references = Counter(
         str(rule.get("source_ref") or "").strip().upper()
         for rule in rules
-        if isinstance(rule, dict) and str(rule.get("source_ref") or "").strip() and not parse_source_ref(rule.get("source_ref"))
+        if isinstance(rule, dict)
+        and str(rule.get("source_ref") or "").strip()
+        and not parse_source_ref(rule.get("source_ref"))
     )
     shared_references = {ref for ref, count in unplaceable_references.items() if count >= _MIN_RULES_PER_LABEL}
 
@@ -259,9 +273,12 @@ def build_deliverable(
             group_key = reference if reference in shared_references else bloc_id
             group = unnumbered_groups.get(group_key)
             if group is None:
+                # The title must follow the key, not the first rule seen: a group keyed on
+                # its bloc was being labelled with that rule's unshared reference, so
+                # bloc-6 showed up as "T11" and could not be found by its number.
                 title = (
-                    f"{reference} · référence hors cas d'utilisation"
-                    if reference
+                    f"{group_key} · référence hors cas d'utilisation"
+                    if group_key == reference
                     else f"{bloc_id} · {rule.get('bloc_title') or bloc_id}"
                 )
                 group = Group(key=group_key, title=title)
@@ -282,12 +299,12 @@ def build_deliverable(
             chapter.groups.append(group)
         group.rules.append(entry)
 
-    ordered_chapters = [chapters[key] for key in sorted(chapters)]
+    ordered_chapters = [chapters[key] for key in sorted(chapters, key=natural_key)]
     for chapter in ordered_chapters:
-        chapter.groups.sort(key=lambda g: g.key)
+        chapter.groups.sort(key=lambda g: natural_key(g.key))
         for group in chapter.groups:
-            group.rules.sort(key=lambda r: (r.rule_label, r.bloc_id, r.rule_id))
-    unnumbered.groups.sort(key=lambda g: g.key)
+            group.rules.sort(key=lambda r: natural_key(f"{r.rule_label} {r.bloc_id} {r.rule_id}"))
+    unnumbered.groups.sort(key=lambda g: natural_key(g.key))
 
     orphans = orphan_tests(tests, rules)
     rules_total = sum(chapter.rules_count for chapter in ordered_chapters) + unnumbered.rules_count

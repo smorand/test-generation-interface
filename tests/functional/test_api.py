@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -638,3 +639,43 @@ async def test_the_event_stream_is_never_compressed() -> None:
 
     fragment_headers = await run("/projects/abc/partials/rules")
     assert (b"content-encoding", b"gzip") in fragment_headers
+
+
+async def test_filter_dropdowns_are_ordered_numerically(client: AsyncClient) -> None:
+    """bloc-10 used to sit between bloc-1 and bloc-2 in the filter lists."""
+    from tgi.services.state_manager import state_manager
+
+    project_id = await _project_with_rules(client)
+    state = await state_manager.load(project_id)
+    template = state["blocs"][0]
+    for bloc_id in ("bloc-2", "bloc-9", "bloc-10", "bloc-20"):
+        state["blocs"].append(
+            {
+                **template,
+                "id": bloc_id,
+                "rules": [{"id": "R9", "source_ref": "", "description": f"regle de {bloc_id}"}],
+                "tests": [
+                    {
+                        "id": f"TEST-{bloc_id}",
+                        "bloc_id": bloc_id,
+                        "business_rule": "R9",
+                        "name": "t",
+                        "description": "d",
+                        "steps": [],
+                        "status": "draft",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            }
+        )
+    await state_manager.save(project_id, state)
+
+    html = (await client.get(f"/projects/{project_id}/partials/tests")).text
+    blocs = re.findall(r'name="bloc"(.*?)</select>', html, re.S)[0]
+    assert re.findall(r'value="(bloc-[\d]+)"', blocs) == ["bloc-1", "bloc-2", "bloc-9", "bloc-10", "bloc-20"]
+
+    tree = (await client.get(f"/projects/{project_id}/partials/rules")).text
+    # Group titles of the unnumbered chapter, in the order the tree renders them
+    groups = re.findall(r'font-mono text-sm text-gray-200">(bloc-\d+) ·', tree)
+    assert groups == ["bloc-1", "bloc-2", "bloc-9", "bloc-10", "bloc-20"]

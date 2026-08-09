@@ -22,7 +22,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from tgi.agents.orchestrator import Orchestrator, get_event_queue
 from tgi.config import Settings, settings
-from tgi.deliverable import build_deliverable, other_rules_of, tests_by_rule
+from tgi.deliverable import build_deliverable, natural_key, other_rules_of, tests_by_rule
 from tgi.logging_config import setup_logging
 from tgi.progress import compute_progress
 from tgi.services.doc_parser import doc_parser
@@ -67,7 +67,7 @@ def _rule_filter_options(tests: list[dict[str, Any]]) -> list[str]:
     seen: set[str] = set()
     for test in tests:
         seen.update(rule_ids_of(test))
-    return sorted(seen, key=lambda rid: (len(rid), rid))
+    return sorted(seen, key=natural_key)
 
 
 def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], dict[str, Any]]:
@@ -513,7 +513,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "rules_count": len(all_rules),
                 "tests_total": len(all_tests),
                 "rule_options": _rule_filter_options(all_tests),
-                "bloc_options": sorted({str(t.get("bloc_id", "")) for t in all_tests if t.get("bloc_id")}),
+                "bloc_options": sorted(
+                    {str(t.get("bloc_id", "")) for t in all_tests if t.get("bloc_id")}, key=natural_key
+                ),
                 "pagination": pagination,
                 "q": q,
                 "rule": rule,

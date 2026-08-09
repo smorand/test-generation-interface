@@ -265,5 +265,48 @@ def test_unnumbered_rules_group_by_their_reference_when_they_have_one() -> None:
     assert "T01" not in by_key
     # Without a shared label, the bloc is the handle left: R3 (T01) and R4 (no reference)
     assert by_key["bloc-1"].rules_count == 2
+    # And it must be titled with its bloc even though its first rule carries T01,
+    # otherwise the group shows up as "T01" and cannot be found by its number
+    assert by_key["bloc-1"].title.startswith("bloc-1 · ")
+    assert "T01" not in by_key["bloc-1"].title
+    assert by_key["T05"].title.startswith("T05 · ")
     assert by_key["bloc-3"].rules_count == 1
     assert "Messages" in by_key["bloc-3"].title
+
+
+def test_natural_key_reads_numbers_as_numbers() -> None:
+    """bloc-10 used to sit between bloc-1 and bloc-2, unreadable on 88 blocs."""
+    from tgi.deliverable import natural_key
+
+    assert sorted(["bloc-9", "bloc-20", "bloc-1", "bloc-10", "bloc-2", "bloc-100"], key=natural_key) == [
+        "bloc-1",
+        "bloc-2",
+        "bloc-9",
+        "bloc-10",
+        "bloc-20",
+        "bloc-100",
+    ]
+    # Rule labels with a letter or a dedup suffix keep a sane place
+    assert sorted(["R9a", "R10", "R2", "R9"], key=natural_key) == ["R2", "R9", "R9a", "R10"]
+    # Multi segment references compare segment by segment
+    assert sorted(["F03.EU10.CU1", "F03.EU9.CU1"], key=natural_key) == ["F03.EU9.CU1", "F03.EU10.CU1"]
+    # Digits never compare against text, whatever the shape
+    assert sorted(["bloc-3", "annexe", "12"], key=natural_key) == ["12", "annexe", "bloc-3"]
+
+
+def test_the_tree_orders_blocs_rules_and_use_cases_numerically() -> None:
+    rules = [
+        {"id": "R2", "bloc_id": "bloc-20", "source_ref": "F1.EU1.CU10.RM2", "description": "a"},
+        {"id": "R10", "bloc_id": "bloc-9", "source_ref": "F1.EU1.CU2.RM10", "description": "b"},
+        {"id": "R9", "bloc_id": "bloc-9", "source_ref": "F1.EU1.CU2.RM9", "description": "c"},
+        {"id": "R1", "bloc_id": "bloc-9", "source_ref": "", "description": "d"},
+        {"id": "R1", "bloc_id": "bloc-20", "source_ref": "", "description": "e"},
+        {"id": "R1", "bloc_id": "bloc-100", "source_ref": "", "description": "f"},
+    ]
+    result = build_deliverable(rules, [], {})
+    use_cases = [group.key for group in result["chapters"][0].groups]
+    assert use_cases == ["F1.EU1.CU2", "F1.EU1.CU10"]
+    # RM9 before RM10 inside a use case
+    assert [rule.rule_label for rule in result["chapters"][0].groups[0].rules] == ["RM9", "RM10"]
+    # And blocs in Hors numérotation follow their number, not their spelling
+    assert [group.key for group in result["unnumbered"].groups] == ["bloc-9", "bloc-20", "bloc-100"]
