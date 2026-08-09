@@ -689,10 +689,24 @@ app = create_app()
 
 
 def main() -> None:
-    """Launch the ASGI server via uvicorn."""
+    """Launch the ASGI server via uvicorn, and explain the one failure a user will hit.
+
+    A port already taken is the ordinary case on a work laptop, and uvicorn's message about
+    binding an address tells a non technical user nothing they can act on.
+    """
     import uvicorn  # noqa: PLC0415
 
-    uvicorn.run("tgi.tgi:app", host="0.0.0.0", port=8080)  # nosec B104  # bind all interfaces: server runs in a container
+    try:
+        uvicorn.run("tgi.tgi:app", host=settings.host, port=settings.port)
+    except OSError as exc:
+        # A traceback would bury the one line that helps, so no exception info here
+        logger.error(
+            "Impossible de démarrer sur le port %d (%s). Un autre programme l'utilise déjà. "
+            "Ajoutez une ligne TGI_PORT=8081 dans le fichier .env, puis relancez.",
+            settings.port,
+            exc.strerror or exc,
+        )
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     # Endpoints that reject it are detected once and it is then dropped.
     disable_thinking: bool = False
     llm_json_retries: int = 5
+    # The launcher listens here. Loopback by default, because this reads a client's functional
+    # specification on a laptop and binding every interface put it on the local network; the
+    # container sets its own host on the uvicorn command line.
+    host: str = "127.0.0.1"
+    port: int = 8080
     projects_dir: str = "./projects"
     # Target volume per scenario, honoured by generation and shown in the interface.
     # At 5, the reference specification yields about 290 tests against 2199 before.

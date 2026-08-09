@@ -28,6 +28,9 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.model_judge == "gemma-4-26b-a4b-it"
     assert s.max_parallel_blocs == 5
     assert s.tests_per_scenario == 5
+    # Loopback by default: this reads a client document on a laptop
+    assert s.host == "127.0.0.1"
+    assert s.port == 8080
     assert s.max_context_tokens == 128000
     assert s.projects_dir == "./projects"
 
