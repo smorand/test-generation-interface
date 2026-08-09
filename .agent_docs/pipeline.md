@@ -237,14 +237,14 @@ one bloc scored worse on a later pass and its earlier version was restored.
 
 | Measure | Before | After |
 |---|---|---|
-| Wall clock | 31.5 min | **17 min** |
+| Wall clock | 31.5 min | **17 min** (a repeat run reads 15, the gateway caches) |
 | Statuses | done 77, needs_human 11, error 0 | done 82, needs_human 6, **error 0** |
 | Rules | 1614, 4.3x the 377 declared | **850, 2.25x** |
 | Tests | 3799, 2.4 per rule | **2199, 2.6 per rule** |
 | Rules with a reference | 0 percent | **68 percent carry one, 52 percent placeable** |
 | Coverage | median 93 | **median 100, min 56** |
 | Judge passes | 1 pass 64, 2 passes 11, 3 passes 13 | 1 pass 76, 2 passes 3, 3 passes 6 |
-| LLM waste | 1 percent | no JSON incident logged |
+| LLM waste | 1 percent | **0 percent of 382 calls** |
 
 Faster because fewer rules means fewer judge batches, and 76 blocs of 88 converged on
 the first pass. Three targets were missed and are stated as such: 850 rules against the
@@ -252,11 +252,34 @@ the first pass. Three targets were missed and are stated as such: 850 rules agai
 70 percent. The extractor still invents references: only **73 percent of the reference
 strings it produced exist verbatim in the document**.
 
-Waste was not measured at span level on this run: the measurement harness did not call
-`configure_tracing()`, so no `llm.json_attempt` span was written. The run log carries no
-JSON incident, and `tgi-validate` on the same model reports 0 percent wasted and 0
-truncated, which is evidence the instrumentation works, not proof about this run. A
-harness that forgets tracing measures nothing: call `configure_tracing()` first.
+### Waste, measured at span level
+
+The same document was re-run with `configure_tracing()` actually called, since a harness
+that forgets it measures nothing:
+
+| Role | Calls | Wasted | Attempts per success | Median |
+|---|---|---|---|---|
+| extractor | 88 | 0 percent | 1.00 | see the caching warning |
+| generator | 157 | 0 percent | 1.00 | 23 s |
+| judge | 137 | 0 percent | 1.00 | 4 s |
+| total | 382 | **0 percent** | 1.00 | |
+
+Every call returned usable JSON on the first attempt, every `finish_reason` was `stop`,
+nothing truncated. 87 blocs done, 1 needs_human, 0 error, median score 100, mean 95,
+min 75. Judge passes: 78 blocs converged on the first, 5 took two, 2 took three, 6
+improved, none regressed.
+
+### The endpoint caches identical prompts, so re-running the same document lies
+
+That traced run finished in 15 min against 17 for the first one, and the extractor showed
+a median of 0.3 s per call, which is impossible for a 4000 character chunk. Measured
+directly: a fresh chunk takes 3.2 s and 7.1 s, the very same chunk sent again takes
+**0.35 s**. The gateway caches identical prompts.
+
+So timings from a repeat run of the same document are worthless, and **17 min is the
+honest wall clock**. Quality and waste figures survive: a cached answer is still a valid
+answer, and both runs produced exactly 850 rules and 9.7 rules per bloc. When measuring
+speed, change the document or accept that the number is a cache benchmark.
 
 Event queue: with no browser attached the SSE queue saturates. The oldest event is
 dropped rather than the newest, so a client connecting later still gets the current
