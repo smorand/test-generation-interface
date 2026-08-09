@@ -631,3 +631,16 @@ async def test_requirements_can_be_filtered_on_the_ones_the_document_never_state
     assert "VAL01.CU02.RM09" in html
     assert "jamais défini" in html
     assert "VAL01.CU01.RM01" not in html
+
+
+async def test_rereading_warns_that_it_replaces_the_tests_already_generated(client: AsyncClient) -> None:
+    """Reading the document again rebuilds the scenarios, and the tests hang off them."""
+    with_tests = await _project_with_scenarios(client)
+    fresh = await _project_in_state(client, {"scenarios": [], "distilled_at": None})
+
+    warned = (await client.get(f"/projects/{with_tests}/partials/map")).text
+    quiet = (await client.get(f"/projects/{fresh}/partials/map")).text
+
+    assert "hx-confirm" in warned
+    assert "seront remplacés" in warned
+    assert "hx-confirm" not in quiet

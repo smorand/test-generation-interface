@@ -526,6 +526,13 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "containers": state.get("containers") or {},
                 "scenarios": state.get("scenarios") or [],
                 "requirements_count": len(state.get("requirements") or []),
+                # Reading the document again replaces the scenarios, and the tests hang off
+                # them: the count is what makes the warning specific instead of scary.
+                "tests_count": sum(
+                    len(scenario.get("tests") or [])
+                    for scenario in state.get("scenarios") or []
+                    if isinstance(scenario, dict)
+                ),
                 "discards": list(enumerate(state.get("discards") or [])),
                 "untitled": sorted(
                     (ref for ref, title in (state.get("containers") or {}).items() if not title), key=natural_key

@@ -17,7 +17,8 @@
     {% endif %}
     <button class="btn-secondary ml-auto text-xs"
       hx-post="/projects/{{ project_id }}/redistil" hx-swap="none"
-      title="Relire le document, par exemple après avoir changé de modèle">↺ Relire</button>
+      {% if tests_count %}hx-confirm="Relire le document reconstruit la carte, donc les {{ tests_count }} tests déjà générés seront remplacés. L'onglet HISTORIQUE permet de revenir en arrière. Continuer ?"{% endif %}
+      title="Relire le document, par exemple après avoir changé de modèle{% if tests_count %} (remplace les {{ tests_count }} tests générés){% endif %}">↺ Relire</button>
   </div>
 
   {% if not distilled %}
