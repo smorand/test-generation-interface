@@ -46,7 +46,11 @@ def _test_offset(scenario_id: str) -> int:
 
 
 def get_project_lock(project_id: str) -> asyncio.Lock:
-    """Serialise the read, modify, write cycles of one project."""
+    """Serialise the read, modify, write cycles of one project.
+
+    Same key as the state manager on purpose: one file, one mutex. Two keys meant no mutual
+    exclusion at all between the two modules that both load, mutate and save this file.
+    """
     return lock_for(f"project:{project_id}")
 
 

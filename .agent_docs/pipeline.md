@@ -209,6 +209,14 @@ a list verdict once failed whole blocs with `'list' object has no attribute 'get
 **Every exception is reported on its scenario.** A swallowed one left 58 scenarios stuck at
 running with no trace, and `gather(return_exceptions=True)` is what hid it.
 
+**One file, one mutex.** The state manager keyed its lock `state:<id>` and the orchestrator keyed
+its own `project:<id>`, so two mutexes guarded one file and gave no mutual exclusion between the
+two modules that both load the whole state, change part of it and save it back. An interleaving
+discards the other's work, up to a whole distillation. The failure mode seen in the interface:
+scenarios carrying 468 references next to an empty requirement list, a state no single save can
+produce. `tests/test_state_races.py` interleaves the two cycles on purpose and fails if the keys
+ever diverge again.
+
 **Locks belong to the loop that runs them.** An `asyncio.Lock` binds to the first loop that
 awaits it, so a lock in a module level registry leaked between tests and raised "bound to a
 different event loop", making failures depend on test order. `locks.py` keys them by running

@@ -47,8 +47,14 @@ def _replace_with_retry(source: Path, target: Path) -> None:
 
 
 def _state_lock(project_id: str) -> asyncio.Lock:
-    """One writer at a time per project, on the loop currently running."""
-    return lock_for(f"state:{project_id}")
+    """One writer at a time per project, on the loop currently running.
+
+    The key has to be the one the orchestrator uses. It was "state:<id>" here and
+    "project:<id>" there, so two mutexes guarded one file: a read, modify, write cycle in the
+    orchestrator interleaved with one here, and whichever saved last silently discarded the
+    other's work, up to a whole distillation.
+    """
+    return lock_for(f"project:{project_id}")
 
 
 class StateManager:
