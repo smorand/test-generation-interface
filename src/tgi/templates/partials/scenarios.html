@@ -1,40 +1,45 @@
 {% macro scenario_block(scenario) %}
-  <details class="scenario-node"
+  <details class="tree-scenario kind-{{ scenario.kind }}"
     hx-get="/projects/{{ project_id }}/scenarios/{{ scenario.id }}/tests"
     hx-trigger="toggle once" hx-target="find .scenario-tests" hx-swap="innerHTML">
-    <summary class="flex items-baseline gap-2 py-1 cursor-pointer">
-      <span class="font-mono text-blue-400 shrink-0">{{ scenario.id }}</span>
+    <summary class="tree-row">
+      <span class="chev">&#9656;</span>
+      <span class="font-mono text-blue-400 shrink-0 text-xs">{{ scenario.id }}</span>
       <span class="badge badge-gray shrink-0 text-xs">{{ scenario.kind }}</span>
-      <span class="text-gray-200 flex-1">{{ scenario.title }}</span>
+      <span class="tree-title text-gray-200 text-sm">{{ scenario.title }}</span>
+      {% if scenario.derived %}<span class="badge badge-gray shrink-0 text-xs"
+        title="Aucun scénario n'était écrit pour ce cas d'utilisation, il a été déduit de la numérotation">déduit</span>{% endif %}
+      {% if scenario.status == 'error' %}<span class="badge badge-red shrink-0">erreur</span>{% endif %}
+      <span class="tree-meta">
+        {{ scenario.tests_count }} test{% if scenario.tests_count != 1 %}s{% endif %} ·
+        {{ scenario.covered_count }}/{{ scenario.requirements_count }} exigences ·
+        {{ scenario.steps_count }} étapes
+      </span>
       {% if scenario.has_gap %}
         <span class="badge badge-orange shrink-0" title="Des exigences de ce scénario ne sont couvertes par aucun test">
-          {{ scenario.uncovered_refs|length }} non couverte(s) ⚠
+          {{ scenario.uncovered_refs|length }} non couverte(s)
         </span>
       {% else %}
         <span class="badge badge-green shrink-0">{{ scenario.coverage_percent }} %</span>
       {% endif %}
-      <span class="badge badge-gray shrink-0">{{ scenario.tests_count }} test{% if scenario.tests_count != 1 %}s{% endif %}</span>
-      {% if scenario.status == 'error' %}<span class="badge badge-red shrink-0">erreur</span>{% endif %}
     </summary>
-    <div class="pl-4 pb-3">
+    <div class="tree-body">
       <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-2">
-        <span>{{ scenario.requirements_count }} exigences · {{ scenario.covered_count }} couvertes · {{ scenario.steps_count }} étapes</span>
-        {% if scenario.actors %}<span>acteurs: {{ scenario.actors|join(', ') }}</span>{% endif %}
-        {% if scenario.derived %}<span class="badge badge-orange">dérivé mécaniquement</span>{% endif %}
-        <button class="btn-secondary text-xs"
-          hx-post="/projects/{{ project_id }}/scenarios/{{ scenario.id }}/rerun" hx-swap="none">↺ Rejouer</button>
+        {% if scenario.actors %}<span>acteurs: <span class="text-gray-400">{{ scenario.actors|join(', ') }}</span></span>{% endif %}
+        {% if scenario.preconditions %}
+          <span class="flex-1">préconditions: <span class="text-gray-400">{{ scenario.preconditions }}</span></span>
+        {% endif %}
+        <button class="btn-secondary text-xs shrink-0"
+          hx-post="/projects/{{ project_id }}/scenarios/{{ scenario.id }}/rerun" hx-swap="none">&#8634; Rejouer</button>
       </div>
-      {% if scenario.preconditions %}
-        <div class="text-xs text-gray-400 mb-2">Préconditions: {{ scenario.preconditions }}</div>
-      {% endif %}
       {% if scenario.error %}
         <div class="text-xs text-red-400 mb-2">{{ scenario.error }}</div>
       {% endif %}
       {% if scenario.untestable %}
-        <div class="text-xs text-gray-400 mb-2">
+        <div class="text-xs text-gray-500 mb-2">
           Déclarées non testables en boîte noire:
           {% for entry in scenario.untestable %}
-            <span class="font-mono text-blue-400">{{ entry.ref }}</span> ({{ entry.reason }}){% if not loop.last %}, {% endif %}
+            <span class="font-mono text-blue-400" title="{{ entry.reason }}">{{ entry.ref }}</span>{% if not loop.last %}, {% endif %}
           {% endfor %}
         </div>
       {% endif %}
@@ -46,31 +51,40 @@
 {% endmacro %}
 
 {% macro chapter_block(chapter, open) %}
-  <details class="mb-2" {% if open %}open{% endif %}>
-    <summary class="flex items-baseline gap-2 py-2 cursor-pointer">
-      <span class="font-mono text-base text-gray-100 shrink-0">{{ chapter.key }}</span>
-      <span class="text-gray-400 flex-1">{{ chapter.title }}</span>
-      <span class="text-xs text-gray-500 shrink-0">
-        {{ chapter.scenarios_count }} scénarios · {{ chapter.requirements_count }} exigences ·
-        {{ chapter.coverage_percent }} % · {{ chapter.tests_count }} tests
-      </span>
+  <details class="tree-chapter" {% if open %}open{% endif %}>
+    <summary class="tree-row">
+      <span class="chev">&#9656;</span>
+      <span class="font-mono tree-key shrink-0">{{ chapter.key }}</span>
+      <span class="tree-title text-gray-300 text-sm">{{ chapter.title }}</span>
       {% if chapter.has_gap %}<span class="badge badge-orange shrink-0">à compléter</span>{% endif %}
+      <span class="tree-meta">
+        {{ chapter.scenarios_count }} scénarios · {{ chapter.tests_count }} tests ·
+        {{ chapter.requirements_count }} exigences · {{ chapter.coverage_percent }} %
+      </span>
     </summary>
-    <div class="pl-4">
+    <div class="pb-2">
+      {# Un seul groupe portant la cle du chapitre n'ajoute rien: les ecrans numerotent
+         E01 puis E01.M05, donc le niveau intermediaire recopiait le titre du dessus. #}
+      {% if chapter.groups|length == 1 and chapter.groups[0].key == chapter.key %}
+        {% for scenario in chapter.groups[0].scenarios %}{{ scenario_block(scenario) }}{% endfor %}
+      {% else %}
       {% for group in chapter.groups %}
-        <details class="use-case mb-1" {% if chapter.groups|length == 1 %}open{% endif %}>
-          <summary class="flex items-baseline gap-2 py-1 cursor-pointer">
-            <span class="font-mono text-sm text-gray-200">{{ group.key }}</span>
-            <span class="text-gray-400 flex-1 text-sm">{{ group.title }}</span>
-            <span class="text-xs text-gray-500 shrink-0">
-              {{ group.scenarios|length }} scénarios · {{ group.covered_count }}/{{ group.requirements_count }} exigences · {{ group.tests_count }} tests
+        <details class="tree-usecase" {% if chapter.groups|length == 1 %}open{% endif %}>
+          <summary class="tree-row">
+            <span class="chev">&#9656;</span>
+            <span class="font-mono tree-key shrink-0 text-xs">{{ group.key }}</span>
+            <span class="tree-title text-gray-400 text-sm">{{ group.title }}</span>
+            <span class="tree-meta">
+              {{ group.scenarios|length }} scénarios · {{ group.tests_count }} tests ·
+              {{ group.covered_count }}/{{ group.requirements_count }} exigences
             </span>
           </summary>
-          <div class="pl-4">
+          <div class="pb-1">
             {% for scenario in group.scenarios %}{{ scenario_block(scenario) }}{% endfor %}
           </div>
         </details>
       {% endfor %}
+      {% endif %}
     </div>
   </details>
 {% endmacro %}
@@ -113,7 +127,8 @@
   {% if tree.unplaced %}{{ chapter_block(tree.unplaced, not tree.chapters) }}{% endif %}
 
   <div class="text-xs text-gray-600 mt-4">
-    Les tests d'un scénario sont chargés au dépliage. Un scénario porte le cas principal et les
-    variantes que ses exigences imposent.
+    Quatre niveaux, comme le document les numérote: fonctionnalité ou écran, cas d'utilisation,
+    scénario, tests. La couleur du trait à gauche d'un scénario donne sa nature: bleu nominal,
+    rouge erreur, violet cas limite. Les tests sont chargés au dépliage.
   </div>
 </div>

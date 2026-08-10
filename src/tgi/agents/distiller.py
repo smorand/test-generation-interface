@@ -241,7 +241,9 @@ def attach_requirements(
         if hosts:
             hosts[0]["requirement_refs"].append(requirement.ref)
         elif requirement.parent:
-            title = container_titles.get(requirement.parent) or requirement.parent
+            # A container the document never titles would name the scenario after itself,
+            # which reads as "E01" and says nothing about what is being tested.
+            title = container_titles.get(requirement.parent) or f"Exigences de {requirement.parent}"
             derived = {
                 "id": f"SC-{len(scenarios) + 1:03d}",
                 "title": title,

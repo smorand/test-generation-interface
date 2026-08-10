@@ -143,8 +143,11 @@ d'entreprise (voir la fin de ce document).
 4. Cliquer sur **▶ Lancer la génération**. La barre de progression indique où en est le
    traitement et le temps restant estimé.
 
-5. **Onglet SCÉNARIOS & TESTS** : le livrable, rangé comme le document. Déplier une
-   fonctionnalité, un cas d'utilisation, un scénario, pour voir ses tests.
+5. **Onglet SCÉNARIOS & TESTS** : le livrable, rangé comme le document, en quatre niveaux
+   dépliables: fonctionnalité ou écran, cas d'utilisation, scénario, tests. Le trait de
+   couleur à gauche d'un scénario donne sa nature: bleu pour le cas nominal, rouge pour un
+   cas d'erreur, violet pour un cas limite. Chaque test se lit en deux colonnes, action et
+   résultat attendu.
 
 6. **Onglet EXIGENCES** : la preuve que rien n'a été oublié. Une ligne par exigence du
    document, groupée par cas d'utilisation, avec son énoncé tel qu'il est écrit et les tests

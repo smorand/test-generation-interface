@@ -1,43 +1,66 @@
+{% macro steps_table(steps) %}
+  {# Action et resultat attendu en colonnes: un relecteur lit la paire, pas une phrase
+     interrompue par une fleche. #}
+  <table class="steps-table">
+    <thead>
+      <tr>
+        <th class="step-index">#</th>
+        <th>Action</th>
+        <th>Résultat attendu</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for step in steps %}
+        <tr>
+          <td class="step-index">{{ step.order or loop.index }}</td>
+          <td>{{ step.description }}</td>
+          <td class="step-expected">{{ step.expected_result or "—" }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{% macro data_rows_table(rows) %}
+  <div class="text-xs text-gray-500 mt-2 mb-1">
+    Jeux de données: le test est rejoué une fois par ligne.
+  </div>
+  <table class="steps-table">
+    <thead><tr>{% for key in rows[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
 {% if not tests %}
   <div class="text-xs text-orange-400">Aucun test pour ce scénario.</div>
 {% else %}
-  <div class="space-y-2">
-    {% for test in tests %}
-      <div class="border-l-2 pl-3" style="border-color:#374151">
-        <div class="flex items-baseline gap-2">
-          <span class="font-mono text-xs text-gray-500 shrink-0">{{ test.id }}</span>
-          <span class="text-gray-300 flex-1 text-sm">{{ test.name }}</span>
-          <span class="badge badge-gray shrink-0 text-xs">{{ test.status }}</span>
-        </div>
-        {% if test.requirement_refs %}
-          <div class="text-xs text-gray-500 mt-1">
-            valide
-            {% for ref in test.requirement_refs %}
-              <span class="font-mono text-blue-400" title="{{ statements.get(ref, '') }}">{{ ref }}</span>{% if not loop.last %}, {% endif %}
-            {% endfor %}
-          </div>
-        {% endif %}
-        {% if test.description %}<div class="text-xs text-gray-400 mt-1">{{ test.description }}</div>{% endif %}
-        {% if test.coverage_note %}
-          <div class="text-xs text-gray-600 mt-1">complété pour la couverture: {{ test.coverage_note }}</div>
-        {% endif %}
-        <ol class="steps-list text-xs text-gray-400 mt-1 ml-4 list-decimal">
-          {% for step in test.steps %}
-            <li>{{ step.description }}{% if step.expected_result %}
-              <span class="text-gray-500">→ {{ step.expected_result }}</span>{% endif %}</li>
-          {% endfor %}
-        </ol>
-        {% if test.data_rows %}
-          <table class="text-xs mt-2 md-table">
-            <thead><tr>{% for key in test.data_rows[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
-            <tbody>
-              {% for row in test.data_rows %}
-                <tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        {% endif %}
+  {% for test in tests %}
+    <div class="test-card">
+      <div class="test-head">
+        <span class="font-mono text-xs text-gray-500 shrink-0">{{ test.id }}</span>
+        <span class="test-name text-sm">{{ test.name }}</span>
+        <span class="badge badge-gray shrink-0 text-xs">{{ test.status }}</span>
       </div>
-    {% endfor %}
-  </div>
+      {% if test.description %}
+        <div class="text-xs text-gray-400 mb-1">{{ test.description }}</div>
+      {% endif %}
+      {% if test.requirement_refs %}
+        <div class="text-xs text-gray-500">
+          valide
+          {% for ref in test.requirement_refs %}
+            <span class="font-mono text-blue-400" title="{{ statements.get(ref, '') }}">{{ ref }}</span>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if test.coverage_note %}
+        <div class="text-xs text-gray-600 mt-1">complété pour la couverture: {{ test.coverage_note }}</div>
+      {% endif %}
+      {% if test.steps %}{{ steps_table(test.steps) }}{% endif %}
+      {% if test.data_rows %}{{ data_rows_table(test.data_rows) }}{% endif %}
+    </div>
+  {% endfor %}
 {% endif %}

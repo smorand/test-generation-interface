@@ -331,3 +331,66 @@ details.use-case > summary:hover, details.rule-node > summary:hover { background
 /* Etapes d'un test: une alternance suffit a ne pas perdre sa ligne dans une liste de dix */
 .steps-list > li { padding: 0.15rem 0.35rem; border-radius: 3px; }
 .steps-list > li:nth-child(even) { background: rgba(148, 163, 184, 0.06); }
+
+/* --------------------------------------------------------------------------
+   Arborescence du livrable: chapitre, cas d'utilisation, scenario, test.
+   Sans reperes, les cinq niveaux avaient le meme poids visuel et le lecteur
+   perdait la profondeur des yeux. Un rail colore a gauche donne le niveau,
+   une barre de fond donne la limite de chaque objet.
+   -------------------------------------------------------------------------- */
+.tree-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.55rem; cursor: pointer;
+  border-radius: 3px; list-style: none;
+}
+.tree-row::-webkit-details-marker { display: none; }
+.tree-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-meta { margin-left: auto; white-space: nowrap; font-size: 0.7rem; color: #6b7280; }
+.chev { display: inline-block; width: 0.7rem; color: #6b7280; transition: transform 0.12s; font-size: 0.7rem; }
+details[open] > summary .chev { transform: rotate(90deg); }
+
+/* Niveau 1: le chapitre, une fonctionnalite ou un ecran */
+.tree-chapter { border-left: 3px solid #2563eb; margin-bottom: 0.5rem; background: rgba(37, 99, 235, 0.04); }
+.tree-chapter > summary { background: #14203a; font-weight: 600; }
+.tree-chapter > summary .tree-key { color: #dbeafe; font-size: 0.95rem; }
+
+/* Niveau 2: le cas d'utilisation tel que le document le numerote */
+.tree-usecase { border-left: 2px solid #475569; margin: 0.25rem 0 0.25rem 0.75rem; }
+.tree-usecase > summary { background: #131c2e; }
+.tree-usecase > summary .tree-key { color: #cbd5e1; }
+
+/* Niveau 3: le scenario, colore par sa nature, qui est ce qu'on cherche du regard */
+.tree-scenario { border-left: 2px solid #475569; margin: 0.25rem 0 0.25rem 0.75rem; }
+.tree-scenario > summary { background: rgba(148, 163, 184, 0.07); }
+.tree-scenario.kind-nominal { border-left-color: #2563eb; }
+.tree-scenario.kind-erreur { border-left-color: #dc2626; }
+.tree-scenario.kind-limite { border-left-color: #7c3aed; }
+.tree-scenario.kind-donnees { border-left-color: #0891b2; }
+.tree-body { padding: 0.4rem 0.55rem 0.6rem 1.1rem; }
+
+/* Niveau 4: le test, un bloc borne, parce qu'on relit un test entier a la fois */
+.test-card {
+  border: 1px solid #1f2937; border-radius: 4px;
+  background: #0d1420; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem;
+}
+.test-card + .test-card { margin-top: 0.5rem; }
+.test-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.25rem; }
+.test-head .test-name { color: #e5e7eb; font-weight: 600; flex: 1; }
+
+/* Niveau 5: les etapes, en table, parce qu'un relecteur lit action puis attendu */
+/* Largeurs figees: sans cela chaque table dimensionne ses colonnes seule, et la colonne
+   "resultat attendu" saute d'un test au suivant, ce qui casse le balayage vertical. */
+.steps-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; margin-top: 0.35rem; table-layout: fixed; }
+.steps-table th:first-child { width: 2.2rem; }
+.steps-table th:nth-child(2), .steps-table th:nth-child(3) { width: calc((100% - 2.2rem) / 2); }
+.steps-table td { word-wrap: break-word; }
+.steps-table th {
+  text-align: left; color: #64748b; font-weight: 600; text-transform: uppercase;
+  font-size: 0.62rem; letter-spacing: 0.04em;
+  padding: 0.2rem 0.4rem; border-bottom: 1px solid #263449;
+}
+.steps-table td { padding: 0.25rem 0.4rem; vertical-align: top; border-bottom: 1px solid #172033; color: #9ca3af; }
+.steps-table td.step-index { color: #64748b; width: 1.6rem; text-align: right; font-variant-numeric: tabular-nums; }
+.steps-table td.step-expected { color: #7d8ea3; }
+.steps-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, 0.045); }
+.steps-table tbody tr:last-child td { border-bottom: none; }

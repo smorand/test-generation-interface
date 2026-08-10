@@ -1,3 +1,4 @@
+{% from "partials/scenario_tests.html" import steps_table, data_rows_table %}
 <div id="tests-panel">
   {% if run_in_progress %}
   <div class="text-xs text-orange-400 mb-2 flex items-center gap-2">
@@ -55,20 +56,8 @@
           {% endfor %}
         </div>
         {% if test.description %}<div class="text-sm text-gray-400 mb-2">{{ test.description }}</div>{% endif %}
-        <ol class="steps-list text-xs text-gray-400 ml-4 list-decimal">
-          {% for step in test.steps %}
-            <li>{{ step.description }}{% if step.expected_result %}
-              <span class="text-gray-500">→ {{ step.expected_result }}</span>{% endif %}</li>
-          {% endfor %}
-        </ol>
-        {% if test.data_rows %}
-          <table class="text-xs mt-2 md-table">
-            <thead><tr>{% for key in test.data_rows[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
-            <tbody>
-              {% for row in test.data_rows %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}
-            </tbody>
-          </table>
-        {% endif %}
+        {% if test.steps %}{{ steps_table(test.steps) }}{% endif %}
+        {% if test.data_rows %}{{ data_rows_table(test.data_rows) }}{% endif %}
       </div>
 
       <div x-show="editing" x-cloak>
