@@ -129,7 +129,7 @@
     <div x-show="activeTab === 'tests'">
       <div id="tests-container"
         hx-get="/projects/{{ project_id }}/partials/tests"
-        hx-trigger="load, every 10s"
+        hx-trigger="load"
         hx-swap="innerHTML"
       >
         <div class="text-gray-500 text-sm">Chargement des tests…</div>
@@ -307,6 +307,18 @@ function testEditor(projectId, initialTest) {
   };
 }
 
+// Recharger un fragment. htmx.trigger(el, 'load') ne fonctionne pas: pour un
+// hx-trigger="load", htmx appelle loadImmediately une seule fois, sans installer d'ecouteur,
+// et marque le noeud comme charge. Le panneau des exigences restait donc fige sur son rendu
+// d'avant la distillation, et aucun clic sur l'onglet ne le rafraichissait.
+function tgiReload(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return;
+  const url = el.getAttribute('hx-get');
+  if (!url) return;
+  htmx.ajax('GET', url, { target: el, swap: 'innerHTML' });
+}
+
 // Les trois etats d'un ecart, dans la langue de l'interface
 const DISCARD_LABELS = { proposed: 'proposé', accepted: 'écarté', rejected: 'gardé' };
 
@@ -323,7 +335,7 @@ function discardRow(projectId, index) {
       });
       if (r.ok) {
         this.label = decision;
-        if (document.querySelector('#requirements-container')) htmx.trigger('#requirements-container', 'load');
+        tgiReload('#requirements-container');
       }
     },
   };
@@ -336,12 +348,9 @@ function discardRow(projectId, index) {
         mapReady: {{ 'true' if state.get('distilled_at') else 'false' }},
         mapValidated: {{ 'true' if state.get('validated') else 'false' }},
         // Un onglet affiche l'etat au moment de son activation, pas celui du chargement de la page
+        containers: { map: '#map-container', scenarios: '#scenarios-container', requirements: '#requirements-container', tests: '#tests-container', history: '#history-container' },
         refreshTab(tab) {
-          const targets = { map: '#map-container', scenarios: '#scenarios-container', requirements: '#requirements-container', tests: '#tests-container', history: '#history-container' };
-          const target = targets[tab];
-          if (target && document.querySelector(target)) {
-            htmx.trigger(target, 'load');
-          }
+          if (this.containers[tab]) tgiReload(this.containers[tab]);
         },
         tabs: [
           { id: 'doc', label: '📄 DOC' },
@@ -382,40 +391,45 @@ function discardRow(projectId, index) {
           } else if (evt.type === 'distil_done') {
             this.mapReady = true;
             this.statusMessage = `Carte prête: ${evt.data.scenarios} scénarios, ${evt.data.requirements} exigences`;
-            htmx.trigger('#map-container', 'load');
+            this.refreshActiveTab();
           } else if (evt.type === 'map_validated') {
             this.mapValidated = true;
             this.statusMessage = 'Carte validée';
-            htmx.trigger('#map-container', 'load');
+            this.refreshActiveTab();
           } else if (evt.type === 'pipeline_start') {
             this.pipelineRunning = true;
             this.statusMessage = `Génération de ${evt.data.total} scénarios…`;
-            htmx.trigger('#progress-container', 'load');
+            tgiReload('#progress-container');
           } else if (evt.type === 'pipeline_done') {
             this.pipelineRunning = false;
             this.statusMessage = `Terminé: ${evt.data.tests} tests, ${evt.data.coverage_percent} % des exigences couvertes`;
             this.refreshAll();
           } else if (evt.type === 'scenario_status') {
+            // Un run de 70 scenarios emet 140 evenements: recharger quatre fragments a chaque
+            // fois, dont une matrice de 468 lignes, noierait le navigateur. La barre de
+            // progression porte son propre rafraichissement, ca suffit pendant le run.
             const parts = [`${evt.data.scenario_id}: ${evt.data.status}`];
             if (evt.data.tests !== undefined) parts.push(`${evt.data.tests} tests`);
             if (evt.data.uncovered) parts.push(`${evt.data.uncovered} non couvertes`);
             this.statusMessage = parts.join(' · ');
-            htmx.trigger('#progress-container', 'load');
-            if (evt.data.status !== 'running') this.refreshAll();
           }
         },
 
+        // Seul l'onglet visible est recharge: personne ne regarde les autres, et les recharger
+        // coute une matrice complete a chaque fois.
+        refreshActiveTab() {
+          tgiReload('#progress-container');
+          this.refreshTab(this.activeTab);
+        },
         refreshAll() {
-          ['#progress-container', '#scenarios-container', '#requirements-container', '#tests-container'].forEach((sel) => {
-            if (document.querySelector(sel)) htmx.trigger(sel, 'load');
-          });
+          this.refreshActiveTab();
         },
 
         async validateMap() {
           await fetch(`/projects/${this.projectId}/validate-map`, { method: 'POST' });
           this.mapValidated = true;
           this.statusMessage = 'Carte validée';
-          htmx.trigger('#map-container', 'load');
+          tgiReload('#map-container');
         },
 
         async runPipeline() {

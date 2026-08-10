@@ -76,6 +76,15 @@
 {% endmacro %}
 
 <div id="scenarios-panel">
+  {% if run_in_progress %}
+  <div class="text-xs text-orange-400 mb-2 flex items-center gap-2">
+    <span class="spinner"></span>
+    Génération en cours: cette vue est un instantané, elle ne se met pas à jour toute seule.
+    <button class="btn-secondary text-xs"
+      hx-get="/projects/{{ project_id }}/partials/scenarios" hx-target="#scenarios-container" hx-swap="innerHTML">↻ Actualiser</button>
+  </div>
+  {% endif %}
+
   <div class="flex flex-wrap items-center gap-4 mb-4 text-sm">
     <span class="text-gray-300"><strong>{{ summary.scenarios }}</strong> scénarios</span>
     <span class="text-gray-500">{{ summary.tests }} tests ({{ summary.tests_per_scenario }} par scénario)</span>

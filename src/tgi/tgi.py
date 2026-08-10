@@ -553,6 +553,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             "partials/scenarios.html",
             {
                 "project_id": project_id,
+                # A panel read during a run is a snapshot, and it has to say so rather than look
+                # current: reloading 468 rows every few seconds is not an option.
+                "run_in_progress": compute_progress(state)["in_progress"],
                 "tree": build_tree({**state, "scenarios": selected}),
                 "summary": coverage_summary(state),
                 "q": q,
@@ -602,6 +605,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             "partials/requirements.html",
             {
                 "project_id": project_id,
+                # A panel read during a run is a snapshot, and it has to say so rather than look
+                # current: reloading 468 rows every few seconds is not an option.
+                "run_in_progress": compute_progress(state)["in_progress"],
                 "rows": page_items,
                 "total": len(rows),
                 "matching": len(matching),
@@ -641,6 +647,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             {
                 "tests": page_items,
                 "project_id": project_id,
+                # A panel read during a run is a snapshot, and it has to say so rather than look
+                # current: reloading 468 rows every few seconds is not an option.
+                "run_in_progress": compute_progress(state)["in_progress"],
                 "tests_total": len(all_tests),
                 "matching_total": len(matching),
                 "scenario_options": [(str(s.get("id")), str(s.get("title", ""))[:70]) for s in scenarios],

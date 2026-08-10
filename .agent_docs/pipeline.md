@@ -239,6 +239,20 @@ resolve as globals: `ReferenceError`, which htmx catches and treats as "filter s
 fallback polling never fired once, silently, for every filtered trigger in the app. Verified in
 the browser: the filter body throws `activeTab is not defined`.
 
+**`htmx.trigger(el, "load")` does nothing.** For `hx-trigger="load"`, htmx calls `loadImmediately`
+once and never installs an event listener, then marks the node `loaded` so a synthetic event
+cannot fire it either. Every refresh written as `htmx.trigger(container, 'load')` was therefore a
+no op: activating a tab, and the SSE handlers, refreshed nothing. Measured symptom: a project
+opened during distillation showed **0 of 0 requirements** for ever, on a state that held 468, and
+clicking the tab changed nothing. `tgiReload(selector)` calls `htmx.ajax` with the container's own
+`hx-get`, which does fire.
+
+That fix turns previously dead refreshes on, so what they refresh matters: a run of 70 scenarios
+emits about 140 events, and reloading four fragments each time, one of them a 468 row matrix, is a
+firehose. Only the active tab is reloaded, and only when a run ends. During a run the deliverable
+panels say they are a snapshot and offer a refresh button, because a panel that cannot afford to
+refresh must not look current.
+
 **A panel whose only source of truth is an event will lie.** The controls were Alpine flags
 set by SSE, so a lost event left the map displayed with no button to validate it. Fragments now
 restate the server truth on every refresh through `x-init`, and they carry their own stopping
