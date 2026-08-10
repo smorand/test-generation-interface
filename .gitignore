@@ -119,6 +119,6 @@ progress.md
 
 # NOTE: uv.lock is NOT ignored - it should be committed for reproducible builds
 # NOTE: pyproject.toml is NOT ignored - it's the project configuration
-docs/.mcp_state.json
+.mcp_state.json
 app-otel.log
 *-otel.log
