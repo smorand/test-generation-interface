@@ -238,29 +238,22 @@
 
     <!-- SLIDE 1 — Couverture. Dupliquer ce bloc pour chaque nouvelle slide.
          Mettre à jour TOTAL et slideNames dans le <script> en bas. -->
-                                                                    <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Page de garde">
+                                                                                <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Page de garde">
       <div class="slide-header">
         <div class="slide-eyebrow" data-editable="text">Generateur de tests QA &middot; Slide 01 / 08</div>
         <h1 class="slide-h1" data-editable="text">Des specifications aux <strong>tests</strong></h1>
         <p class="slide-subtitle" data-editable="text">Generateur de tests fonctionnels &middot; FastAPI, HTMX et un modele de langage &middot; src/tgi</p>
       </div>
       <div class="slide-body" data-editable="text">
-        <div class="stat-grid">
-          <div class="stat-card"><div class="stat-value">313</div><div class="stat-label">tests, contre 2199 par decoupage</div></div>
-          <div class="stat-card"><div class="stat-value">464/468</div><div class="stat-label">exigences couvertes, comptees</div></div>
-          <div class="stat-card"><div class="stat-value">83</div><div class="stat-label">appels au modele, 0 % de dechet</div></div>
+        <div class="cds-grid cols-3">
+          <div class="cds-tile"><div class="tile-eyebrow">Lecture</div><div class="tile-title">Le document en entier</div><p>Word, PDF ou texte, decoupe seulement s'il depasse la fenetre du modele.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Numerotation</div><div class="tile-title">Celle du document</div><p>Les identifiants du document sont releves sans modele et verifies contre le texte.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Carte</div><div class="tile-title">Validee par un humain</div><p>Relue avant tout appel couteux. Rien n'est ecarte en silence.</p></div>
         </div>
-        <div class="cds-notification" style="margin-top:20px;">
-          <div><div class="notif-title">Ce que fait le produit</div>
-          <div class="notif-body">Il lit une specification en entier, la distille en scenarios et en exigences, fait valider cette carte par un humain, puis ecrit les tests de chaque scenario. La couverture est comptee sur les exigences que le document declare, jamais notee par un modele.</div></div>
-        </div>
-        <div class="cds-grid cols-3" style="margin-top:18px;">
-          <div class="cds-tile"><div class="tile-eyebrow">Lecture</div><div class="tile-title">Le document entier</div>
-            <p>78k jetons en un appel, numerotation lue sans modele.</p></div>
-          <div class="cds-tile"><div class="tile-eyebrow">Controle</div><div class="tile-title">Un humain valide</div>
-            <p>La carte est relue avant tout appel couteux.</p></div>
-          <div class="cds-tile"><div class="tile-eyebrow">Preuve</div><div class="tile-title">Deux axes de lecture</div>
-            <p>Par exigence pour la couverture, par scenario pour les parcours.</p></div>
+        <div class="cds-grid cols-3" style="margin-top:12px;">
+          <div class="cds-tile"><div class="tile-eyebrow">Tests</div><div class="tile-title">Ecrits par scenario</div><p>Un parcours avec ses etapes, rattache aux exigences qu'il couvre.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Couverture</div><div class="tile-title">Comptee, pas notee</div><p>Exigence par exigence, avec les tests qui la couvrent.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Livrable</div><div class="tile-title">Relisable et exportable</div><p>Deux axes de lecture, xlsx et JSON, historique git par projet.</p></div>
         </div>
       </div>
       <div class="slide-footer">
