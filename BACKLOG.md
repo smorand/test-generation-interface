@@ -82,6 +82,15 @@ average, so the gain may be small.
 
 ## 7. Smaller items
 
+- **Splitting a document with no headings. Decided against.** `split_for_reading` cuts on the
+  document outline (`\n#`), so a text carrying no heading is never split: measured, 40 000
+  characters against a 5 000 character budget came back as one part. The call then overflows the
+  window, that part returns nothing, and the map ends up entirely derived, with every requirement
+  carried but no context and no proposed discard, on a warning in the log only. Accepted: the
+  specifications here are Word files, where the `Titre 1..6` styles become markdown headings, so
+  the answer is to write headings. Residual risk to know: a PDF cannot follow that advice, since
+  `_parse_pdf` returns page text with no heading at all. Revisit only if a large PDF shows up.
+
 - **Windows and Qwen3.6 end to end.** Never run by the assistant, the only part of the product
   with no first hand verification. `tgi.bat`, then `uv run tgi-validate --model ...`.
 - **Old interrupted projects.** Around a hundred projects from the chunk era sit in `projects/`,
