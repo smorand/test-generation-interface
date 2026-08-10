@@ -88,7 +88,7 @@ class ValidationResult:
     @property
     def projected_hours(self) -> float:
         """Wall clock for a typical specification at the measured rate."""
-        parallel = max(1, settings.max_parallel_blocs)
+        parallel = max(1, settings.max_parallel_scenarios)
         return _REFERENCE_DOCUMENT_SCENARIOS * self.seconds_per_scenario / parallel / 3600
 
     @property
@@ -329,7 +329,7 @@ def _measurement_lines(result: ValidationResult) -> list[str]:
         f"Sample run : {result.scenarios} scenario(s) in {result.duration_s:.0f} s "
         f"({result.seconds_per_scenario:.0f} s per scenario)",
         f"Projection : {result.projected_label} for a {_REFERENCE_DOCUMENT_SCENARIOS} scenario "
-        f"document at {settings.max_parallel_blocs} in parallel",
+        f"document at {settings.max_parallel_scenarios} in parallel",
         "Statuses   : " + ", ".join(f"{k}={v}" for k, v in sorted(result.statuses.items())),
         f"Coverage   : {result.covered}/{result.requirements} requirements ({result.coverage_percent}%)",
         f"Output     : {result.tests} tests, {result.steps} steps "

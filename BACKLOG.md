@@ -82,13 +82,10 @@ average, so the gain may be small.
 
 ## 7. Smaller items
 
-- **Bloc number alignment.** Sorting is fixed and numeric everywhere. Padding the display to
-  `bloc-0009` was proposed and not done, because the identifier is used in the routes, the chat
-  and the export. Only the visual alignment is missing, if it is still wanted.
 - **Windows and Qwen3.6 end to end.** Never run by the assistant, the only part of the product
   with no first hand verification. `tgi.bat`, then `uv run tgi-validate --model ...`.
-- **Old interrupted projects.** Several 78 bloc projects sit in `projects/` with blocs stuck at
-  running or pending, and they still display the judge error fixed on 2026-08-08. They are runtime
+- **Old interrupted projects.** Around a hundred projects from the chunk era sit in `projects/`,
+  stuck at running or pending, some still showing the judge error of 2026-08-08. They are runtime
   data, safe to delete.
 - **Timing measurements on a repeated document are meaningless.** The gateway caches identical
   prompts: a fresh chunk takes 3.2 seconds, the same chunk again takes 0.35. Change the document

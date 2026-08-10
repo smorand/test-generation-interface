@@ -19,6 +19,7 @@ _PLACEHOLDER_API_KEY = "changeme"
 _RENAMED_VARIABLES = {
     "TGI_ICA_BASE_URL": "TGI_LLM_BASE_URL",
     "TGI_ICA_API_KEY": "TGI_LLM_API_KEY",
+    "TGI_MAX_PARALLEL_BLOCS": "TGI_MAX_PARALLEL_SCENARIOS",
 }
 
 
@@ -116,7 +117,7 @@ class Settings(BaseSettings):
     llm_verify_ssl: bool = True
     llm_ca_bundle: str | None = None
     model_generator: str = "gemma-4-26b-a4b-it"
-    max_parallel_blocs: int = 5
+    max_parallel_scenarios: int = 5
     max_context_tokens: int = 128000
     # Output budget per LLM call. Reasoning models (gemma) spend thousands of
     # tokens thinking before answering, so a small budget truncates them mid

@@ -84,7 +84,7 @@ def test_slow_model_is_reported_with_a_projection(monkeypatch: pytest.MonkeyPatc
     """A reasoning model lands here: the projection is what makes it obvious."""
     from tgi.config import settings
 
-    monkeypatch.setattr(settings, "max_parallel_blocs", 5)
+    monkeypatch.setattr(settings, "max_parallel_scenarios", 5)
     result = _healthy()
     result.duration_s = 1200.0  # 20 min for one scenario
     _decide_verdict(result)

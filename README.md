@@ -87,7 +87,7 @@ All variables use the `TGI_` prefix.
 | `TGI_LLM_VERIFY_SSL` | `true` | Set to `false` to skip TLS verification (exposes the traffic) |
 | `TGI_LLM_CA_BUNDLE` | — | Certificate bundle to verify against, the clean fix behind a TLS gateway |
 | `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
-| `TGI_MAX_PARALLEL_BLOCS` | `5` | Max scenarios processed in parallel |
+| `TGI_MAX_PARALLEL_SCENARIOS` | `5` | Scenarios generated in parallel |
 | `TGI_TESTS_PER_SCENARIO` | `5` | Target tests per scenario, editable per project |
 | `TGI_LLM_JSON_RETRIES` | `5` | Retries when the model returns no usable JSON |
 | `TGI_DISABLE_THINKING` | `false` | Send the vLLM/SGLang switch turning reasoning off |
@@ -107,7 +107,7 @@ All variables use the `TGI_` prefix.
 - `tgi.log`, one plain text line per event: `2026-08-08 16:18:27,519 [WARNING] tgi.agents.orchestrator orchestrator._emit: ...`
 - `tgi-otel.log`, one JSON object per line (JSONL), one per span, directly parseable
 
-Neither contains prompts, model responses or credentials. A full 88 bloc run
+Neither contains prompts, model responses or credentials. A full run of 64 scenarios
 produced 224 kB and 460 kB respectively. `tgi-stats` reads the JSONL file to report
 per role latency and waste.
 
@@ -299,6 +299,7 @@ There is no judge. Coverage is arithmetic on the requirements the document decla
 | `GET` | `/projects/{id}/partials/requirements` | Matrix (`q`, `status`, `kind`, `page`) |
 | `GET` | `/projects/{id}/partials/tests` | Test search (`q`, `requirement`, `scenario`, `status`, `page`) |
 | `GET` | `/projects/{id}/partials/progress` | Run progress fragment |
+| `GET` | `/projects/{id}/partials/history` | Git history fragment |
 
 ## Git Commit Convention
 
@@ -314,19 +315,25 @@ export:           final JSON export
 
 ## Test JSON Schema
 
+`src/tgi/schemas/test_schema.json` is the contract of the exported tests, and
+`tests/test_test_schema.py` keeps it true: it reads the fields straight from the agents,
+so renaming one in the code fails the suite instead of letting the schema drift.
+
 ```json
 {
-  "id": "TEST-001",
-  "bloc_id": "bloc-1",
-  "business_rule": "Un utilisateur non authentifié...",
-  "name": "Accès refusé sans authentification",
-  "description": "Vérifie que...",
+  "id": "TEST-0101",
+  "scenario_id": "SC-001",
+  "name": "Synchronisation nominale d'une GAC avec banquier conseil",
+  "description": "Valide que les GAC avec CDC gestionnaire sont synchronisées",
+  "requirement_refs": ["F01.EU01.CU01.EM01"],
   "steps": [
-    { "order": 1, "description": "...", "expected_result": "..." }
+    { "order": 1, "description": "Une GAC est créée dans GRPS", "expected_result": "Elle est visible" }
   ],
+  "data_rows": [],
   "status": "draft",
-  "created_at": "2025-01-01T00:00:00Z",
-  "updated_at": "2025-01-01T00:00:00Z"
+  "created_at": "2026-08-09T20:22:06Z",
+  "updated_at": "2026-08-09T20:22:06Z",
+  "coverage_note": "Complète TEST-0101 pour couvrir EM01, présent seulement si la phase 3 y a touché"
 }
 ```
 

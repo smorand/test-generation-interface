@@ -169,7 +169,7 @@ class Orchestrator:
         await self._emit(project_id, "pipeline_start", {"total": len(scenarios)})
         await self._state.set_run_started(project_id)
 
-        semaphore = asyncio.Semaphore(max(settings.max_parallel_blocs, 1))
+        semaphore = asyncio.Semaphore(max(settings.max_parallel_scenarios, 1))
 
         async def guarded(scenario_id: str) -> None:
             async with semaphore:

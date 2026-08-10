@@ -25,7 +25,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.app_name == "tgi"
     assert s.model_generator == "gemma-4-26b-a4b-it"
-    assert s.max_parallel_blocs == 5
+    assert s.max_parallel_scenarios == 5
     assert s.tests_per_scenario == 5
     # Loopback by default: this reads a client document on a laptop
     assert s.host == "127.0.0.1"
@@ -36,10 +36,10 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_settings_env_prefix(monkeypatch) -> None:
     monkeypatch.setenv("TGI_MODEL_GENERATOR", "custom-model")
-    monkeypatch.setenv("TGI_MAX_PARALLEL_BLOCS", "9")
+    monkeypatch.setenv("TGI_MAX_PARALLEL_SCENARIOS", "9")
     s = Settings()
     assert s.model_generator == "custom-model"
-    assert s.max_parallel_blocs == 9
+    assert s.max_parallel_scenarios == 9
 
 
 def test_log_dir_default() -> None:
@@ -128,7 +128,7 @@ def test_renamed_variables_are_reported_from_the_env_file(tmp_path: Path) -> Non
     from tgi.config import _renamed_variable_problems
 
     env_file = tmp_path / ".env"
-    env_file.write_text("# commentaire\nTGI_ICA_BASE_URL=http://old\nTGI_MAX_PARALLEL_BLOCS=3\n", encoding="utf-8")
+    env_file.write_text("# commentaire\nTGI_ICA_BASE_URL=http://old\nTGI_TESTS_PER_SCENARIO=3\n", encoding="utf-8")
     problems = _renamed_variable_problems({}, env_file)
     assert len(problems) == 1
     assert "TGI_LLM_BASE_URL" in problems[0]

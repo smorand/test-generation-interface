@@ -35,9 +35,13 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/progress.py` : run progress, elapsed and naive remaining estimate
 - `src/tgi/workbook.py` : reviewable xlsx (summary, traceability, one sheet per functionality)
 - `src/tgi/locks.py` : locks keyed by the running event loop
+- `src/tgi/build.py` : build identifier shown in the page and on the stylesheet
+- `src/tgi/{logging_config,tracing}.py` : rich console plus file logs, OpenTelemetry
+- `src/tgi/{stats,validate}.py` : `tgi-stats` from traces, `tgi-validate` verdict on a model
 - `src/tgi/events.py` : SSE fan out, one queue per connection (a shared queue got stolen)
 - `src/tgi/services/` : llm, doc_parser, git_service, state_manager
-- `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel)
+- `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel);
+  `schemas/test_schema.json` is the export contract, held true by `tests/test_test_schema.py`
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
 
 ## Conventions
@@ -81,7 +85,6 @@ Run `make check` before every commit. Coverage must stay >= 80%.
 
 - `WINDOWS.md` : install and use on Windows, for someone who never opened a terminal
 - `BACKLOG.md` : decided but not built, each item with the measurement that justifies it
-- `CLAUDE.md` : fuller project overview (mirrors this index)
 - `.agent_docs/pipeline.md` : pipeline scoring, versions, weak model resilience, state concurrency
 - `.agent_docs/python.md` : Python coding standards
 - `.agent_docs/makefile.md` : Makefile documentation
