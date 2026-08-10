@@ -177,6 +177,21 @@ en arrière.
 
 ---
 
+## Vérifier qu'on regarde bien la même version
+
+En haut à droite de chaque page, à côté du numéro de projet, il y a **`build xxxxxxx`**. C'est
+l'identifiant du code servi. Après un `git pull`, il doit changer.
+
+S'il n'a pas changé alors que la mise à jour est censée apporter quelque chose:
+
+```powershell
+git pull
+```
+
+puis **fermer la fenêtre noire et relancer `tgi.bat`**. La feuille de style porte le même
+identifiant, donc le navigateur ne peut pas afficher une ancienne présentation avec du code
+récent: inutile de vider le cache.
+
 ## Si ça ne marche pas
 
 **« uv n'est pas reconnu »** : la fenêtre PowerShell a été ouverte avant l'installation de

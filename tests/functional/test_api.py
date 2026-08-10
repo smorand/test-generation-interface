@@ -733,3 +733,20 @@ async def test_the_snapshot_notice_is_gone_once_the_run_is_over(client: AsyncCli
     for panel in ("scenarios", "requirements", "tests"):
         html = (await client.get(f"/projects/{finished}/partials/{panel}")).text
         assert "cette vue est un instantané" not in html, panel
+
+
+async def test_the_pages_say_which_build_is_running(client: AsyncClient) -> None:
+    """Two rounds of "I do not see the difference" were a working copy behind, and a browser is
+    free to keep a stylesheet it already has."""
+    from tgi.build import build_id
+
+    build = build_id()
+    home = (await client.get("/")).text
+    project_id = await _project_in_state(client, {})
+    project = (await client.get(f"/projects/{project_id}")).text
+
+    assert f"build {build}" in home
+    assert f"build {build}" in project
+    # The stylesheet URL carries it, so an update cannot be served with a cached one
+    assert f"/static/style.css?v={build}" in home
+    assert f"/static/style.css?v={build}" in project

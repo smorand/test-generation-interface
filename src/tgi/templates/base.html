@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QA Test Generator</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ build }}" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
@@ -14,6 +14,8 @@
     <a href="/" class="text-xl font-bold text-blue-400 hover:text-blue-300">
       ⚡ QA Test Generator
     </a>
+    <span class="text-xs text-gray-600 font-mono ml-auto mr-4"
+      title="Version du code servi. Après un git pull, elle doit changer.">build {{ build }}</span>
     <button @click="darkMode = !darkMode" class="text-gray-400 hover:text-white text-sm">
       <span x-text="darkMode ? '☀ Light' : '🌙 Dark'"></span>
     </button>

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Projet {{ project_id[:8] }} — QA Test Generator</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ build }}" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
@@ -16,6 +16,7 @@
     <a href="/" class="text-blue-400 hover:text-blue-300 font-bold">⚡ QA Test Generator</a>
     <div class="flex items-center gap-4">
       <span class="text-xs text-gray-500 font-mono">{{ project_id[:8] }}</span>
+      <span class="text-xs text-gray-600 font-mono" title="Version du code servi. Après un git pull, elle doit changer.">build {{ build }}</span>
       <a href="/projects/{{ project_id }}/export" class="btn-secondary text-xs">⬇ Export ZIP</a>
     </div>
   </header>

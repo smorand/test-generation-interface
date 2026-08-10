@@ -21,6 +21,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from tgi.agents.orchestrator import Orchestrator
+from tgi.build import build_id
 from tgi.config import Settings, settings
 from tgi.coverage_report import coverage_summary, requirement_rows
 from tgi.deliverable import build_tree, filter_requirements, filter_scenarios, kind_options, natural_key
@@ -179,6 +180,10 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     Path(app_settings.projects_dir).mkdir(parents=True, exist_ok=True)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # Available to every template: the stylesheet URL carries it, so a browser cannot serve a
+    # cached one after an update, and the header shows it, so which code is running is visible
+    # without asking.
+    templates.env.globals["build"] = build_id()
     # A test can cite several rules: the template needs them as a list
     # Rules a test also covers, to show shared coverage without double counting
     orchestrator = Orchestrator(state_manager, git_service, llm_client)
