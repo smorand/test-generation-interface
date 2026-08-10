@@ -25,7 +25,6 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.app_name == "tgi"
     assert s.model_generator == "gemma-4-26b-a4b-it"
-    assert s.model_judge == "gemma-4-26b-a4b-it"
     assert s.max_parallel_blocs == 5
     assert s.tests_per_scenario == 5
     # Loopback by default: this reads a client document on a laptop
@@ -97,15 +96,21 @@ def test_log_dir_default_matches_the_platform_helper() -> None:
     assert Settings(app_name="tgi", llm_api_key="k").log_dir == expected
 
 
-def test_configuration_problems_flags_the_placeholder_key() -> None:
-    """Launching outside the .env directory must not fail silently later on."""
-    problems = Settings(llm_api_key="changeme").configuration_problems()
+def test_configuration_problems_flags_the_placeholder_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launching outside the .env directory must not fail silently later on.
+
+    Run from an empty directory: configuration_problems reads the .env of the current
+    directory, so the developer's own settings would otherwise decide the result.
+    """
+    monkeypatch.chdir(tmp_path)
+    problems = Settings(llm_api_key="changeme", _env_file=None).configuration_problems()  # type: ignore[call-arg]
     assert len(problems) == 1
     assert "TGI_LLM_API_KEY" in problems[0]
 
 
-def test_configuration_problems_empty_when_configured() -> None:
-    assert Settings(llm_api_key="sk-real-key").configuration_problems() == []
+def test_configuration_problems_empty_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert Settings(llm_api_key="sk-real-key", _env_file=None).configuration_problems() == []  # type: ignore[call-arg]
 
 
 def test_renamed_variables_are_reported_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +128,7 @@ def test_renamed_variables_are_reported_from_the_env_file(tmp_path: Path) -> Non
     from tgi.config import _renamed_variable_problems
 
     env_file = tmp_path / ".env"
-    env_file.write_text("# commentaire\nTGI_ICA_BASE_URL=http://old\nTGI_MODEL_JUDGE=m\n", encoding="utf-8")
+    env_file.write_text("# commentaire\nTGI_ICA_BASE_URL=http://old\nTGI_MAX_PARALLEL_BLOCS=3\n", encoding="utf-8")
     problems = _renamed_variable_problems({}, env_file)
     assert len(problems) == 1
     assert "TGI_LLM_BASE_URL" in problems[0]
@@ -137,3 +142,16 @@ def test_no_renamed_variable_no_problem(tmp_path: Path) -> None:
     env_file.write_text("TGI_LLM_BASE_URL=http://new\nTGI_LLM_API_KEY=sk-new\n", encoding="utf-8")
     assert _renamed_variable_problems({}, env_file) == []
     assert _renamed_variable_problems({}, tmp_path / "absent") == []
+
+
+def test_a_removed_variable_is_a_notice_not_a_problem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dead setting must not fail a verdict: only what actually breaks is a problem."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("TGI_LLM_API_KEY=sk-real\nTGI_MODEL_JUDGE=Qwen3.6-27B\n", encoding="utf-8")
+    settings = Settings(llm_api_key="sk-real")
+
+    assert settings.configuration_problems() == []
+    notices = settings.ignored_settings()
+    assert len(notices) == 1
+    assert "TGI_MODEL_JUDGE" in notices[0]
+    assert "no judge any more" in notices[0]

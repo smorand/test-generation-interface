@@ -84,9 +84,8 @@ Output     : 22 rules, 60 tests (2.7 tests per rule)
 Wasted     : 0% of calls, 0 truncated
 
 Per role:
-  extractor     1 calls    0% wasted  median     0 s
-  generator     3 calls    0% wasted  median    29 s
-  judge         3 calls    0% wasted  median     5 s
+  distiller             1 calls    0% wasted  median    12 s
+  scenario_generator   16 calls    0% wasted  median    10 s
 
 VERDICT: USABLE
 ```
@@ -98,8 +97,9 @@ VERDICT: USABLE
 | `Reasoning switch` | whether `chat_template_kwargs.enable_thinking=false` reached the server, was never sent, or was refused |
 | `Projection` | wall clock for a whole specification at the measured rate, the number that decides feasibility |
 | `Wasted` | share of calls that produced nothing usable, and how many were cut off by the output budget |
-| `Coverage` | rule coverage the judge measured, compared against `TGI_JUDGE_PASS_SCORE` |
-| `Per role` | which of extractor, generator or judge is the slow or wasteful one |
+| `Coverage` | requirements covered out of those the document declares, counted, no model involved |
+| `Per role` | which of distiller, scenario_generator or coverage is the slow or wasteful one |
+| `Ignored settings` | names still set in your `.env` that nobody reads any more, never a reason to fail |
 | `Logs` / `Traces` | where the run wrote them, always inside `TGI_LOGS`, kept even when the verdict fails |
 
 ## 5. Fix the usual failures
@@ -160,19 +160,16 @@ curl.exe -v "$env:TGI_LLM_BASE_URL/models" -H "Authorization: Bearer $env:TGI_LL
 
 **`models seen: not listed by this endpoint`.** The gateway answered but does not
 expose `/models`, which is common for a router. The run continues; just make sure
-`TGI_MODEL_GENERATOR` and `TGI_MODEL_JUDGE` are exactly the ids the server expects,
-since they cannot be checked automatically.
+`TGI_MODEL_GENERATOR` is exactly the id the server expects, since it cannot be
+checked automatically.
 
-**Judge returns no score.** The model cannot hold the judging contract. Lower
-`TGI_JUDGE_BATCH_RULES` (default 10) so each call covers fewer rules, or use a
-different model for judging only:
+**Coverage below expectation.** There is no judge to disagree with: the figure is a
+count of the requirements the document declares against those a test cites. A low
+number means the generator wrote tests that reference nothing. Inspect them with
+`--keep`, which preserves the temporary project and its logs.
 
-```bash
-tgi-validate --generator Qwen/Qwen3.6-27B --judge some-other-model
-```
-
-**Coverage below the threshold.** The generator and the judge disagree. Inspect the
-generated tests with `--keep`, which preserves the temporary project and its logs.
+**A setting appears under `Ignored settings`.** It is read by nobody, typically a
+leftover of the judge that was removed. Delete the line, the verdict is unaffected.
 
 ## 6. Running on Windows
 

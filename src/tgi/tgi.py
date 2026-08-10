@@ -260,7 +260,6 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "projects": project_list,
                 "page": "home",
                 "default_model_generator": app_settings.model_generator,
-                "default_model_judge": app_settings.model_judge,
                 "default_tests_per_scenario": app_settings.tests_per_scenario,
             },
         )
@@ -269,11 +268,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     async def upload_doc(
         file: UploadFile = File(...),
         model_generator: str = Form(default=""),
-        model_judge: str = Form(default=""),
         tests_per_scenario: int = Form(default=0),
     ) -> JSONResponse:
         model_gen = model_generator or app_settings.model_generator
-        model_jdg = model_judge or app_settings.model_judge
 
         # Save uploaded file
         upload_dir = Path(app_settings.projects_dir) / "_uploads"
@@ -298,7 +295,6 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             doc_path=str(file_path),
             doc_text=doc_text,
             model_generator=model_gen,
-            model_judge=model_jdg,
             tests_per_scenario=max(1, min(tests_per_scenario, _MAX_TESTS_PER_SCENARIO)) if tests_per_scenario else None,
         )
 

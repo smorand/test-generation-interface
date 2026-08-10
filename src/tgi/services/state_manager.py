@@ -102,7 +102,6 @@ class StateManager:
         doc_path: str,
         doc_text: str,
         model_generator: str,
-        model_judge: str,
         tests_per_scenario: int | None = None,
     ) -> str:
         project_id = str(uuid.uuid4())
@@ -111,7 +110,6 @@ class StateManager:
             "doc_path": doc_path,
             "doc_text": doc_text,
             "model_generator": model_generator,
-            "model_judge": model_judge,
             "tests_per_scenario": tests_per_scenario or settings.tests_per_scenario,
             "context": "",
             "scenarios": [],

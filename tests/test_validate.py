@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tgi.validate import SAMPLE_PATH, ValidationResult, _judge_the_results, format_verdict
+from tgi.validate import SAMPLE_PATH, ValidationResult, _decide_verdict, format_verdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 def _healthy() -> ValidationResult:
     return ValidationResult(
         model_generator="m",
-        model_judge="m",
         endpoint="http://endpoint/v1",
         reachable=True,
         models_visible=3,
@@ -40,14 +39,14 @@ def test_sample_ships_with_the_package() -> None:
 
 def test_healthy_run_is_usable() -> None:
     result = _healthy()
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert result.problems == []
     assert result.ok is True
     assert "VERDICT: USABLE" in format_verdict(result)
 
 
 def test_unreachable_endpoint_is_not_usable() -> None:
-    result = ValidationResult(model_generator="m", model_judge="m", endpoint="http://nope/v1")
+    result = ValidationResult(model_generator="m", endpoint="http://nope/v1")
     result.reachable = False
     result.error = "ConnectError: refused"
     result.problems.append("Endpoint unreachable or credentials refused")
@@ -61,7 +60,7 @@ def test_failed_scenarios_are_a_problem() -> None:
     result = _healthy()
     result.statuses = {"done": 1, "error": 2}
     result.scenarios = 3
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("failed outright" in p for p in result.problems)
     assert result.ok is False
 
@@ -69,7 +68,7 @@ def test_failed_scenarios_are_a_problem() -> None:
 def test_truncation_is_a_problem_with_advice() -> None:
     result = _healthy()
     result.truncations = 4
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("cut off" in p for p in result.problems)
     assert any("TGI_MAX_OUTPUT_TOKENS" in a for a in result.advice)
 
@@ -77,7 +76,7 @@ def test_truncation_is_a_problem_with_advice() -> None:
 def test_high_waste_is_a_problem() -> None:
     result = _healthy()
     result.waste_percent = 60.0
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("nothing usable" in p for p in result.problems)
 
 
@@ -88,7 +87,7 @@ def test_slow_model_is_reported_with_a_projection(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(settings, "max_parallel_blocs", 5)
     result = _healthy()
     result.duration_s = 1200.0  # 20 min for one scenario
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("scenario document" in p for p in result.problems)
     assert any("TGI_DISABLE_THINKING" in a for a in result.advice)
     assert result.projected_hours > 3
@@ -100,7 +99,7 @@ def test_low_coverage_is_a_problem_with_advice() -> None:
     result = _healthy()
     result.covered = 8
     result.coverage_percent = 36
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("requirements are covered" in p for p in result.problems)
     assert any("TGI_TESTS_PER_SCENARIO" in a for a in result.advice)
     assert result.ok is False
@@ -110,7 +109,7 @@ def test_full_coverage_raises_no_problem() -> None:
     result = _healthy()
     result.covered = 22
     result.coverage_percent = 100
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert result.problems == []
     assert result.ok is True
 
@@ -120,13 +119,13 @@ def test_refused_switch_advises_serving_side_configuration() -> None:
     result.switch_line = (
         "Reasoning switch: sent on 2 of 5 calls, then dropped (3 calls without it), the endpoint refused it"
     )
-    _judge_the_results(result)
+    _decide_verdict(result)
     assert any("turn" in a and "server" in a for a in result.advice)
 
 
 def test_verdict_reports_the_measurements() -> None:
     result = _healthy()
-    _judge_the_results(result)
+    _decide_verdict(result)
     report = format_verdict(result)
     assert "21/22 requirements (95%)" in report
     assert "6 tests, 19 steps" in report
@@ -368,7 +367,33 @@ def test_a_model_writing_far_less_than_the_target_is_flagged_without_failing() -
     result.tests = 21
     result.steps = 57
 
-    _judge_the_results(result)
+    _decide_verdict(result)
 
     assert result.ok
     assert any("tests per scenario against a target" in advice for advice in result.advice)
+
+
+def test_a_dead_setting_is_reported_without_failing_the_verdict(tmp_path: Path) -> None:
+    """A leftover TGI_MODEL_JUDGE changes nothing about whether the tool works.
+
+    Reporting it as a problem turned a working endpoint into NOT USABLE.
+    """
+    result = ValidationResult(model_generator="m", endpoint="http://x/v1")
+    result.reachable = True
+    result.notices.append("TGI_MODEL_JUDGE is set in the .env but ignored: there is no judge any more")
+
+    assert result.ok is True
+    text = format_verdict(result)
+    assert "Ignored settings:" in text
+    assert "TGI_MODEL_JUDGE" in text
+    assert "VERDICT: USABLE" in text
+
+
+def test_repeated_advice_is_said_once() -> None:
+    result = ValidationResult(model_generator="m", endpoint="http://x/v1")
+    result.reachable = True
+    result.advice.extend(["Do the same thing", "Do the same thing", "And this"])
+
+    text = format_verdict(result)
+    assert text.count("Do the same thing") == 1
+    assert "And this" in text

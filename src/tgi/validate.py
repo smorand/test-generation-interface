@@ -58,7 +58,6 @@ class ValidationResult:
     """Everything the verdict is built from."""
 
     model_generator: str
-    model_judge: str
     endpoint: str
     models_visible: int | None = None
     model_discovery_error: str | None = None
@@ -79,6 +78,7 @@ class ValidationResult:
     waste_percent: float = 0.0
     truncations: int = 0
     problems: list[str] = field(default_factory=list)
+    notices: list[str] = field(default_factory=list)
     advice: list[str] = field(default_factory=list)
 
     @property
@@ -127,7 +127,7 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
             result.model_discovery_error = error_text
             result.advice.append(
                 "The endpoint does not expose /models, so model ids cannot be checked here: make sure "
-                "TGI_MODEL_GENERATOR and TGI_MODEL_JUDGE are exactly what the server expects"
+                "TGI_MODEL_GENERATOR is exactly what the server expects"
             )
             return True
         result.error = error_text
@@ -138,9 +138,10 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
     result.reachable = True
     result.models_visible = len(models)
     known = {str(m.get("id", "")) for m in models}
-    for label, model in (("generator", result.model_generator), ("judge", result.model_judge)):
-        if known and model not in known:
-            result.advice.append(f"The {label} model {model} is not listed by the endpoint, check its exact id")
+    if known and result.model_generator not in known:
+        result.advice.append(
+            f"The model {result.model_generator} is not listed by the endpoint, check its exact id"
+        )
     return True
 
 
@@ -191,7 +192,6 @@ async def _run_sample(projects_dir: Path, client: LLMClient) -> tuple[dict[str, 
         doc_path=str(SAMPLE_PATH),
         doc_text=text,
         model_generator=settings.model_generator,
-        model_judge=settings.model_judge,
     )
     await git_service.init(project_id)
     await orchestrator.distil(project_id)
@@ -239,7 +239,7 @@ def _collect_measurements(
         result.waste_percent = (attempts - successes) / attempts * 100
 
 
-def _judge_the_results(result: ValidationResult) -> None:
+def _decide_verdict(result: ValidationResult) -> None:
     """Turn measurements into problems and advice."""
     errors = result.statuses.get("error", 0)
     if errors:
@@ -304,7 +304,6 @@ def _header_lines(result: ValidationResult) -> list[str]:
         "=" * 72,
         f"endpoint   : {result.endpoint}",
         f"generator  : {result.model_generator}",
-        f"judge      : {result.model_judge}",
     ]
     if result.models_visible is not None:
         lines.append(f"models seen: {result.models_visible}")
@@ -353,9 +352,14 @@ def format_verdict(result: ValidationResult) -> str:
         lines.append("Problems:")
         lines.extend(f"  - {problem}" for problem in result.problems)
         lines.append("")
+    if result.notices:
+        # Worth saying, never a reason to fail: nothing here stops the pipeline
+        lines.append("Ignored settings:")
+        lines.extend(f"  - {notice}" for notice in result.notices)
+        lines.append("")
     if result.advice:
         lines.append("What to do:")
-        lines.extend(f"  - {item}" for item in result.advice)
+        lines.extend(f"  - {item}" for item in dict.fromkeys(result.advice))
         lines.append("")
 
     if result.log_dir:
@@ -393,16 +397,17 @@ async def validate(keep: bool = False) -> ValidationResult:
     client = LLMClient()
     result = ValidationResult(
         model_generator=settings.model_generator,
-        model_judge=settings.model_judge,
         endpoint=settings.llm_base_url,
         log_dir=log_dir,
     )
-    for problem in settings.configuration_problems():
-        result.problems.append(problem)
+    problems = settings.configuration_problems()
+    result.problems.extend(problems)
+    if problems:
         result.advice.append(
             "Run from the directory holding your .env (uv run reads it from the current directory), "
             "or export TGI_LLM_BASE_URL and TGI_LLM_API_KEY"
         )
+    result.notices.extend(settings.ignored_settings())
 
     try:
         if await _check_endpoint(client, result):
@@ -414,7 +419,7 @@ async def validate(keep: bool = False) -> ValidationResult:
             except Exception as exc:  # reported in the verdict, not raised
                 result.error = f"{type(exc).__name__}: {exc}"
                 result.problems.append("The pipeline crashed on the sample document")
-            _judge_the_results(result)
+            _decide_verdict(result)
     finally:
         if keep:
             result.project_dir = workdir
@@ -427,19 +432,12 @@ async def validate(keep: bool = False) -> ValidationResult:
 def main() -> None:
     """Entry point: validate the configured model and print the verdict."""
     parser = argparse.ArgumentParser(description="Validate a model and endpoint against the real pipeline")
-    parser.add_argument("--model", help="Use this model for both generation and judging")
-    parser.add_argument("--generator", help="Generator model (overrides --model)")
-    parser.add_argument("--judge", help="Judge model (overrides --model)")
+    parser.add_argument("--model", help="Model to validate")
     parser.add_argument("--keep", action="store_true", help="Keep the temporary project and logs")
     args = parser.parse_args()
 
     if args.model:
         settings.model_generator = args.model
-        settings.model_judge = args.model
-    if args.generator:
-        settings.model_generator = args.generator
-    if args.judge:
-        settings.model_judge = args.judge
 
     result = asyncio.run(validate(keep=args.keep))
     print(format_verdict(result))

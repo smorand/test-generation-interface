@@ -21,7 +21,6 @@ async def _create_sample(manager: StateManager) -> str:
         doc_path="/tmp/doc.txt",
         doc_text="contenu",
         model_generator="gen",
-        model_judge="judge",
     )
 
 

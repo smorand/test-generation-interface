@@ -90,7 +90,7 @@ def orchestrator(projects_dir: Path) -> Orchestrator:
 
 async def _new_project(orchestrator: Orchestrator, doc: str = DOC) -> str:
     project_id = await orchestrator._state.create(
-        doc_path="/tmp/doc.md", doc_text=doc, model_generator="m", model_judge="m"
+        doc_path="/tmp/doc.md", doc_text=doc, model_generator="m"
     )
     await orchestrator._git.init(project_id)
     return project_id

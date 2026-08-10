@@ -96,7 +96,6 @@ nano .env
 TGI_LLM_BASE_URL=http://votre-serveur:8000/v1
 TGI_LLM_API_KEY=votre-cle
 TGI_MODEL_GENERATOR=nom-exact-du-modele
-TGI_MODEL_JUDGE=nom-exact-du-modele
 ```
 
 | Ligne | Ce que c'est |
@@ -104,7 +103,6 @@ TGI_MODEL_JUDGE=nom-exact-du-modele
 | `TGI_LLM_BASE_URL` | l'adresse de votre serveur de modèle, terminée par `/v1` |
 | `TGI_LLM_API_KEY` | votre clé. Si le serveur n'en demande pas, mettez n'importe quoi de non vide |
 | `TGI_MODEL_GENERATOR` | le nom exact du modèle, tel que le serveur l'attend |
-| `TGI_MODEL_JUDGE` | le modèle qui évalue la couverture, le même convient |
 
 Enregistrez et fermez. Les autres lignes du fichier ont des valeurs par défaut
 qui conviennent; vous y reviendrez plus tard si besoin.

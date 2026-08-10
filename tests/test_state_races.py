@@ -28,7 +28,7 @@ def state_manager(projects_dir: Path) -> StateManager:
 
 
 async def _new_project(manager: StateManager) -> str:
-    return await manager.create(doc_path="/tmp/doc.md", doc_text="texte", model_generator="m", model_judge="m")
+    return await manager.create(doc_path="/tmp/doc.md", doc_text="texte", model_generator="m")
 
 
 async def test_the_orchestrator_and_the_state_manager_share_one_lock(state_manager: StateManager) -> None:

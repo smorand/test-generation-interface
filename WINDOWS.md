@@ -76,7 +76,6 @@ Elles vous ont été fournies séparément.
 TGI_LLM_BASE_URL=https://adresse-du-serveur/v1
 TGI_LLM_API_KEY=votre-cle
 TGI_MODEL_GENERATOR=Qwen3.6-27B
-TGI_MODEL_JUDGE=Qwen3.6-27B
 ```
 
 6. Enregistrer, fermer le Bloc-notes.

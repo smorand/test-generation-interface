@@ -513,7 +513,7 @@ async def _project_in_state(client: AsyncClient, fields: dict[str, Any]) -> str:
     from tgi.services.state_manager import state_manager
 
     project_id = await state_manager.create(
-        doc_path="/tmp/spec.txt", doc_text="Une regle metier importante.", model_generator="m", model_judge="m"
+        doc_path="/tmp/spec.txt", doc_text="Une regle metier importante.", model_generator="m"
     )
     await git_service.init(project_id)
     state = await state_manager.load(project_id)

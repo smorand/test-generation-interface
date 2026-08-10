@@ -87,7 +87,6 @@ All variables use the `TGI_` prefix.
 | `TGI_LLM_VERIFY_SSL` | `true` | Set to `false` to skip TLS verification (exposes the traffic) |
 | `TGI_LLM_CA_BUNDLE` | — | Certificate bundle to verify against, the clean fix behind a TLS gateway |
 | `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
-| `TGI_MODEL_JUDGE` | `gemma-4-26b-a4b-it` | Kept for compatibility, unused since coverage is counted |
 | `TGI_MAX_PARALLEL_BLOCS` | `5` | Max scenarios processed in parallel |
 | `TGI_TESTS_PER_SCENARIO` | `5` | Target tests per scenario, editable per project |
 | `TGI_LLM_JSON_RETRIES` | `5` | Retries when the model returns no usable JSON |
@@ -305,14 +304,12 @@ There is no judge. Coverage is arithmetic on the requirements the document decla
 
 ```
 init:           project initialization
-feat(doc):      document uploaded and parsed
-feat(blocs):    block split validated by human
-feat(bloc-X):   business rules extracted
-feat(bloc-X):   tests generated v1
-feat(bloc-X):   judge iteration pass N
-fix(bloc-X):    human modification via chat
-feat(bloc-X):   human validation
-export:         final JSON export
+feat(doc):        document uploaded and parsed
+feat(map):        map validated by human
+feat(SC-X):       tests generated for one scenario
+feat(SC-X):       coverage gap closed
+fix(SC-X):        human modification
+export:           final JSON export
 ```
 
 ## Test JSON Schema
@@ -337,9 +334,9 @@ export:         final JSON export
 
 | Situation | Behavior |
 |---|---|
-| Model context < 128k | Startup error, explicit message |
+| Document larger than the reading window | Split on the document outline, one call per part |
 | Malformed JSON from LLM | Retry 3x with correction prompt |
-| Judge loop exhausted | `needs_human` status on bloc |
+| A scenario produced nothing usable | `needs_human` status on that scenario |
 | LLM timeout | Retry 2x, then `error` status |
 | Git rollback | Full state reload |
 | Chat out of scope | Agent refuses and explains |

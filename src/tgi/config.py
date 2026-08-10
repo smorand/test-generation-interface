@@ -22,6 +22,15 @@ _RENAMED_VARIABLES = {
 }
 
 
+# Read once, now removed: reporting them beats leaving a setting that does nothing
+_REMOVED_VARIABLES = {
+    "TGI_MODEL_JUDGE": "there is no judge any more, coverage is counted on the requirements",
+    "TGI_JUDGE_BATCH_RULES": "the judge was removed",
+    "TGI_MAX_JUDGE_PASSES": "the judge was removed",
+    "TGI_JUDGE_PASS_SCORE": "the judge was removed",
+}
+
+
 def _env_file_keys(env_file: Path) -> set[str]:
     """Names assigned in a .env file, ignoring comments and blank lines."""
     if not env_file.is_file():
@@ -52,6 +61,22 @@ def _renamed_variable_problems(environment: Mapping[str, str], env_file: Path | 
         if location:
             problems.append(f"{old} is set in the {location} but ignored, rename it to {new}")
     return problems
+
+
+def _ignored_variable_notices(environment: Mapping[str, str], env_file: Path | None = None) -> list[str]:
+    """Report settings that are read by nobody any more.
+
+    Separate from the problems on purpose: a leftover name changes nothing about whether
+    the tool works, so it must not fail a verdict. Saying nothing would leave someone
+    believing a setting still has an effect.
+    """
+    declared = set(_env_file_keys(env_file)) if env_file else set()
+    notices: list[str] = []
+    for gone, why in _REMOVED_VARIABLES.items():
+        location = "environment" if environment.get(gone) else (".env" if gone in declared else None)
+        if location:
+            notices.append(f"{gone} is set in the {location} but ignored: {why}")
+    return notices
 
 
 def default_log_dir(app_name: str, *, is_windows: bool, local_app_data: str | None) -> Path:
@@ -91,7 +116,6 @@ class Settings(BaseSettings):
     llm_verify_ssl: bool = True
     llm_ca_bundle: str | None = None
     model_generator: str = "gemma-4-26b-a4b-it"
-    model_judge: str = "gemma-4-26b-a4b-it"
     max_parallel_blocs: int = 5
     max_context_tokens: int = 128000
     # Output budget per LLM call. Reasoning models (gemma) spend thousands of
@@ -125,6 +149,10 @@ class Settings(BaseSettings):
     logs: str | None = None
     otel_destination: str | None = None  # e.g. http://collector:4318/v1/traces
     otel_api_key: str | None = None
+
+    def ignored_settings(self) -> list[str]:
+        """Names still set somewhere but read by nobody. Never a reason to fail."""
+        return _ignored_variable_notices(os.environ, Path(".env"))
 
     def configuration_problems(self) -> list[str]:
         """Settings that are still placeholders and will fail at the first call.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,23 @@ from tgi.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_the_developer_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test outside the repository, with no TGI_ variable set.
+
+    Settings and configuration_problems() read the .env of the current directory, so a
+    developer's own file decided test outcomes: three tests broke the day a variable was
+    added to it. Resources are resolved from Path(__file__), never from the cwd, so
+    moving away is safe.
+    """
+    for name in list(os.environ):
+        if name.startswith("TGI_"):
+            monkeypatch.delenv(name, raising=False)
+    workdir = tmp_path / "cwd"
+    workdir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(workdir)
 
 
 @pytest.fixture
