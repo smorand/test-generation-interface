@@ -238,7 +238,7 @@
 
     <!-- SLIDE 1 — Couverture. Dupliquer ce bloc pour chaque nouvelle slide.
          Mettre à jour TOTAL et slideNames dans le <script> en bas. -->
-                                                                                <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Page de garde">
+                                                                                        <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Page de garde">
       <div class="slide-header">
         <div class="slide-eyebrow" data-editable="text">Generateur de tests QA &middot; Slide 01 / 08</div>
         <h1 class="slide-h1" data-editable="text">Des specifications aux <strong>tests</strong></h1>
@@ -291,13 +291,13 @@
       <div class="slide-header">
         <div class="slide-eyebrow" data-editable="text">Flux logique &middot; Slide 03 / 08</div>
         <h1 class="slide-h1" data-editable="text">Quatre phases, et <strong>l'ordre compte</strong></h1>
-        <p class="slide-subtitle" data-editable="text">La numerotation est lue sans modele, la distillation passe le document entier en un appel, un humain valide la carte avant tout appel couteux.</p>
+        <p class="slide-subtitle" data-editable="text">La numerotation est lue sans modele, la distillation lit le document entier, en un appel quand il tient, et un humain valide la carte avant tout appel couteux.</p>
       </div>
       <div class="slide-body" data-editable="text">
         <div data-type="arch-diagram" style="position:relative; width:100%; height:210px;">
           <div data-type="arch-node" class="arch-node" data-label="Document" data-shape="box" data-x="0.5" data-y="22" data-width="12" data-height="46" style="position:absolute; left:0.5%; top:22%; width:12%; height:46%; border:2px solid #8d8d8d; background:#f2f4f8; color:#393939; border-radius:4px;">Document<small>docx, pdf, txt</small></div>
           <div data-type="arch-node" class="arch-node" data-label="Phase 0 &middot; Grammaire" data-shape="box" data-x="15" data-y="22" data-width="15.5" data-height="46" style="position:absolute; left:15%; top:22%; width:15.5%; height:46%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Phase 0 &middot; Grammaire<small>sans modele : 51/51 cas, 401/401 exigences, 0 orphelin</small></div>
-          <div data-type="arch-node" class="arch-node" data-label="Phase 1 &middot; Distillation" data-shape="box" data-x="33" data-y="22" data-width="15.5" data-height="46" style="position:absolute; left:33%; top:22%; width:15.5%; height:46%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Phase 1 &middot; Distillation<small>1 appel, 78k jetons sur 128k : contexte, scenarios, ecarts</small></div>
+          <div data-type="arch-node" class="arch-node" data-label="Phase 1 &middot; Distillation" data-shape="box" data-x="33" data-y="22" data-width="15.5" data-height="46" style="position:absolute; left:33%; top:22%; width:15.5%; height:46%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Phase 1 &middot; Distillation<small>contexte, scenarios, ecarts ; 1 appel si le document tient</small></div>
           <div data-type="arch-node" class="arch-node" data-label="Validation humaine" data-shape="box" data-x="51" data-y="22" data-width="15.5" data-height="46" style="position:absolute; left:51%; top:22%; width:15.5%; height:46%; border:2px solid #198038; background:#defbe6; color:#044317; border-radius:4px;">Validation humaine<small>cas non couverts, cas sans titre, ecarts proposes</small></div>
           <div data-type="arch-node" class="arch-node" data-label="Phase 2 &middot; Tests" data-shape="box" data-x="69" data-y="22" data-width="15.5" data-height="46" style="position:absolute; left:69%; top:22%; width:15.5%; height:46%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Phase 2 &middot; Tests<small>1 appel par scenario, 64 scenarios</small></div>
           <div data-type="arch-node" class="arch-node" data-label="Phase 3 &middot; Ecarts" data-shape="box" data-x="87" data-y="22" data-width="12.5" data-height="46" style="position:absolute; left:87%; top:22%; width:12.5%; height:46%; border:2px solid var(--ibm-blue-60); background:#fff; color:var(--ibm-blue-70); border-radius:4px;">Phase 3 &middot; Ecarts<small>18 appels : completer un test avant d'en ajouter</small></div>
@@ -312,9 +312,13 @@
           <div class="arch-edge arch-line-h" style="left:84.5%; top:45%; width:2.5%;"></div>
           <div class="arch-edge arch-tip arch-tip-r" style="left:87.0%; top:45%; transform:translate(-100%,-50%); border-left:7px solid var(--ibm-blue-60); border-top:5px solid transparent; border-bottom:5px solid transparent;"></div>
           <div class="arch-edge-label" style="left:15.5%; top:5%;">arithmetique : 201 &rarr; 468 exigences portees</div>
-          <div class="arch-edge-label" style="left:51.2%; top:5%;">rien ne peut etre ecarte en silence</div>
+          <div class="arch-edge-label" style="left:44.0%; top:76%;">rien d'ecarte en silence</div>
           <div class="arch-edge-label" style="left:69.2%; top:5%;">volume vise, jamais plafonne</div>
           <div class="arch-edge-label" style="left:66.5%; top:76%;">sortie : 313 tests, deux axes de lecture, xlsx et JSON</div>
+        </div>
+        <div class="cds-notification" style="margin-top:6px; padding:8px var(--cds-spacing-05);">
+          <div><div class="notif-title">Un document trop gros pour un seul appel</div>
+          <div class="notif-body">Le budget de lecture est calcule depuis la fenetre du modele, <code class="cds-code">(contexte &minus; sortie &minus; 2000) &times; 3,6</code> caracteres, soit 396 000 avec 128k jetons : le document de reference, 280 000 caracteres, tient donc en un appel. Au-dela, il est coupe <strong>sur ses propres titres</strong>, un appel par partie, resultats fusionnes, et une partie qui echoue laisse les autres debout. Sans titres, pas de coupe : sous Word, les styles Titre 1 a 6 deviennent ces titres.</div></div>
         </div>
       </div>
       <div class="slide-footer">
