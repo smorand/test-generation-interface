@@ -52,7 +52,7 @@ Toujours dans PowerShell, copier ces trois lignes une par une :
 
 ```powershell
 cd $HOME\Documents
-git clone https://github.com/smorand/test-generation-interface.git
+git clone https://github.ibm.com/Sebastien-Morand/test-generation-interface.git
 cd test-generation-interface
 ```
 

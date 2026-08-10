@@ -53,7 +53,7 @@ fermez et rouvrez le terminal.
 ## 2. Récupérer le code
 
 ```bash
-git clone https://github.com/smorand/test-generation-interface.git
+git clone https://github.ibm.com/Sebastien-Morand/test-generation-interface.git
 cd test-generation-interface
 ```
 

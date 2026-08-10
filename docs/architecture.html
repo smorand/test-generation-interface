@@ -238,42 +238,65 @@
 
     <!-- SLIDE 1 — Couverture. Dupliquer ce bloc pour chaque nouvelle slide.
          Mettre à jour TOTAL et slideNames dans le <script> en bas. -->
-                                                        <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Vue d'ensemble">
+                                                                    <article class="slide active dense" id="slide-0" data-type="slide" data-slide-type="title" data-id="slide-0" data-title="Page de garde">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Vue d'ensemble &middot; Slide 01 / 08</div>
-        <h1 class="slide-h1" data-editable="text">Generateur de tests <strong>fonctionnels</strong></h1>
-        <p class="slide-subtitle" data-editable="text">Le document est lu en entier, distille en scenarios utilisateur et en exigences, un humain valide cette carte, puis les tests sont ecrits scenario par scenario.</p>
+        <div class="slide-eyebrow" data-editable="text">Generateur de tests QA &middot; Slide 01 / 08</div>
+        <h1 class="slide-h1" data-editable="text">Des specifications aux <strong>tests</strong></h1>
+        <p class="slide-subtitle" data-editable="text">Generateur de tests fonctionnels &middot; FastAPI, HTMX et un modele de langage &middot; src/tgi</p>
       </div>
       <div class="slide-body" data-editable="text">
-        <table class="cds-structured-list compact" style="width:100%; border-collapse:collapse; font-size:12.5px;">
-          <thead><tr style="background:var(--ibm-blue-10); color:var(--ibm-blue-70);">
-            <th style="text-align:left; padding:7px 10px; border-bottom:2px solid var(--ibm-blue-60);">Mesure sur le meme document</th>
-            <th style="text-align:left; padding:7px 10px; border-bottom:2px solid var(--ibm-blue-60);">Par decoupage</th>
-            <th style="text-align:left; padding:7px 10px; border-bottom:2px solid var(--ibm-blue-60);">Par scenario</th>
-          </tr></thead>
-          <tbody>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Tests produits</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">2199</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>313</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Etapes a relire</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">7102</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>1130</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Relecture a 2 min par etape</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">34 jours-homme</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>5 jours-homme</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Exigences couvertes</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">non mesurable</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>464 de 468, 99 %</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Exigences non couvertes</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">inconnu</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>0, plus 9 declarees non testables</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Appels au modele</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">382</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>83 : 1 distillation, 64 scenarios, 18 ecarts</strong></td></tr>
-            <tr><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);">Chiffre de couverture</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02); color:#6f6f6f;">mediane 100 %, et faux</td><td style="padding:6px 10px; border-bottom:1px solid var(--cds-layer-02);"><strong>compte, aucun modele implique</strong></td></tr>
-          </tbody>
-        </table>
-        <div class="cds-notification" style="margin-top:10px; padding:8px var(--cds-spacing-05);">
-          <div><div class="notif-title">Le juge a disparu, et c'est le point important</div>
-          <div class="notif-body">Chaque bloc scorait la couverture des regles qu'il avait lui-meme inventees: le juge validait un livrable que personne ne pouvait relire. La couverture est desormais un comptage sur les exigences que le document declare.</div></div>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="stat-value">313</div><div class="stat-label">tests, contre 2199 par decoupage</div></div>
+          <div class="stat-card"><div class="stat-value">464/468</div><div class="stat-label">exigences couvertes, comptees</div></div>
+          <div class="stat-card"><div class="stat-value">83</div><div class="stat-label">appels au modele, 0 % de dechet</div></div>
+        </div>
+        <div class="cds-notification" style="margin-top:20px;">
+          <div><div class="notif-title">Ce que fait le produit</div>
+          <div class="notif-body">Il lit une specification en entier, la distille en scenarios et en exigences, fait valider cette carte par un humain, puis ecrit les tests de chaque scenario. La couverture est comptee sur les exigences que le document declare, jamais notee par un modele.</div></div>
+        </div>
+        <div class="cds-grid cols-3" style="margin-top:18px;">
+          <div class="cds-tile"><div class="tile-eyebrow">Lecture</div><div class="tile-title">Le document entier</div>
+            <p>78k jetons en un appel, numerotation lue sans modele.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Controle</div><div class="tile-title">Un humain valide</div>
+            <p>La carte est relue avant tout appel couteux.</p></div>
+          <div class="cds-tile"><div class="tile-eyebrow">Preuve</div><div class="tile-title">Deux axes de lecture</div>
+            <p>Par exigence pour la couverture, par scenario pour les parcours.</p></div>
         </div>
       </div>
       <div class="slide-footer">
-        <span class="slide-footer-left" data-editable="text">Produit &middot; Presentation</span>
+        <span class="slide-footer-left" data-editable="text">Generateur de tests QA &middot; Architecture et pipeline</span>
         <span class="slide-footer-right">Slide 1 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-1" data-type="slide" data-slide-type="diagram" data-id="slide-1" data-title="Les quatre phases">
+    <article class="slide dense" id="slide-1" data-type="slide" data-slide-type="content" data-id="slide-1" data-title="Comment installer">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Flux logique &middot; Slide 02 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Prise en main &middot; Slide 02 / 08</div>
+        <h1 class="slide-h1" data-editable="text">Comment <strong>installer</strong></h1>
+        <p class="slide-subtitle" data-editable="text">Deux prerequis, un fichier de configuration, une commande.</p>
+      </div>
+      <div class="slide-body" data-editable="text">
+        <table class="cds-structured-list compact" style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <tbody>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">1</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Prerequis</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;">Installer <code class='cds-code'>uv</code> et <code class='cds-code'>git</code>. uv gere Python 3.13, rien d'autre a installer. <strong>Chez E-I</strong>, Python s'appelle <code class='cds-code'>py.exe</code> et non <code class='cds-code'>python</code>: <code class='cds-code'>py.exe -m pip install uv</code> si uv n'est pas deja la.</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">2</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Recuperer et installer</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>git clone https://github.ibm.com/Sebastien-Morand/test-generation-interface.git</code>, <code class='cds-code'>cd test-generation-interface</code>, puis <code class='cds-code'>uv sync</code></td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">3</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Configurer .env</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;">Copier <code class='cds-code'>.env.example</code> : URL du LLM et cle d'API. <strong>Chez E-I</strong> : <code class='cds-code'>TGI_MODEL_GENERATOR=Qwen3.6-27B</code>, <code class='cds-code'>TGI_LLM_VERIFY_SSL=false</code>, <code class='cds-code'>TGI_DISABLE_THINKING=true</code>, et deux dossiers locaux : <code class='cds-code'>TGI_LOGS</code> pour les journaux, <code class='cds-code'>TGI_PROJECTS_DIR</code> pour les projets.</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">4</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Verifier l'endpoint</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>uv run tgi-validate</code> traite un exemple et affiche <strong>VERDICT: USABLE</strong> si le modele repond.</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">5</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Lancer</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>uv run tgi</code>, ou le raccourci <code class='cds-code'>tgi.bat</code> (Windows) et <code class='cds-code'>./tgi.sh</code> (macOS, Linux), puis <code class='cds-code'>http://localhost:8080</code></td></tr>
+          </tbody>
+        </table>
+        <div class="cds-notification" style="margin-top:10px; padding:8px var(--cds-spacing-05);">
+          <div><div class="notif-title">L'enchainement, une fois l'interface ouverte</div>
+          <div class="notif-body">Importer &rarr; relire la carte &rarr; generer &rarr; relire par exigence ou par scenario &rarr; exporter (JSON et xlsx). <code class="cds-code">WINDOWS.md</code> reprend tout cela sans terminal.</div></div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span class="slide-footer-left" data-editable="text">Installation &middot; INSTALL.md, WINDOWS.md</span>
+        <span class="slide-footer-right">Slide 2 / 8</span>
+      </div>
+    </article>
+    <article class="slide dense" id="slide-2" data-type="slide" data-slide-type="diagram" data-id="slide-2" data-title="Les quatre phases">
+      <div class="slide-header">
+        <div class="slide-eyebrow" data-editable="text">Flux logique &middot; Slide 03 / 08</div>
         <h1 class="slide-h1" data-editable="text">Quatre phases, et <strong>l'ordre compte</strong></h1>
         <p class="slide-subtitle" data-editable="text">La numerotation est lue sans modele, la distillation passe le document entier en un appel, un humain valide la carte avant tout appel couteux.</p>
       </div>
@@ -303,12 +326,12 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Pipeline &middot; src/tgi/agents</span>
-        <span class="slide-footer-right">Slide 2 / 8</span>
+        <span class="slide-footer-right">Slide 3 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-2" data-type="slide" data-slide-type="diagram" data-id="slide-2" data-title="Architecture applicative">
+    <article class="slide dense" id="slide-3" data-type="slide" data-slide-type="diagram" data-id="slide-3" data-title="Architecture applicative">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 03 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Architecture &middot; Slide 04 / 08</div>
         <h1 class="slide-h1" data-editable="text">Architecture <strong>applicative</strong></h1>
         <p class="slide-subtitle" data-editable="text">Le point d'entree ne fait que cabler des routes, ce qui decide vit dans agents/ et services/. En vert, ce qui se calcule sans modele.</p>
       </div>
@@ -332,12 +355,12 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Generateur de tests QA &middot; src/tgi</span>
-        <span class="slide-footer-right">Slide 3 / 8</span>
+        <span class="slide-footer-right">Slide 4 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-3" data-type="slide" data-slide-type="content" data-id="slide-3" data-title="Deux regles dures">
+    <article class="slide dense" id="slide-4" data-type="slide" data-slide-type="content" data-id="slide-4" data-title="Deux regles dures">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Decisions &middot; Slide 04 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Decisions &middot; Slide 05 / 08</div>
         <h1 class="slide-h1" data-editable="text">Deux regles <strong>dures</strong>, mesurees</h1>
         <p class="slide-subtitle" data-editable="text">Chacune vient d'un echec observe, pas d'une intuition. Elles expliquent pourquoi la couverture est comptee et pourquoi rien n'est jamais ecarte en silence.</p>
       </div>
@@ -353,12 +376,12 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Pipeline &middot; .agent_docs/pipeline.md</span>
-        <span class="slide-footer-right">Slide 4 / 8</span>
+        <span class="slide-footer-right">Slide 5 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-4" data-type="slide" data-slide-type="content" data-id="slide-4" data-title="L'ecran de la carte">
+    <article class="slide dense" id="slide-5" data-type="slide" data-slide-type="content" data-id="slide-5" data-title="L'ecran de la carte">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 05 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 06 / 08</div>
         <h1 class="slide-h1" data-editable="text">La <strong>carte</strong>, avant tout appel couteux</h1>
         <p class="slide-subtitle" data-editable="text">Capture reelle du run de reference : 64 scenarios, 468 exigences, 55 cas d'utilisation, 29 ecarts proposes.</p>
       </div>
@@ -372,12 +395,12 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Interface &middot; onglet CARTE</span>
-        <span class="slide-footer-right">Slide 5 / 8</span>
+        <span class="slide-footer-right">Slide 6 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-5" data-type="slide" data-slide-type="content" data-id="slide-5" data-title="Par exigence">
+    <article class="slide dense" id="slide-6" data-type="slide" data-slide-type="content" data-id="slide-6" data-title="Par exigence">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 06 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 07 / 08</div>
         <h1 class="slide-h1" data-editable="text">Une ligne par <strong>exigence</strong></h1>
         <p class="slide-subtitle" data-editable="text">Prouver la couverture: 464 exigences couvertes sur 468, 9 declarees non testables, 20 citees sans jamais etre enoncees.</p>
       </div>
@@ -391,12 +414,12 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Interface &middot; onglet EXIGENCES</span>
-        <span class="slide-footer-right">Slide 6 / 8</span>
+        <span class="slide-footer-right">Slide 7 / 8</span>
       </div>
     </article>
-    <article class="slide dense" id="slide-6" data-type="slide" data-slide-type="content" data-id="slide-6" data-title="Par scenario">
+    <article class="slide dense" id="slide-7" data-type="slide" data-slide-type="content" data-id="slide-7" data-title="Par scenario">
       <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 07 / 08</div>
+        <div class="slide-eyebrow" data-editable="text">Interface &middot; Slide 08 / 08</div>
         <h1 class="slide-h1" data-editable="text">Relire des <strong>parcours</strong>, pas des paragraphes</h1>
         <p class="slide-subtitle" data-editable="text">64 scenarios, 313 tests, 4.9 etapes par test, regroupes par la numerotation du document.</p>
       </div>
@@ -410,32 +433,6 @@
       </div>
       <div class="slide-footer">
         <span class="slide-footer-left" data-editable="text">Interface &middot; onglet SCENARIOS &amp; TESTS</span>
-        <span class="slide-footer-right">Slide 7 / 8</span>
-      </div>
-    </article>
-    <article class="slide dense" id="slide-7" data-type="slide" data-slide-type="content" data-id="slide-7" data-title="Comment installer">
-      <div class="slide-header">
-        <div class="slide-eyebrow" data-editable="text">Prise en main &middot; Slide 08 / 08</div>
-        <h1 class="slide-h1" data-editable="text">Comment <strong>installer</strong></h1>
-        <p class="slide-subtitle" data-editable="text">Deux prerequis, un fichier de configuration, une commande.</p>
-      </div>
-      <div class="slide-body" data-editable="text">
-        <table class="cds-structured-list compact" style="width:100%; border-collapse:collapse; font-size:12.5px;">
-          <tbody>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">1</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Prerequis</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;">Installer <code class='cds-code'>uv</code> et <code class='cds-code'>git</code>. uv gere Python 3.13, rien d'autre a installer.</td></tr>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">2</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Recuperer et installer</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>git clone &lt;url&gt;</code>, <code class='cds-code'>cd test-generation-interface</code>, puis <code class='cds-code'>uv sync</code></td></tr>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">3</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Configurer .env</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;">Copier <code class='cds-code'>.env.example</code> : URL du LLM, cle d'API, modele. Selon l'infra : TLS, <code class='cds-code'>TGI_LOGS</code> et <code class='cds-code'>TGI_PROJECTS_DIR</code>.</td></tr>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">4</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Verifier l'endpoint</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>uv run tgi-validate</code> traite un exemple et affiche <strong>VERDICT: USABLE</strong> si le modele repond.</td></tr>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); width:28px;"><span class="cds-tag">5</span></td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-weight:600; width:150px;">Lancer</td><td style="padding:6px 8px; border-bottom:1px solid var(--cds-layer-02); font-size:12px;"><code class='cds-code'>uv run tgi</code>, ou le raccourci <code class='cds-code'>tgi.bat</code> (Windows) et <code class='cds-code'>./tgi.sh</code> (macOS, Linux), puis <code class='cds-code'>http://localhost:8080</code></td></tr>
-          </tbody>
-        </table>
-        <div class="cds-notification" style="margin-top:10px; padding:8px var(--cds-spacing-05);">
-          <div><div class="notif-title">L'enchainement, une fois l'interface ouverte</div>
-          <div class="notif-body">Importer &rarr; relire la carte &rarr; generer &rarr; relire par exigence ou par scenario &rarr; exporter (JSON et xlsx). <code class="cds-code">WINDOWS.md</code> reprend tout cela sans terminal.</div></div>
-        </div>
-      </div>
-      <div class="slide-footer">
-        <span class="slide-footer-left" data-editable="text">Installation &middot; INSTALL.md, WINDOWS.md</span>
         <span class="slide-footer-right">Slide 8 / 8</span>
       </div>
     </article>
@@ -457,14 +454,14 @@
   // ── À METTRE À JOUR à chaque ajout/suppression de slide ──────
   const TOTAL = 8;
   const slideNames = [
-    "Vue d'ensemble",
+    "Page de garde",
+    "Comment installer",
     "Les quatre phases",
     "Architecture applicative",
     "Deux regles dures",
     "L'ecran de la carte",
     "Par exigence",
     "Par scenario",
-    "Comment installer",
   ];
   // ─────────────────────────────────────────────────────────────
 
