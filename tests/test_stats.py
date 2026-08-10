@@ -357,3 +357,32 @@ def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path)
     # and the healthy one is listed without the warning
     healthy_line = next(line for line in report.splitlines() if "aaaa1111" in line)
     assert "nothing was extracted" not in healthy_line
+
+
+def test_the_per_project_section_is_printed_even_for_a_single_healthy_project(tmp_path: Path) -> None:
+    """A conditional section hides the answer on the one run where somebody needs it."""
+    project = tmp_path / "cccc3333"
+    project.mkdir()
+    (project / "state.json").write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "1",
+                        "status": "done",
+                        "kind": "nominal",
+                        "requirement_refs": ["F01.CU01.RM01"],
+                        "tests": [{"id": "T1", "steps": [{"order": 1}], "requirement_refs": ["F01.CU01.RM01"]}],
+                    }
+                ],
+                "requirements": [{"ref": "F01.CU01.RM01", "kind": "RM", "parent": "F01.CU01", "statement": "x"}],
+                "axes": {"F": {"count": 12}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_report([], tmp_path)
+
+    assert "Per project" in report
+    assert "cccc3333: 1 scenarios, 1 requirements, 1 carried" in report

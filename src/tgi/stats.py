@@ -267,9 +267,9 @@ def format_report(roles: dict[str, RoleStats], projects: dict[str, Any]) -> str:
         f"  volume: {projects['tests']} tests, {projects['steps']} steps, "
         f"{projects['tests_per_scenario']} tests per scenario"
     )
-    if len(projects.get("per_project") or []) > 1 or any(
-        not entry["requirements"] for entry in projects.get("per_project") or []
-    ):
+    # Always printed: a conditional section is a section that hides the answer on the one run
+    # where somebody needs it.
+    if projects.get("per_project"):
         lines.append("")
         lines.append("Per project (requirements read, references carried by scenarios):")
         for entry in projects["per_project"]:
