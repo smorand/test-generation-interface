@@ -53,8 +53,15 @@ async def client(app_settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Asy
     async def _fake_chat(self: object, **kwargs: object) -> str:
         return "reponse simulee du QA agent"
 
+    async def _fake_chat_json(self: object, **kwargs: object) -> object:
+        # An upload starts a distillation in the background. Without this, the functional
+        # suite called the real endpoint, and the answer landed on top of the state a test
+        # had just prepared.
+        return {"context": "contexte simule", "scenarios": [], "discards": []}
+
     monkeypatch.setattr(llm_module.LLMClient, "check_context_window", _fake_check)
     monkeypatch.setattr(llm_module.LLMClient, "chat", _fake_chat)
+    monkeypatch.setattr(llm_module.LLMClient, "chat_json", _fake_chat_json)
 
     # Sanity: state manager sees the patched dir
     assert state_manager
@@ -225,10 +232,15 @@ async def test_partials_tests_and_history(client: AsyncClient) -> None:
 
 
 async def _project_with_scenarios(client: AsyncClient) -> str:
-    """A project already distilled and generated, shaped like a real one."""
+    """A project already distilled and generated, shaped like a real one.
+
+    Built directly, never uploaded: an upload starts a distillation in the background whose
+    save lands on top of what the test writes, so the outcome depended on which finished
+    first.
+    """
     from tgi.services.state_manager import state_manager
 
-    project_id = await _upload_sample(client)
+    project_id = await _project_in_state(client, {})
     state = await state_manager.load(project_id)
     state["context"] = "Application de gestion des habilitations."
     state["containers"] = {"VAL01.CU01": "Créer une habilitation", "VAL01.CU02": "Révoquer"}
@@ -491,10 +503,19 @@ async def test_filter_dropdowns_are_ordered_numerically(client: AsyncClient) -> 
 
 
 async def _project_in_state(client: AsyncClient, fields: dict[str, Any]) -> str:
-    """A project whose pipeline flags are set to exactly what a test needs."""
+    """A project whose pipeline flags are set to exactly what a test needs.
+
+    Built directly rather than uploaded: an upload starts a distillation in the background,
+    which overwrote the state the test had just prepared and made the outcome depend on who
+    finished first.
+    """
+    from tgi.services.git_service import git_service
     from tgi.services.state_manager import state_manager
 
-    project_id = await _upload_sample(client)
+    project_id = await state_manager.create(
+        doc_path="/tmp/spec.txt", doc_text="Une regle metier importante.", model_generator="m", model_judge="m"
+    )
+    await git_service.init(project_id)
     state = await state_manager.load(project_id)
     state.update(fields)
     await state_manager.save(project_id, state)
@@ -681,3 +702,34 @@ async def test_the_map_says_so_when_nothing_was_extracted(client: AsyncClient) -
     html = (await client.get(f"/projects/{project_id}/partials/map")).text
 
     assert "Aucune exigence n'a été extraite" in html
+
+
+async def test_the_deliverable_panels_say_they_are_a_snapshot_during_a_run(client: AsyncClient) -> None:
+    """A panel cannot refresh 468 rows every few seconds, so it has to say it may be stale
+    rather than look current."""
+    running = await _project_in_state(
+        client,
+        {
+            "run_started_at": "2026-01-01T00:00:00+00:00",
+            "scenarios": [{"id": "SC-001", "status": "running", "requirement_refs": [], "tests": []}],
+        },
+    )
+
+    for panel in ("scenarios", "requirements", "tests"):
+        html = (await client.get(f"/projects/{running}/partials/{panel}")).text
+        assert "cette vue est un instantané" in html, panel
+        assert "Actualiser" in html, panel
+
+
+async def test_the_snapshot_notice_is_gone_once_the_run_is_over(client: AsyncClient) -> None:
+    finished = await _project_in_state(
+        client,
+        {
+            "run_started_at": "2026-01-01T00:00:00+00:00",
+            "scenarios": [{"id": "SC-001", "status": "done", "requirement_refs": [], "tests": []}],
+        },
+    )
+
+    for panel in ("scenarios", "requirements", "tests"):
+        html = (await client.get(f"/projects/{finished}/partials/{panel}")).text
+        assert "cette vue est un instantané" not in html, panel
