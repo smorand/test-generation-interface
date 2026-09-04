@@ -298,7 +298,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             tests_per_scenario=max(1, min(tests_per_scenario, _MAX_TESTS_PER_SCENARIO)) if tests_per_scenario else None,
         )
 
-        # Init git repo
+        # Init git repo (best effort -- versioning is nice but not required)
         await git_service.init(project_id, "init: project initialization")
 
         # Phase one reads the whole document, which takes seconds to a minute: run it in

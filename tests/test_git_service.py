@@ -76,3 +76,17 @@ async def test_log_empty_for_uninitialized(service: GitService, projects_dir: Pa
     (projects_dir / pid).mkdir(parents=True, exist_ok=True)
     log = await service.log(pid)
     assert log == []
+
+
+async def test_methods_noop_when_git_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When git is not in PATH, all public methods are no-ops."""
+    import tgi.services.git_service as gs
+
+    monkeypatch.setattr(gs, "_git_available", False)
+    svc = gs.GitService()
+
+    assert await svc.init("any-id") is None
+    assert await svc.commit("any-id", "msg") is None
+    assert await svc.log("any-id") == []
+    assert await svc.rollback("any-id", "abc") is False
+    assert await svc.current_hash("any-id") is None
