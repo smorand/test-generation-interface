@@ -38,11 +38,7 @@ def _test_offset(scenario_id: str) -> int:
     return (int(digits) if digits else 1) * 100
 
 
-
 # Locks per project to prevent concurrent pipeline runs
-
-
-
 
 
 def get_project_lock(project_id: str) -> asyncio.Lock:

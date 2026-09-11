@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 
 from tgi.config import settings

@@ -184,7 +184,6 @@ class DistillerAgent:
         return {"context": "\n\n".join(contexts), "scenarios": scenarios, "discards": discards}
 
 
-
 def unstated_discards(requirements: list[Requirement]) -> list[dict[str, Any]]:
     """Propose discarding every reference the document cites and never states.
 

@@ -20,6 +20,7 @@ from tgi.services.state_manager import StateManager
 if TYPE_CHECKING:
     from pathlib import Path
 
+
 def _drain(queue: Any) -> set[str]:
     """Every event type a watcher received."""
     kinds = set()
@@ -89,9 +90,7 @@ def orchestrator(projects_dir: Path) -> Orchestrator:
 
 
 async def _new_project(orchestrator: Orchestrator, doc: str = DOC) -> str:
-    project_id = await orchestrator._state.create(
-        doc_path="/tmp/doc.md", doc_text=doc, model_generator="m"
-    )
+    project_id = await orchestrator._state.create(doc_path="/tmp/doc.md", doc_text=doc, model_generator="m")
     await orchestrator._git.init(project_id)
     return project_id
 
@@ -435,6 +434,4 @@ async def test_an_accepted_discard_is_not_generated_for_and_leaves_the_denominat
     assert summary["discarded"] == 1
     # And nothing was generated for it: no gap to close, no untestable verdict to write
     assert not [s for s in state["scenarios"] if "E01.N0X" in (s.get("uncovered_refs") or [])]
-    assert not [
-        u for s in state["scenarios"] for u in (s.get("untestable") or []) if u.get("ref") == "E01.N0X"
-    ]
+    assert not [u for s in state["scenarios"] for u in (s.get("untestable") or []) if u.get("ref") == "E01.N0X"]

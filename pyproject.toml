@@ -3,7 +3,7 @@ name = "test-generation-interface"
 version = "0.1.0"
 description = "QA agent that generates structured functional tests from specification documents"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 license = { text = "MIT" }
 authors = [
     { name = "Sebastien MORAND" }
@@ -11,7 +11,7 @@ authors = [
 
 dependencies = [
     "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
+    "uvicorn>=0.34.0",
     "openai>=1.50.0",
     "python-docx>=1.1.0",
     "pypdf>=4.0.0",
@@ -21,6 +21,7 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "jsonschema>=4.23.0",
     "rich>=13.9.0",
+    "httpx2>=2.0.0",
     "httpx>=0.28.0",
     "typer>=0.15.0",
     "opentelemetry-api>=1.29.0",

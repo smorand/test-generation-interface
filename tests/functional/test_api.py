@@ -587,7 +587,7 @@ async def test_the_map_fragment_refreshes_itself_while_the_document_is_read(clie
 
     html = (await client.get(f"/projects/{project_id}/partials/map")).text
 
-    assert "hx-trigger=\"load delay:4s\"" in html
+    assert 'hx-trigger="load delay:4s"' in html
     assert "mapReady = false" in html
 
 
@@ -596,7 +596,7 @@ async def test_the_map_fragment_stops_polling_once_the_map_is_there(client: Asyn
 
     html = (await client.get(f"/projects/{project_id}/partials/map")).text
 
-    assert "hx-trigger=\"load delay:4s\"" not in html
+    assert 'hx-trigger="load delay:4s"' not in html
     assert "mapReady = true" in html
 
 
@@ -623,13 +623,13 @@ async def test_progress_polls_itself_only_while_a_run_is_going(client: AsyncClie
     over = (await client.get(f"/projects/{finished}/partials/progress")).text
     blank = (await client.get(f"/projects/{empty}/partials/progress")).text
 
-    assert "hx-trigger=\"load delay:4s\"" in live
+    assert 'hx-trigger="load delay:4s"' in live
     assert "pipelineRunning = true" in live
-    assert "hx-trigger=\"load delay:4s\"" not in over
+    assert 'hx-trigger="load delay:4s"' not in over
     assert "pipelineRunning = false" in over
     # Loaded while the document is still being read, it has nothing to draw yet and must
     # keep polling: waiting for an event left it blank for the whole run.
-    assert "hx-trigger=\"load delay:4s\"" in blank
+    assert 'hx-trigger="load delay:4s"' in blank
 
 
 async def test_requirements_can_be_filtered_on_the_ones_the_document_never_states(

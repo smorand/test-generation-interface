@@ -28,7 +28,7 @@ _REMOVED_VARIABLES = {
     "TGI_MODEL_JUDGE": "there is no judge any more, coverage is counted on the requirements",
     "TGI_JUDGE_BATCH_RULES": "the judge was removed",
     "TGI_MAX_JUDGE_PASSES": "the judge was removed",
-    "TGI_JUDGE_PASS_SCORE": "the judge was removed",
+    "TGI_JUDGE_PASS_SCORE": "the judge was removed",  # nosec B105
 }
 
 

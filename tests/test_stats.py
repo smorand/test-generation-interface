@@ -341,7 +341,13 @@ def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path)
         json.dumps(
             {
                 "scenarios": [
-                    {"id": "1", "status": "pending", "kind": "nominal", "requirement_refs": ["F01.CU01.RM01"], "tests": []}
+                    {
+                        "id": "1",
+                        "status": "pending",
+                        "kind": "nominal",
+                        "requirement_refs": ["F01.CU01.RM01"],
+                        "tests": [],
+                    }
                 ],
                 "requirements": [],
                 "axes": {},

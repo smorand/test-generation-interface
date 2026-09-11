@@ -8,7 +8,7 @@ import asyncio
 import json
 
 from tgi.config import settings
-from tgi.services.llm import llm_client, LLMJSONError
+from tgi.services.llm import LLMJSONError, llm_client
 
 
 async def main() -> int:

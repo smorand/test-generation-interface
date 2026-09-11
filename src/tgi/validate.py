@@ -139,9 +139,7 @@ async def _check_endpoint(client: LLMClient, result: ValidationResult) -> bool:
     result.models_visible = len(models)
     known = {str(m.get("id", "")) for m in models}
     if known and result.model_generator not in known:
-        result.advice.append(
-            f"The model {result.model_generator} is not listed by the endpoint, check its exact id"
-        )
+        result.advice.append(f"The model {result.model_generator} is not listed by the endpoint, check its exact id")
     return True
 
 
@@ -260,12 +258,10 @@ def _decide_verdict(result: ValidationResult) -> None:
         result.advice.append("The usual cause is reasoning: see TGI_DISABLE_THINKING below")
     if result.requirements and result.coverage_percent < _LOW_COVERAGE_PERCENT:
         result.problems.append(
-            f"only {result.covered} of {result.requirements} requirements are covered "
-            f"({result.coverage_percent}%)"
+            f"only {result.covered} of {result.requirements} requirements are covered ({result.coverage_percent}%)"
         )
         result.advice.append(
-            "Raise TGI_TESTS_PER_SCENARIO, or check the distilled map: a scenario with no evidence "
-            "produces thin tests"
+            "Raise TGI_TESTS_PER_SCENARIO, or check the distilled map: a scenario with no evidence produces thin tests"
         )
     elif result.scenarios and not result.tests:
         result.problems.append("The run produced no test at all, so nothing could be measured")

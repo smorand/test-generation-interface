@@ -20,7 +20,13 @@ def _state() -> dict[str, Any]:
     return {
         "requirements": [
             {"ref": "F01.CU01.RM01", "kind": "RM", "axis": "F", "parent": "F01.CU01", "statement": "Le système crée."},
-            {"ref": "F01.CU01.RM02", "kind": "RM", "axis": "F", "parent": "F01.CU01", "statement": "Le système refuse."},
+            {
+                "ref": "F01.CU01.RM02",
+                "kind": "RM",
+                "axis": "F",
+                "parent": "F01.CU01",
+                "statement": "Le système refuse.",
+            },
             {"ref": "F01.CU01.RM03", "kind": "RM", "axis": "F", "parent": "F01.CU01", "statement": ""},
         ],
         "containers": {"F01.CU01": "Créer une habilitation"},
@@ -57,7 +63,9 @@ def _state() -> dict[str, Any]:
                 ],
             }
         ],
-        "discards": [{"what": "Historique des versions", "reason": "sans_valeur_test", "refs": [], "decision": "proposed"}],
+        "discards": [
+            {"what": "Historique des versions", "reason": "sans_valeur_test", "refs": [], "decision": "proposed"}
+        ],
     }
 
 

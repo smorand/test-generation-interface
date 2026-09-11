@@ -265,8 +265,6 @@ def extract_requirements(text: str, grammar: Grammar | None = None) -> list[Requ
     return list(found.values())
 
 
-
-
 def _continues_after_blank(paragraph: list[str], rest: list[str]) -> bool:
     """Whether a statement continues past a blank line.
 

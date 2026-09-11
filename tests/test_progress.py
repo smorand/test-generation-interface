@@ -130,7 +130,9 @@ def test_the_bar_counts_the_same_requirements_as_the_coverage_summary() -> None:
     screen, because an accepted discard left one denominator and not the other."""
     state = {
         "run_started_at": "2026-01-01T00:00:00+00:00",
-        "discards": [{"what": "cité jamais énoncé", "reason": "sans_enonce", "refs": ["E01.N0X"], "decision": "accepted"}],
+        "discards": [
+            {"what": "cité jamais énoncé", "reason": "sans_enonce", "refs": ["E01.N0X"], "decision": "accepted"}
+        ],
         "scenarios": [
             {
                 "id": "SC-001",
