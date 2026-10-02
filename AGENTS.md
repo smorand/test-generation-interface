@@ -4,11 +4,12 @@ Compact index for AI agents. Details live in `.agent_docs/`. Read this first, th
 
 ## Overview
 
-QA test generator: FastAPI + HTMX web app that reads a functional specification whole, distils it
-into context, user scenarios and requirements, has a human validate that map, then writes the tests
-of each scenario and closes the coverage gaps. Coverage is counted against the requirements the
-document declares, never scored by a model. Each project is versioned with local git. Python 3.13,
-src/ package layout (`src/tgi`).
+QA test generator: FastAPI web app that reads a functional specification whole, distils it
+into context, scenarios and requirements, then writes the tests of each scenario and closes
+the coverage gaps. Coverage is counted against the requirements the document declares, never
+scored by a model. A project is a self-contained folder; each execution is a numbered,
+disposable version inside it (`v1`, `v2`, ...), never merged with the previous one. Python
+3.13, src/ package layout (`src/tgi`).
 
 ## Key Commands
 
@@ -26,26 +27,35 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 
 ## Structure
 
-- `src/tgi/tgi.py` : `create_app()` factory, module-level `app`, `main()`
-- `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`
+- `src/tgi/tgi.py` : `create_app()` factory, the 18 routes (`GET /`, `GET /parametres`,
+  16 `/api/v1/...`), module-level `app`, `main()`
+- `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`, `config_dir`
 - `src/tgi/grammar.py` : infers the numbering the document gives itself, extracts requirements
-- `src/tgi/agents/` : orchestrator + distiller / scenario_generator / coverage
+- `src/tgi/agents/` : `Orchestrator.run(project_id, version, model, llm, text)` drives
+  distiller / scenario_generator / coverage, each constructed with the version's own prompt
 - `src/tgi/coverage_report.py` : coverage counted, and the requirement traceability matrix
 - `src/tgi/deliverable.py` : the two reading axes (scenario tree, requirement rows)
-- `src/tgi/progress.py` : run progress, elapsed and naive remaining estimate
-- `src/tgi/workbook.py` : reviewable xlsx (summary, traceability, one sheet per functionality)
+- `src/tgi/progress.py` : run progress, elapsed/remaining, and the SSE payload shape
+- `src/tgi/workbook.py` : the recette xlsx (summary, traceability, one sheet per functionality)
+- `src/tgi/qc_export.py` : the second workbook, one `QC` sheet shaped for ALM's Excel import
 - `src/tgi/locks.py` : locks keyed by the running event loop
 - `src/tgi/build.py` : build identifier shown in the page and on the stylesheet
 - `src/tgi/{logging_config,tracing}.py` : rich console plus file logs, OpenTelemetry
 - `src/tgi/{stats,validate}.py` : `tgi-stats` from traces, `tgi-validate` verdict on a model
-- `src/tgi/events.py` : SSE fan out, one queue per connection (a shared queue got stolen)
-- `src/tgi/services/` : llm, doc_parser, git_service, state_manager, paths
+- `src/tgi/events.py` : SSE fan out keyed by `"<project_id>:<version>"`, one queue per connection
+- `src/tgi/services/` : `llm` (`build_llm_client(entry)`, per run), `model_store` (models.json
+  CRUD), `prompts` (the three shipped defaults), `doc_parser`, `state_manager`, `paths`
+- `src/tgi/services/state_manager.py` : disk layout. `projects/<project_id>/project.json` +
+  `source/<filename>`; `projects/<project_id>/v<n>/state.json` + `prompts/*.md` +
+  `testplan.xlsx` + `qc.xlsx` once produced. No database, no git repo per project.
 - `src/tgi/services/paths.py` : **every identifier received from a client passes through here**
   before it can compose a disk path. `safe_basename` confines an uploaded filename;
   `validated_project_id` / `validated_version` / `validated_test_id` refuse anything else and
   raise `InvalidIdentifier`, which the HTTP layer turns into a 404
 - `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel);
-  `schemas/test_schema.json` is the export contract, held true by `tests/test_test_schema.py`
+  `schemas/test_schema.json` is the export contract, held true by `tests/test_test_schema.py`;
+  `templates/` is `base.html`, `project.html`, `parametres.html`, `partials/progress.html`,
+  rendered with the IBM Carbon Design System (CSS + Web Components via CDN, no bundler)
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
 
 ## Conventions
@@ -53,29 +63,41 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - Entry point wires routes only; logic in `agents/` and `services/`
 - Resources resolved from `Path(__file__)`, never relative to cwd
 - Logging uses `%` formatting; never trace prompts/responses/API keys
-- LLM calls wrapped in `trace_span("llm.chat" / "api.list_models")`; httpx + FastAPI auto-instrumented
-- Live UI: fragments restate server truth (`x-init`) and carry their own stopping poll; never rely on an event alone
-- Module-level singletons kept intentionally: `settings`, `llm_client`, `state_manager`, `git_service`, `doc_parser`
-- Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
+- LLM calls wrapped in `trace_span("llm.chat" / "api.list_models")`; operation spans
+  `project.create`, `version.run`, `version.delete`, `qc.export`, `models.write`; httpx +
+  FastAPI auto-instrumented
+- The api key of a model table entry is masked (`sk-***<last 4>`) everywhere outside
+  `services/model_store.py`: never in a response, a page, an SSE frame, or a trace
+- Module-level singletons kept intentionally: `settings`, `state_manager`, `doc_parser`.
+  `LLMClient` is no longer one of them: `build_llm_client(entry)` constructs one per run,
+  from the model table entry chosen, because the table holds several endpoints
+- Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default
+  `$HOME/.cache/tgi/logs`); the model table under `TGI_CONFIG_DIR` (default
+  `$HOME/.config/tgi/models.json`, mode `0600`)
 - **No identifier received from a client composes a disk path without `src/tgi/services/paths.py`.**
   The guard is applied twice on purpose: at the HTTP boundary, where the right error body is
-  known, and inside `StateManager.project_dir()` and `GitService.repo_dir()`, where the traffic
-  actually passes. A route added later without the first still hits the second. `E2E-010`
-  enumerates `app.routes` rather than a fixed list, so it goes red when a new route skips it
+  known, and inside `StateManager.project_dir()` / `version_dir()`, where the traffic actually
+  passes. A route added later without the first still hits the second.
 - A 404 body is identical whether an identifier is malformed or merely absent, so a probe cannot
   tell the two apart. A rejected identifier is logged at `WARNING` by its **shape**, never its
   value: `request.url.path` is the decoded path and would carry the payload into the logs
+- There is no validation gate between deposit and generation any more (DEC-002): the
+  interface is two gestures, deposit then launch. The safety net is that a version can be
+  deleted and the project relaunched, which did not exist before and is exactly SC-005/SC-006
 
 ## Pipeline essentials
 
-Four phases, and the order matters. **Phase 0 without a model**: `grammar.py` infers the
+Four phases, and the order matters. **Deposit creates no version**: a project is just its
+source, self-contained, until `POST .../runs` creates `v1` and the pipeline actually reads
+the document (FR-NEW-007, FR-NEW-049). **Phase 0 without a model**: `grammar.py` infers the
 document's own numbering (51/51 use cases, 401/401 requirements, 0 orphan, where a model
 found 46 and fabricated when interrogated). **Phase 1**: the whole document in one call
 (78k tokens against 128k) gives context, scenarios and discards, every identifier filtered
 against the text; arithmetic then attaches every requirement left behind, so 468 of 468 are
-carried. A human validates that map before anything expensive runs. **Phase 2**: one call
-per scenario with its requirements and its section, volume as a target not a cap.
-**Phase 3**: gaps computed, then closed by completing an existing test before adding one.
+carried, using the three prompts the version was launched with, edited or not
+(FR-NEW-048). **Phase 2**: one call per scenario with its requirements and its section,
+volume as a target not a cap. **Phase 3**: gaps computed, then closed by completing an
+existing test before adding one.
 
 Two hard rules, both measured. **Enumerate, never interrogate**: asked for the rules of one
 named use case a model returned 17 references where 1 exists, while asked to list what it

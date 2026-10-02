@@ -1,12 +1,21 @@
-"""State manager: read/write JSON state files per project."""
+"""Disk layout: a project is a self-contained folder, a version is a folder inside it.
+
+``projects/<project_id>/`` holds ``project.json`` and ``source/<source_filename>``, nothing
+else at that level. Each execution is ``projects/<project_id>/v<n>/``, holding its own
+``state.json`` and ``prompts/``, so zipping a project carries everything, and deleting a
+version is deleting a directory (FR-NEW-002, FR-NEW-010, DEC-005). A directory without a
+``project.json`` is simply not a project, which is not an error (FR-NEW-031, FR-NEW-046).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
+import secrets
+import shutil
 import time
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,28 +24,38 @@ import aiofiles
 
 from tgi.config import settings
 from tgi.locks import lock_for
-from tgi.services.paths import is_project_id, validated_project_id
+from tgi.services.paths import is_project_id, validated_project_id, validated_version
 
 logger = logging.getLogger(__name__)
 
-# Per-project locks serialize read-modify-write cycles on the same state.json.
-# Without this, parallel bloc processing races: concurrent load/save interleave,
-# causing lost updates and reads of a half-written (empty) file.
-_STATE_LOCKS: dict[str, asyncio.Lock] = {}
+PROJECT_FILENAME = "project.json"
+STATE_FILENAME = "state.json"
+SOURCE_DIRNAME = "source"
+PROMPTS_DIRNAME = "prompts"
+WORKBOOK_FILENAME = "testplan.xlsx"
+QC_FILENAME = "qc.xlsx"
 
+_VERSION_DIR_PREFIX = "v"
 
 # Windows refuses to replace a file another handle still has open, unlike POSIX.
 _REPLACE_ATTEMPTS = 5
 _REPLACE_BACKOFF_S = 0.05
 
 
-def _replace_with_retry(source: Path, target: Path) -> None:
-    """Move source onto target atomically, retrying a transient Windows lock.
+class ProjectCorrupted(RuntimeError):
+    """A project's project.json exists but cannot be parsed."""
 
-    Path.replace is atomic on POSIX and on Windows alike, but on Windows it raises
-    PermissionError when a reader still holds the target open, which a concurrent
-    load can do for a few milliseconds.
-    """
+    __slots__ = ()
+
+
+class VersionCorrupted(RuntimeError):
+    """A version's state.json exists but cannot be parsed."""
+
+    __slots__ = ()
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """Move source onto target atomically, retrying a transient Windows lock."""
     for attempt in range(_REPLACE_ATTEMPTS):
         try:
             source.replace(target)
@@ -47,197 +66,318 @@ def _replace_with_retry(source: Path, target: Path) -> None:
             time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
 
 
-def _state_lock(project_id: str) -> asyncio.Lock:
-    """One writer at a time per project, on the loop currently running.
+async def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Write then rename over the target: a concurrent reader never sees a half file."""
+    tmp_path = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
+    async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+        await f.write(text)
+    await asyncio.to_thread(_replace_with_retry, tmp_path, path)
 
-    The key has to be the one the orchestrator uses. It was "state:<id>" here and
-    "project:<id>" there, so two mutexes guarded one file: a read, modify, write cycle in the
-    orchestrator interleaved with one here, and whichever saved last silently discarded the
-    other's work, up to a whole distillation.
-    """
+
+async def _read_json(path: Path) -> dict[str, Any]:
+    async with aiofiles.open(path, encoding="utf-8") as f:
+        content = await f.read()
+    data: dict[str, Any] = json.loads(content)
+    return data
+
+
+def _version_lock(project_id: str, version: str) -> asyncio.Lock:
+    return lock_for(f"version:{project_id}:{version}")
+
+
+def _project_lock(project_id: str) -> asyncio.Lock:
     return lock_for(f"project:{project_id}")
 
 
+_VERSION_NUMBER_RE = re.compile(r"^v([1-9][0-9]*)$")
+
+
+def _version_number(version_id: str) -> int:
+    match = _VERSION_NUMBER_RE.match(version_id)
+    return int(match.group(1)) if match else 0
+
+
 class StateManager:
-    """JSON state persistence for projects."""
+    """Disk persistence for projects, their source, and their versions."""
 
     __slots__ = ()
+
+    # ------------------------------------------------------------------
+    # Paths
+    # ------------------------------------------------------------------
 
     def project_dir(self, project_id: str) -> Path:
         """Resolve a project directory, refusing an identifier that could leave it.
 
-        The guard sits here and not only at the HTTP boundary, and the duplication is the
-        point: a route added later without the boundary check would silently reopen the
-        class, whereas everything that touches a project path comes through this function.
-
-        Resolving is also a read. It used to mkdir, so probing a project that does not
-        exist created it, which littered the listing and told the prober it had reached
-        something. Creation belongs to create(), the one caller that means it.
+        The guard sits here and not only at the HTTP boundary: everything that touches a
+        project path comes through this function, so a route added later without the
+        boundary check still hits this one (FR-NEW-040).
         """
         return Path(settings.projects_dir) / validated_project_id(project_id)
 
-    def state_path(self, project_id: str) -> Path:
-        return self.project_dir(project_id) / "state.json"
+    def project_json_path(self, project_id: str) -> Path:
+        return self.project_dir(project_id) / PROJECT_FILENAME
 
-    async def load(self, project_id: str) -> dict[str, Any]:
-        path = self.state_path(project_id)
+    def source_dir(self, project_id: str) -> Path:
+        return self.project_dir(project_id) / SOURCE_DIRNAME
+
+    def version_dir(self, project_id: str, version: str) -> Path:
+        return self.project_dir(project_id) / validated_version(version)
+
+    def version_state_path(self, project_id: str, version: str) -> Path:
+        return self.version_dir(project_id, version) / STATE_FILENAME
+
+    def version_prompts_dir(self, project_id: str, version: str) -> Path:
+        return self.version_dir(project_id, version) / PROMPTS_DIRNAME
+
+    # ------------------------------------------------------------------
+    # Project
+    # ------------------------------------------------------------------
+
+    async def create_project(self, source_filename: str, content: bytes) -> dict[str, Any]:
+        """Create a self-contained project: project.json plus its source, nothing else.
+
+        The id is a 12 hex opaque token, never derived from the file name, so two
+        specifications of the same name never collide (DEC-010).
+        """
+        project_id = secrets.token_hex(6)
+        directory = self.project_dir(project_id)
+        try:
+            directory.mkdir(parents=True)
+            (directory / SOURCE_DIRNAME).mkdir(parents=True)
+            source_path = directory / SOURCE_DIRNAME / source_filename
+            async with aiofiles.open(source_path, "wb") as f:
+                await f.write(content)
+            project = {
+                "id": project_id,
+                "name": Path(source_filename).stem,
+                "source_filename": source_filename,
+                "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "next_version": 1,
+            }
+            await _write_json_atomic(self.project_json_path(project_id), project)
+        except OSError:
+            # No half project left behind: ENOSPC and any other write failure alike.
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        logger.info("Created project %s", project_id)
+        return project
+
+    async def load_project(self, project_id: str) -> dict[str, Any]:
+        path = self.project_json_path(project_id)
         if not path.exists():
             raise FileNotFoundError(f"Project {project_id} not found")
-        async with aiofiles.open(path, encoding="utf-8") as f:
-            content = await f.read()
-        state: dict[str, Any] = json.loads(content)
-        return state
+        try:
+            return await _read_json(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProjectCorrupted(project_id) from exc
 
-    async def save(self, project_id: str, state: dict[str, Any]) -> None:
-        """Atomically persist state: write to a temp file, then rename over the target.
+    async def save_project(self, project_id: str, project: dict[str, Any]) -> None:
+        async with _project_lock(project_id):
+            await _write_json_atomic(self.project_json_path(project_id), project)
 
-        os.replace is atomic on the same filesystem, so a concurrent load never
-        observes a truncated or half-written file.
-        """
-        path = self.state_path(project_id)
-        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-        payload = json.dumps(state, indent=2, ensure_ascii=False)
-        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
-            await f.write(payload)
-        await asyncio.to_thread(_replace_with_retry, tmp_path, path)
+    async def add_source(self, project_id: str, source_filename: str, content: bytes) -> None:
+        """Write the source of a project that does not have one yet (FR-NEW-009)."""
+        source_dir = self.source_dir(project_id)
+        source_dir.mkdir(parents=True, exist_ok=True)
+        path = source_dir / source_filename
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(content)
+        async with _project_lock(project_id):
+            project = await self.load_project(project_id)
+            project["source_filename"] = source_filename
+            await _write_json_atomic(self.project_json_path(project_id), project)
 
-    async def create(
-        self,
-        doc_path: str,
-        doc_text: str,
-        model_generator: str,
-        tests_per_scenario: int | None = None,
-    ) -> str:
-        project_id = str(uuid.uuid4())
-        # The only place a project directory comes into existence
-        self.project_dir(project_id).mkdir(parents=True, exist_ok=True)
-        state: dict[str, Any] = {
-            "project_id": project_id,
-            "doc_path": doc_path,
-            "doc_text": doc_text,
-            "model_generator": model_generator,
-            "tests_per_scenario": tests_per_scenario or settings.tests_per_scenario,
-            "context": "",
-            "scenarios": [],
-            "requirements": [],
-            "containers": {},
-            "discards": [],
-            "axes": {},
-            "validated": False,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-        await self.save(project_id, state)
-        logger.info("Created project %s", project_id)
-        return project_id
-
-    async def update_field(self, project_id: str, field: str, value: Any) -> None:
-        """Set one top level field of the state under the project lock."""
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            state[field] = value
-            await self.save(project_id, state)
-
-    async def update_scenario(self, project_id: str, scenario_id: str, updates: dict[str, Any]) -> None:
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            for scenario in state.get("scenarios") or []:
-                if str(scenario.get("id")) == scenario_id:
-                    scenario.update(updates)
-                    break
-            await self.save(project_id, state)
-
-    async def get_scenario(self, project_id: str, scenario_id: str) -> dict[str, Any] | None:
-        state = await self.load(project_id)
-        for scenario in state.get("scenarios") or []:
-            if str(scenario.get("id")) == scenario_id:
-                found: dict[str, Any] = scenario
-                return found
-        return None
-
-    async def decide_discard(self, project_id: str, index: int, decision: str) -> dict[str, Any] | None:
-        """Record the human decision on a proposed discard.
-
-        Accepting one takes its references out of the corpus of truth, which is why the
-        decision is stored rather than applied silently.
-        """
-        if decision not in {"accepted", "rejected", "proposed"}:
+    def existing_source(self, project_id: str, project: dict[str, Any]) -> Path | None:
+        """The source file on disk, or None when it has vanished (FR-NEW-008)."""
+        filename = str(project.get("source_filename") or "")
+        if not filename:
             return None
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            discards = state.get("discards") or []
-            if not 0 <= index < len(discards):
-                return None
-            discards[index]["decision"] = decision
-            discards[index]["decided_at"] = datetime.now(UTC).isoformat()
-            await self.save(project_id, state)
-            decided: dict[str, Any] = discards[index]
-        return decided
+        path = self.source_dir(project_id) / filename
+        return path if path.is_file() else None
 
-    async def update_test(self, project_id: str, test_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            updated_test: dict[str, Any] | None = None
-            for scenario in state.get("scenarios") or []:
-                for test in scenario.get("tests") or []:
-                    if test.get("id") == test_id:
-                        test.update(updates)
-                        test["updated_at"] = datetime.now(UTC).isoformat()
-                        updated_test = test
-                        break
-            if updated_test:
-                await self.save(project_id, state)
-        # A test lives in state.json and nowhere else. The per-test file this used to write
-        # composed its path from an identifier the client supplies, which is the sink
-        # FR-NEW-008 closes; the companion sink, fed by model output, went with the merge
-        # helper that wrote it and that had no caller left.
-        return updated_test
+    async def list_projects(self) -> list[dict[str, Any]]:
+        """Every project directory, newest first, corrupted ones last (FR-NEW-031, FR-NEW-061).
 
-    async def set_run_started(self, project_id: str) -> None:
-        """Stamp the start of a run, so progress can estimate what remains."""
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            state["run_started_at"] = datetime.now(UTC).isoformat()
-            await self.save(project_id, state)
-
-    async def update_requirement(self, project_id: str, ref: str, updates: dict[str, Any]) -> dict[str, Any] | None:
-        """Edit one requirement: its statement, or the fact a human reviewed it."""
-        allowed = {"statement", "reviewed", "kind"}
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            updated: dict[str, Any] | None = None
-            for requirement in state.get("requirements") or []:
-                if str(requirement.get("ref")) == ref:
-                    requirement.update({k: v for k, v in updates.items() if k in allowed})
-                    updated = requirement
-                    break
-            if updated is not None:
-                await self.save(project_id, state)
-        return updated
-
-    async def get_all_tests(self, project_id: str) -> list[dict[str, Any]]:
-        """Every test of the project, each carrying the scenario it belongs to."""
-        state = await self.load(project_id)
-        tests: list[dict[str, Any]] = []
-        for scenario in state.get("scenarios") or []:
-            for test in scenario.get("tests") or []:
-                if isinstance(test, dict):
-                    tests.append({**test, "scenario_id": test.get("scenario_id") or scenario.get("id", "")})
-        return tests
-
-    async def list_projects(self) -> list[str]:
-        """Every directory that is a project, by name.
-
-        The name has to be a valid identifier, not merely a directory holding a state.json.
-        Uploads land in projects/_uploads, so a client that posts a file called state.json
-        makes that directory look like a project whose state it wrote; and once
-        project_dir() validates, the same directory makes this call raise on every GET /.
-        The exclusion is silent on purpose: a directory whose name is not an identifier is
-        not a project, which is not an error.
+        A directory is only a project if it carries project.json: the exclusion of
+        anything else, including a symlink or an old state.json-only layout, is silent
+        on purpose, because it is not an error (FR-NEW-032, FR-NEW-046).
         """
         base = Path(settings.projects_dir)
         if not base.exists():
             return []
-        return [d.name for d in base.iterdir() if d.is_dir() and is_project_id(d.name) and (d / "state.json").exists()]
+
+        ok: list[dict[str, Any]] = []
+        corrupted: list[dict[str, Any]] = []
+        for entry in base.iterdir():
+            if entry.is_symlink() or not entry.is_dir() or not is_project_id(entry.name):
+                continue
+            project_json = entry / PROJECT_FILENAME
+            if not project_json.is_file():
+                continue
+            try:
+                project = await _read_json(project_json)
+            except (OSError, json.JSONDecodeError):
+                corrupted.append({"id": entry.name, "name": entry.name, "status": "corrompu"})
+                continue
+            source_present = self.existing_source(entry.name, project) is not None
+            version_count = len([d for d in entry.iterdir() if d.is_dir() and _VERSION_NUMBER_RE.match(d.name)])
+            ok.append(
+                {
+                    "id": project["id"],
+                    "name": project.get("name", entry.name),
+                    "source_filename": project.get("source_filename", ""),
+                    "version_count": version_count,
+                    "status": "ok" if source_present else "source_manquante",
+                    "created_at": project.get("created_at", ""),
+                }
+            )
+
+        ok.sort(key=lambda p: (p.get("created_at", ""), p["id"]), reverse=True)
+        corrupted.sort(key=lambda p: p["id"])
+        return ok + corrupted
+
+    async def next_version_id(self, project_id: str) -> str:
+        """The next version number, a monotone counter never reused (FR-NEW-011, DEC-006)."""
+        project = await self.load_project(project_id)
+        counter = project.get("next_version")
+        if isinstance(counter, int) and counter > 0:
+            return f"{_VERSION_DIR_PREFIX}{counter}"
+        existing = [_version_number(d.name) for d in self.project_dir(project_id).iterdir() if d.is_dir()]
+        return f"{_VERSION_DIR_PREFIX}{max(existing, default=0) + 1}"
+
+    # ------------------------------------------------------------------
+    # Version
+    # ------------------------------------------------------------------
+
+    async def create_version(self, project_id: str, model: str, prompts: dict[str, str]) -> str:
+        """Create the next version, writing the prompts it will actually run with.
+
+        The project's next_version counter is advanced inside the same project lock that
+        reads it, so two concurrent runs on the same project never mint the same number.
+        """
+        async with _project_lock(project_id):
+            project = await self.load_project(project_id)
+            counter = project.get("next_version")
+            number = counter if isinstance(counter, int) and counter > 0 else None
+            if number is None:
+                existing = [_version_number(d.name) for d in self.project_dir(project_id).iterdir() if d.is_dir()]
+                number = max(existing, default=0) + 1
+            version_id = f"{_VERSION_DIR_PREFIX}{number}"
+            directory = self.version_dir(project_id, version_id)
+            # A directory of this number can already exist, orphaned or hand-planted,
+            # without the counter having advanced past it: never overwrite, count forward.
+            while directory.exists():
+                number += 1
+                version_id = f"{_VERSION_DIR_PREFIX}{number}"
+                directory = self.version_dir(project_id, version_id)
+            directory.mkdir(parents=True)
+            prompts_dir = directory / PROMPTS_DIRNAME
+            prompts_dir.mkdir(parents=True)
+            prompt_paths: dict[str, str] = {}
+            for key, text in prompts.items():
+                async with aiofiles.open(prompts_dir / f"{key}.md", "w", encoding="utf-8") as f:
+                    await f.write(text)
+                prompt_paths[key] = f"{PROMPTS_DIRNAME}/{key}.md"
+
+            state: dict[str, Any] = {
+                "id": version_id,
+                "status": "running",
+                "model": model,
+                "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "error": None,
+                "prompts": prompt_paths,
+                "context": "",
+                "scenarios": [],
+                "requirements": [],
+                "containers": {},
+                "discards": [],
+                "axes": {},
+            }
+            await _write_json_atomic(self.version_state_path(project_id, version_id), state)
+
+            project["next_version"] = number + 1
+            await _write_json_atomic(self.project_json_path(project_id), project)
+
+        return version_id
+
+    async def load_version(self, project_id: str, version: str) -> dict[str, Any]:
+        path = self.version_state_path(project_id, version)
+        if not path.exists():
+            raise FileNotFoundError(f"Version {version} not found")
+        try:
+            return await _read_json(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise VersionCorrupted(version) from exc
+
+    async def save_version(self, project_id: str, version: str, state: dict[str, Any]) -> None:
+        async with _version_lock(project_id, version):
+            await _write_json_atomic(self.version_state_path(project_id, version), state)
+
+    async def update_version_field(self, project_id: str, version: str, field: str, value: Any) -> None:
+        async with _version_lock(project_id, version):
+            state = await self.load_version(project_id, version)
+            state[field] = value
+            await _write_json_atomic(self.version_state_path(project_id, version), state)
+
+    async def update_version_scenario(
+        self, project_id: str, version: str, scenario_id: str, updates: dict[str, Any]
+    ) -> None:
+        async with _version_lock(project_id, version):
+            state = await self.load_version(project_id, version)
+            for scenario in state.get("scenarios") or []:
+                if str(scenario.get("id")) == scenario_id:
+                    scenario.update(updates)
+                    break
+            await _write_json_atomic(self.version_state_path(project_id, version), state)
+
+    async def read_prompts(self, project_id: str, version: str) -> dict[str, str]:
+        """The content of the three prompts this version actually ran with (FR-NEW-047).
+
+        Dereferenced here, at read time: state.json keeps only the relative paths, so the
+        same text never lives twice on disk.
+        """
+        directory = self.version_dir(project_id, version)
+        state = await self.load_version(project_id, version)
+        prompts: dict[str, str] = {}
+        for key, relative in (state.get("prompts") or {}).items():
+            path = directory / relative
+            async with aiofiles.open(path, encoding="utf-8") as f:
+                prompts[key] = await f.read()
+        return prompts
+
+    async def list_versions(self, project_id: str) -> list[dict[str, Any]]:
+        """Every version, most recent first; a corrupted one carries only id and status."""
+        directory = self.project_dir(project_id)
+        if not directory.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        for child in directory.iterdir():
+            if not child.is_dir() or not _VERSION_NUMBER_RE.match(child.name):
+                continue
+            state_path = child / STATE_FILENAME
+            try:
+                state = await _read_json(state_path)
+            except (OSError, json.JSONDecodeError):
+                entries.append({"id": child.name, "status": "corrompue"})
+                continue
+            entries.append(
+                {
+                    "id": state.get("id", child.name),
+                    "status": state.get("status", "done"),
+                    "model": state.get("model", ""),
+                    "created_at": state.get("created_at", ""),
+                }
+            )
+        entries.sort(key=lambda e: _version_number(str(e["id"])), reverse=True)
+        return entries
+
+    async def delete_version(self, project_id: str, version: str) -> None:
+        directory = self.version_dir(project_id, version)
+        if not directory.exists():
+            raise FileNotFoundError(f"Version {version} not found")
+        await asyncio.to_thread(shutil.rmtree, directory)
 
 
 state_manager = StateManager()

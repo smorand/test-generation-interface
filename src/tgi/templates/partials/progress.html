@@ -1,38 +1,15 @@
-{% set p = progress %}
-<div class="w-full">
-  <div x-init="pipelineRunning = {{ 'true' if p.in_progress else 'false' }}; runFinished = {{ 'true' if p.finished else 'false' }}"></div>
-  {% if p.total %}
-  <div class="flex items-center gap-3 text-xs mb-1">
-    <div class="flex-1 h-2 rounded overflow-hidden flex" style="background:#1f2937">
-      {% if p.done %}<div style="width:{{ p.done_percent }}%; background:#22c55e"></div>{% endif %}
-      {% if p.needs_human %}<div style="width:{{ p.needs_human_percent }}%; background:#f97316"></div>{% endif %}
-      {% if p.error %}<div style="width:{{ p.error_percent }}%; background:#ef4444"></div>{% endif %}
-      {% if p.running %}<div style="width:{{ p.running_percent }}%; background:#3b82f6"></div>{% endif %}
+<div class="tgi-progress" role="status">
+  <div class="bx--progress-bar">
+    <div class="bx--progress-bar__track">
+      <div class="bx--progress-bar__bar" :style="`width: ${percent}%`"></div>
     </div>
-    <span class="text-gray-300 shrink-0"><strong>{{ p.processed }}/{{ p.total }}</strong> scénarios ({{ p.percent }} %)</span>
   </div>
-  <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
-    <span>terminés {{ p.done }}</span>
-    <span>revue {{ p.needs_human }}</span>
-    <span {% if p.error %}class="text-red-400"{% endif %}>erreur {{ p.error }}</span>
-    <span>en cours {{ p.running }}</span>
-    <span>en attente {{ p.pending }}</span>
-    <span class="text-gray-600">|</span>
-    <span>{{ p.tests }} tests · {{ p.steps }} étapes{% if p.tests_per_scenario %} ({{ p.tests_per_scenario }} par scénario){% endif %}</span>
-    <span {% if p.coverage_percent < 100 %}class="text-orange-400"{% endif %}>
-      {{ p.covered }}/{{ p.requirements }} exigences couvertes ({{ p.coverage_percent }} %)
-    </span>
-    {% if p.elapsed_label %}
-    <span class="ml-auto">écoulé {{ p.elapsed_label }}{% if p.remaining_label %} · reste ~{{ p.remaining_label }}{% endif %}</span>
-    {% endif %}
+  <p class="bx--type-helper-text-01">
+    <span x-text="status"></span> — <span x-text="percent"></span>%
+  </p>
+  <div class="bx--inline-notification bx--inline-notification--error" role="alert" x-show="status === 'failed'">
+    <div class="bx--inline-notification__details">
+      <p class="bx--inline-notification__text" x-text="error"></p>
+    </div>
   </div>
-  {% endif %}
-  {% if not p.finished %}
-  <!-- Self stopping poll, and it must survive the case that broke it: this fragment is
-       first loaded while the document is still being read, when there is no scenario and
-       nothing to draw. Polling on "a run is going" left it blank forever, since only a
-       lost event could have woken it. It polls until every scenario reached a final state. -->
-  <div hx-get="/projects/{{ project_id }}/partials/progress"
-    hx-trigger="load delay:4s" hx-target="#progress-container" hx-swap="innerHTML"></div>
-  {% endif %}
 </div>

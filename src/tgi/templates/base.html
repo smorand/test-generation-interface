@@ -1,91 +1,33 @@
 <!DOCTYPE html>
-<html lang="fr" x-data="{ darkMode: false }" :class="{ 'dark': darkMode }">
+<html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QA Test Generator</title>
+  <title>{% block title %}Générateur de tests{% endblock %}</title>
+  <!-- IBM Carbon Design System: CSS + Web Components via CDN, no bundler (NFR Deployment). -->
+  <link rel="stylesheet" href="https://unpkg.com/carbon-components@10/css/carbon-components.min.css" />
   <link rel="stylesheet" href="/static/style.css?v={{ build }}" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen">
+<body class="bx--body tgi-body">
 
-  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
-    <a href="/" class="text-xl font-bold text-blue-400 hover:text-blue-300">
-      ⚡ QA Test Generator
+  <header class="bx--header" role="banner">
+    <a href="/" class="bx--header__name">
+      <span class="bx--header__name--prefix">TGI&nbsp;</span>Générateur de tests
     </a>
-    <span class="text-xs text-gray-600 font-mono ml-auto mr-4"
-      title="Version du code servi. Après un git pull, elle doit changer.">build {{ build }}</span>
-    <button @click="darkMode = !darkMode" class="text-gray-400 hover:text-white text-sm">
-      <span x-text="darkMode ? '☀ Light' : '🌙 Dark'"></span>
-    </button>
+    <nav class="bx--header__nav" aria-label="Navigation principale">
+      <ul class="bx--header__menu-bar">
+        <li><a href="/" class="bx--header__menu-item">Travail</a></li>
+        <li><a href="/parametres" class="bx--header__menu-item">Paramètres</a></li>
+      </ul>
+    </nav>
+    <span class="tgi-build" title="Version du code servi">build {{ build }}</span>
   </header>
 
-  {% if page == "home" %}
-  <main class="max-w-3xl mx-auto px-6 py-12">
-    <h1 class="text-3xl font-bold mb-2">Générateur de Tests Fonctionnels</h1>
-    <p class="text-gray-400 mb-8">Importez une spécification fonctionnelle (Word, PDF, texte) et générez des tests structurés via IA.</p>
-
-    <div class="card mb-8" x-data="{ uploading: false, error: '' }">
-      <h2 class="text-lg font-semibold mb-4">📄 Nouveau projet</h2>
-      <form
-        x-on:submit.prevent="
-          uploading = true; error = '';
-          const fd = new FormData($el);
-          fetch('/upload', { method: 'POST', body: fd })
-            .then(r => r.json())
-            .then(d => { if (d.redirect) window.location = d.redirect; else { error = d.detail || 'Erreur'; uploading = false; } })
-            .catch(e => { error = e.message; uploading = false; })
-        "
-      >
-        <div class="mb-4">
-          <label class="block text-sm text-gray-400 mb-1">Document (Word, PDF, TXT)</label>
-          <input type="file" name="file" accept=".docx,.pdf,.txt,.md" required
-            class="block w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer" />
-        </div>
-        <div class="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <label class="block text-sm text-gray-400 mb-1">Modèle Générateur</label>
-            <input type="text" name="model_generator" placeholder="{{ default_model_generator }}"
-              class="input w-full" />
-          </div>
-          <div>
-            <label class="block text-sm text-gray-400 mb-1">Tests par scénario</label>
-            <input type="number" name="tests_per_scenario" min="1" max="20"
-              placeholder="{{ default_tests_per_scenario }}" class="input w-full" />
-            <div class="text-xs text-gray-600 mt-1">
-              Cible, pas une limite: un scénario chargé peut en demander plus.
-            </div>
-          </div>
-        </div>
-        <div x-show="error" class="text-red-400 text-sm mb-3" x-text="error"></div>
-        <button type="submit" class="btn-primary w-full" :disabled="uploading">
-          <span x-show="!uploading">Importer et analyser</span>
-          <span x-show="uploading">Chargement…</span>
-        </button>
-      </form>
-    </div>
-
-    {% if projects %}
-    <div class="card">
-      <h2 class="text-lg font-semibold mb-4">📁 Projets récents</h2>
-      <div class="space-y-2">
-        {% for p in projects %}
-        <a href="/projects/{{ p.id }}" class="flex items-center justify-between p-3 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors">
-          <div>
-            <div class="font-medium text-sm">{{ p.doc_path.split('/')[-1] }}</div>
-            <div class="text-xs text-gray-500">{{ p.created_at[:10] }} &bull; {{ p.scenario_count }} scénarios &bull; {{ p.tests_count }} tests</div>
-          </div>
-          <span class="text-gray-400">→</span>
-        </a>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
+  <main class="tgi-main bx--grid">
+    {% block content %}{% endblock %}
   </main>
-  {% endif %}
-
-  {% block content %}{% endblock %}
 
 </body>
 </html>

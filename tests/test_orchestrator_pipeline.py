@@ -1,8 +1,8 @@
-"""Tests for the pipeline flow: distil, validate, generate per scenario, close gaps.
+"""Tests for the pipeline flow: distil, generate per scenario, close gaps, finalize.
 
-The LLM is faked, the state and git are real, so the invariants under test are the ones
-that broke in production: no requirement lost, no scenario silently stuck, coverage counted
-rather than claimed.
+The LLM is faked, the state is real, so the invariants under test are the ones that broke
+in production: no requirement lost, no scenario silently stuck, coverage counted rather
+than claimed.
 """
 
 from __future__ import annotations
@@ -11,14 +11,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tgi.agents.orchestrator import Orchestrator
-from tgi.coverage_report import coverage_summary
-from tgi.events import subscribe, subscriber_count
-from tgi.services.git_service import GitService
-from tgi.services.state_manager import StateManager
-
 if TYPE_CHECKING:
     from pathlib import Path
+
+from tgi.agents.coverage import CoverageAgent
+from tgi.agents.orchestrator import Orchestrator
+from tgi.agents.scenario_generator import ScenarioGeneratorAgent
+from tgi.coverage_report import coverage_summary
+from tgi.events import subscribe, subscriber_count
+from tgi.services.prompts import default_prompts
+from tgi.services.state_manager import StateManager
 
 
 def _drain(queue: Any) -> set[str]:
@@ -85,124 +87,99 @@ class _ScriptedLLM:
 
 
 @pytest.fixture
-def orchestrator(projects_dir: Path) -> Orchestrator:
-    return Orchestrator(StateManager(), GitService(), _ScriptedLLM())  # type: ignore[arg-type]
+def state() -> StateManager:
+    return StateManager()
 
 
-async def _new_project(orchestrator: Orchestrator, doc: str = DOC) -> str:
-    project_id = await orchestrator._state.create(doc_path="/tmp/doc.md", doc_text=doc, model_generator="m")
-    await orchestrator._git.init(project_id)
-    return project_id
+@pytest.fixture
+def orchestrator() -> Orchestrator:
+    return Orchestrator(StateManager())
+
+
+async def _new_run(state: StateManager, doc: str = DOC) -> tuple[str, str]:
+    """A project with a source, and a version ready to run, ids returned as (project_id, version)."""
+    project = await state.create_project("doc.md", doc.encode())
+    version = await state.create_version(project["id"], "m", default_prompts())
+    return project["id"], version
 
 
 # ---------------------------------------------------------------------------
-# Phase one
+# Full run
 # ---------------------------------------------------------------------------
 
 
-async def test_distil_writes_context_scenarios_requirements_and_discards(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
+async def test_run_writes_context_scenarios_requirements_and_discards(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
 
-    state = await orchestrator._state.load(project_id)
-    assert state["context"] == "Gestion de portefeuille."
-    assert len(state["requirements"]) == 4  # extracted from the numbering, not from the model
-    assert state["containers"]["F01.EU01.CU01"] == "Visualiser son portefeuille"
-    assert state["axes"]["F"]["leaf_depth"] == 3
-    assert state["discards"][0]["decision"] == "proposed"
-    assert state["distilled_at"]
+    final = await state.load_version(pid, version)
+    assert final["context"] == "Gestion de portefeuille."
+    assert len(final["requirements"]) == 4  # extracted from the numbering, not from the model
+    assert final["containers"]["F01.EU01.CU01"] == "Visualiser son portefeuille"
+    assert final["axes"]["F"]["leaf_depth"] == 3
+    assert final["discards"][0]["decision"] == "proposed"
+    assert final["status"] == "done"
 
 
-async def test_distil_loses_no_requirement(orchestrator: Orchestrator) -> None:
+async def test_run_loses_no_requirement(orchestrator: Orchestrator, state: StateManager) -> None:
     """The model cited one use case out of two, the other must still be carried."""
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
 
-    state = await orchestrator._state.load(project_id)
-    carried = {ref for scenario in state["scenarios"] for ref in scenario["requirement_refs"]}
-    assert carried == {r["ref"] for r in state["requirements"]}
-    derived = [s for s in state["scenarios"] if s.get("derived")]
+    final = await state.load_version(pid, version)
+    carried = {ref for scenario in final["scenarios"] for ref in scenario["requirement_refs"]}
+    assert carried == {r["ref"] for r in final["requirements"]}
+    derived = [s for s in final["scenarios"] if s.get("derived")]
     assert [s["container"] for s in derived] == ["F01.EU01.CU02"]
 
 
-async def test_distil_commits_and_emits(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    with subscribe(project_id) as queue:
-        await orchestrator.distil(project_id)
-
-        log = await orchestrator._git.log(project_id)
-        assert any("distil" in entry["message"] for entry in log)
-        kinds = []
-        while not queue.empty():
-            kinds.append(queue.get_nowait()["type"])
-    assert "distil_start" in kinds and "distil_done" in kinds
+async def test_run_emits_progress_and_done(orchestrator: Orchestrator, state: StateManager) -> None:
+    pid, version = await _new_run(state)
+    with subscribe(f"{pid}:{version}") as queue:
+        await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
+        kinds = _drain(queue)
+    assert "progress" in kinds
+    assert "done" in kinds
 
 
-async def test_every_watcher_receives_every_event(orchestrator: Orchestrator) -> None:
+async def test_every_watcher_receives_every_event(orchestrator: Orchestrator, state: StateManager) -> None:
     """One shared queue handed each event to a single client, so a second tab stole them."""
-    project_id = await _new_project(orchestrator)
-    with subscribe(project_id) as first, subscribe(project_id) as second:
-        assert subscriber_count(project_id) == 2
-        await orchestrator.distil(project_id)
+    pid, version = await _new_run(state)
+    key = f"{pid}:{version}"
+    with subscribe(key) as first, subscribe(key) as second:
+        assert subscriber_count(key) == 2
+        await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
         seen = [_drain(first), _drain(second)]
-    assert "distil_done" in seen[0]
-    assert "distil_done" in seen[1]
-    assert seen[0] == seen[1]
+    assert "done" in seen[0]
+    assert "done" in seen[1]
 
 
-async def test_a_watcher_that_leaves_is_forgotten(orchestrator: Orchestrator) -> None:
-    """A queue left behind by a closed tab would hold its events for the life of the process."""
-    project_id = await _new_project(orchestrator)
-    with subscribe(project_id):
-        assert subscriber_count(project_id) == 1
-    assert subscriber_count(project_id) == 0
+async def test_a_watcher_that_leaves_is_forgotten(orchestrator: Orchestrator, state: StateManager) -> None:
+    pid, version = await _new_run(state)
+    key = f"{pid}:{version}"
+    with subscribe(key):
+        assert subscriber_count(key) == 1
+    assert subscriber_count(key) == 0
 
 
-async def test_reading_the_document_again_asks_for_the_map_to_be_validated_again(
-    orchestrator: Orchestrator,
-) -> None:
-    """A map nobody has read is not validated: keeping the approval sent a fresh map, with
-    different scenarios, straight to generation unreviewed."""
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.validate_map(project_id)
-    assert (await orchestrator._state.load(project_id))["validated"] is True
+async def test_run_generates_tests_and_counts_coverage(orchestrator: Orchestrator, state: StateManager) -> None:
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
 
-    await orchestrator.distil(project_id)
-
-    assert (await orchestrator._state.load(project_id))["validated"] is False
-
-
-async def test_validating_the_map_is_recorded(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    assert (await orchestrator._state.load(project_id))["validated"] is False
-
-    await orchestrator.validate_map(project_id)
-    assert (await orchestrator._state.load(project_id))["validated"] is True
-
-
-# ---------------------------------------------------------------------------
-# Phases two and three
-# ---------------------------------------------------------------------------
-
-
-async def test_run_generates_tests_and_counts_coverage(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
-
-    state = await orchestrator._state.load(project_id)
-    assert all(scenario["status"] in {"done", "needs_human"} for scenario in state["scenarios"])
-    summary = state["summary"]
+    final = await state.load_version(pid, version)
+    assert all(scenario["status"] in {"done", "needs_human"} for scenario in final["scenarios"])
+    summary = coverage_summary(final)
     assert summary["tests"] >= 1
     assert summary["requirements"] == 4
-    # Only RM01 is claimed by the canned test, so coverage is partial and says so
     assert summary["covered"] < summary["requirements"]
     assert summary["coverage_percent"] < 100
 
 
-async def test_a_scenario_whose_requirements_are_all_covered_is_done(orchestrator: Orchestrator) -> None:
+async def test_a_scenario_whose_requirements_are_all_covered_is_done(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
     llm = _ScriptedLLM(
         scenario_generator={
             "tests": [
@@ -219,22 +196,17 @@ async def test_a_scenario_whose_requirements_are_all_covered_is_done(orchestrato
             ]
         }
     )
-    orchestrator._llm = llm  # type: ignore[assignment]
-    orchestrator._distiller._client = llm  # type: ignore[assignment]
-    orchestrator._generator._client = llm  # type: ignore[assignment]
-    orchestrator._coverage._client = llm  # type: ignore[assignment]
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
 
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
-
-    state = await orchestrator._state.load(project_id)
-    assert [s["status"] for s in state["scenarios"]] == ["done"] * len(state["scenarios"])
-    assert state["summary"]["coverage_percent"] == 100
-    assert state["summary"]["missing_count"] == 0
+    final = await state.load_version(pid, version)
+    assert [s["status"] for s in final["scenarios"]] == ["done"] * len(final["scenarios"])
+    summary = coverage_summary(final)
+    assert summary["coverage_percent"] == 100
+    assert summary["missing_count"] == 0
 
 
-async def test_the_coverage_pass_completes_an_existing_test(orchestrator: Orchestrator) -> None:
+async def test_the_coverage_pass_completes_an_existing_test(orchestrator: Orchestrator, state: StateManager) -> None:
     """Completing beats adding: piling tests on gaps is what produced 2199 of them."""
     llm = _ScriptedLLM(
         coverage={
@@ -254,17 +226,11 @@ async def test_the_coverage_pass_completes_an_existing_test(orchestrator: Orches
             "untestable": [],
         }
     )
-    orchestrator._llm = llm  # type: ignore[assignment]
-    orchestrator._distiller._client = llm  # type: ignore[assignment]
-    orchestrator._generator._client = llm  # type: ignore[assignment]
-    orchestrator._coverage._client = llm  # type: ignore[assignment]
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
 
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
-
-    state = await orchestrator._state.load(project_id)
-    first = next(s for s in state["scenarios"] if s["container"] == "F01.EU01.CU01")
+    final = await state.load_version(pid, version)
+    first = next(s for s in final["scenarios"] if s["container"] == "F01.EU01.CU01")
     assert len(first["tests"]) == 1  # completed, not duplicated
     test = first["tests"][0]
     assert len(test["steps"]) == 2
@@ -273,7 +239,7 @@ async def test_the_coverage_pass_completes_an_existing_test(orchestrator: Orches
 
 
 async def test_a_requirement_declared_untestable_stops_blocking_the_scenario(
-    orchestrator: Orchestrator,
+    orchestrator: Orchestrator, state: StateManager
 ) -> None:
     llm = _ScriptedLLM(
         coverage={
@@ -282,80 +248,145 @@ async def test_a_requirement_declared_untestable_stops_blocking_the_scenario(
             "untestable": [{"ref": "F01.EU01.CU01.RM02", "reason": "non observable en boîte noire"}],
         }
     )
-    orchestrator._llm = llm  # type: ignore[assignment]
-    orchestrator._distiller._client = llm  # type: ignore[assignment]
-    orchestrator._generator._client = llm  # type: ignore[assignment]
-    orchestrator._coverage._client = llm  # type: ignore[assignment]
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
 
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
-
-    state = await orchestrator._state.load(project_id)
-    first = next(s for s in state["scenarios"] if s["container"] == "F01.EU01.CU01")
+    final = await state.load_version(pid, version)
+    first = next(s for s in final["scenarios"] if s["container"] == "F01.EU01.CU01")
     assert first["status"] == "done"
     assert first["untestable"][0]["ref"] == "F01.EU01.CU01.RM02"
-    # It stays in the denominator until a human accepts it as a discard
-    assert state["summary"]["untestable"] == 1
+    assert coverage_summary(final)["untestable"] == 1
 
 
-async def test_a_generator_failure_marks_the_scenario_not_the_run(orchestrator: Orchestrator) -> None:
+async def test_a_generator_failure_marks_the_scenario_not_the_run(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
     from tgi.services.llm import LLMJSONError
 
-    llm = _ScriptedLLM(scenario_generator=LLMJSONError("no JSON after 5 attempts"))
-    orchestrator._llm = llm  # type: ignore[assignment]
-    orchestrator._distiller._client = llm  # type: ignore[assignment]
-    orchestrator._generator._client = llm  # type: ignore[assignment]
-    orchestrator._coverage._client = llm  # type: ignore[assignment]
+    llm = _ScriptedLLM(scenario_generator=LLMJSONError("no JSON after 3 attempts"))
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
 
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
+    final = await state.load_version(pid, version)
+    assert all(s["status"] == "needs_human" for s in final["scenarios"])
+    assert all("no JSON" in (s.get("error") or "") for s in final["scenarios"])
+    assert final["status"] == "done"  # a scenario failure finishes the version, it does not sink it
 
-    state = await orchestrator._state.load(project_id)
-    assert all(s["status"] == "needs_human" for s in state["scenarios"])
-    assert all("no JSON" in (s.get("error") or "") for s in state["scenarios"])
-    assert "summary" in state  # the run still finished and reported
+
+async def test_a_connection_error_fails_the_whole_version(orchestrator: Orchestrator, state: StateManager) -> None:
+    from tgi.services.llm import LLMConnectionError
+
+    llm = _ScriptedLLM(scenario_generator=LLMConnectionError("endpoint injoignable: http://x"))
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    assert final["status"] == "failed"
+    assert final["error"] == "endpoint injoignable: http://x"
+
+
+async def test_an_illegible_distillation_fails_the_whole_version(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
+    from tgi.services.llm import LLMJSONError
+
+    llm = _ScriptedLLM(distiller=LLMJSONError("no JSON after 3 attempts"))
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    assert final["status"] == "failed"
+    assert final["error"] == "réponse du modèle illisible"
+    assert final["scenarios"] == []
+
+
+async def test_a_full_disk_at_workbook_write_fails_the_version(
+    orchestrator: Orchestrator, state: StateManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tgi.agents.orchestrator as orchestrator_module
+
+    def _boom(_state: dict) -> bytes:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(orchestrator_module, "build_workbook", _boom)
+    pid, version = await _new_run(state)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    assert final["status"] == "failed"
+    assert final["error"] == "disque plein, classeur non écrit"
+
+
+async def test_a_model_supplied_test_id_never_escapes_the_version_state(
+    orchestrator: Orchestrator, state: StateManager, tmp_path: Path
+) -> None:
+    """FR-NEW-056: the test id lives only inside v<n>/state.json, never a file of its own."""
+    pid, version = await _new_run(state)
+    llm = _ScriptedLLM(
+        scenario_generator={
+            "tests": [
+                {
+                    "id": "../../evil",
+                    "name": "cas nominal",
+                    "requirement_refs": ["F01.EU01.CU01.RM01"],
+                    "steps": [{"order": 1, "description": "agir", "expected_result": "vu"}],
+                }
+            ]
+        }
+    )
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
+
+    assert list(tmp_path.rglob("evil*")) == []
+    assert list(tmp_path.rglob("tests")) == []
+    final = await state.load_version(pid, version)
+    tests = [t for s in final["scenarios"] for t in s.get("tests") or []]
+    assert tests  # at least one scenario produced the scripted test
+    # the generator assigns its own id, so the model's id never reaches state.json either
+    assert all(t["id"] != "../../evil" for t in tests)
 
 
 async def test_an_unexpected_exception_is_reported_not_swallowed(
-    orchestrator: Orchestrator, monkeypatch: pytest.MonkeyPatch
+    orchestrator: Orchestrator, state: StateManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A swallowed exception left 58 scenarios stuck at running with no trace."""
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
+    pid, version = await _new_run(state)
 
-    async def boom(self: Orchestrator, project_id: str, scenario_id: str) -> None:
+    async def boom(self: Orchestrator, *args: Any, **kwargs: Any) -> None:
         raise ValueError("boum")
 
     monkeypatch.setattr(Orchestrator, "_process_scenario", boom)
-    await orchestrator.run_pipeline(project_id)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC)  # type: ignore[arg-type]
 
-    state = await orchestrator._state.load(project_id)
-    assert all(s["status"] == "error" for s in state["scenarios"])
-    assert all("boum" in (s.get("error") or "") for s in state["scenarios"])
+    final = await state.load_version(pid, version)
+    assert all(s["status"] == "error" for s in final["scenarios"])
+    assert all("boum" in (s.get("error") or "") for s in final["scenarios"])
 
 
-async def test_rerunning_a_scenario_replaces_its_tests(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
+async def test_reprocessing_a_scenario_is_idempotent(orchestrator: Orchestrator, state: StateManager) -> None:
+    """Test ids are derived from the scenario, so replaying its generation is idempotent."""
+    pid, version = await _new_run(state)
+    llm = _ScriptedLLM()
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
 
-    state = await orchestrator._state.load(project_id)
-    scenario_id = state["scenarios"][0]["id"]
-    before = [t["id"] for t in state["scenarios"][0]["tests"]]
+    final = await state.load_version(pid, version)
+    scenario_id = final["scenarios"][0]["id"]
+    before = [t["id"] for t in final["scenarios"][0]["tests"]]
 
-    await orchestrator.rerun_scenario(project_id, scenario_id)
-    state = await orchestrator._state.load(project_id)
-    after = [t["id"] for t in state["scenarios"][0]["tests"]]
-    assert after == before  # ids are derived from the scenario, so a rerun is idempotent
+    generator = ScenarioGeneratorAgent(llm, "prompt")
+    coverage_agent = CoverageAgent(llm, "prompt")
+    await orchestrator._process_scenario(pid, version, scenario_id, "m", generator, coverage_agent, DOC)
+
+    final = await state.load_version(pid, version)
+    after = [t["id"] for t in final["scenarios"][0]["tests"]]
+    assert after == before
     assert len(after) == 1
 
 
-async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestrator) -> None:
-    project_id = await _new_project(orchestrator)
-    await orchestrator.distil(project_id)
-    await orchestrator.run_pipeline(project_id)
+async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestrator, state: StateManager) -> None:
+    pid, version = await _new_run(state)
+    llm = _ScriptedLLM()
+    await orchestrator.run(pid, version, "m", llm, DOC)  # type: ignore[arg-type]
+    final = await state.load_version(pid, version)
 
     captured: dict[str, str] = {}
 
@@ -365,17 +396,18 @@ async def test_handle_chat_is_read_only_and_well_informed(orchestrator: Orchestr
             captured["system"] = system_prompt
             return "## Réponse\n- **1** test"
 
-    orchestrator._llm = _Capturing()  # type: ignore[assignment]
-    before = len(await orchestrator._git.log(project_id))
-
-    answer = await orchestrator.handle_chat(project_id, "quelles exigences ne sont pas couvertes ?", model="m")
+    answer = await orchestrator.handle_chat(
+        final,
+        "quelles exigences ne sont pas couvertes ?",
+        model="m",
+        llm=_Capturing(),  # type: ignore[arg-type]
+    )
 
     assert answer.startswith("## Réponse")
     assert "synthese_du_run" in captured["user"]
     assert "F01.EU01.CU01.RM02" in captured["user"]  # the uncovered reference travels
     assert "contexte_du_document" in captured["user"]
     assert "ne modifies rien" in captured["system"]
-    assert len(await orchestrator._git.log(project_id)) == before  # nothing was written
 
 
 # Long enough for the grammar to infer its levels: with two references it cannot tell that
@@ -395,43 +427,34 @@ F01.EU01.CU03.RM01 : La délégation porte une date de fin.
 
 
 async def test_a_reference_the_document_never_states_is_proposed_for_discard(
-    orchestrator: Orchestrator,
+    orchestrator: Orchestrator, state: StateManager
 ) -> None:
     """The preparation step proposes it, and only proposes: nothing leaves silently."""
-    project_id = await _new_project(orchestrator, DOC_WITH_A_DANGLING_REFERENCE)
+    pid, version = await _new_run(state, DOC_WITH_A_DANGLING_REFERENCE)
+    await orchestrator.run(pid, version, "m", _ScriptedLLM(), DOC_WITH_A_DANGLING_REFERENCE)  # type: ignore[arg-type]
 
-    await orchestrator.distil(project_id)
-    state = await orchestrator._state.load(project_id)
-
-    unstated = [d for d in state["discards"] if d["reason"] == "sans_enonce"]
+    final = await state.load_version(pid, version)
+    unstated = [d for d in final["discards"] if d["reason"] == "sans_enonce"]
     assert [d["refs"] for d in unstated] == [["E01.N0X"]]
     assert unstated[0]["decision"] == "proposed"
-    # It is still a requirement of the document until a human decides otherwise
-    assert "E01.N0X" in {r["ref"] for r in state["requirements"]}
+    assert "E01.N0X" in {r["ref"] for r in final["requirements"]}
 
 
-async def test_an_accepted_discard_is_not_generated_for_and_leaves_the_denominator(
-    orchestrator: Orchestrator,
-) -> None:
-    """Accepting used to change the number and not the work: the reference left the coverage
-    denominator and was still handed to the model, which then spent a call declaring it
-    untestable."""
-    project_id = await _new_project(orchestrator, DOC_WITH_A_DANGLING_REFERENCE)
-    await orchestrator.distil(project_id)
-    state = await orchestrator._state.load(project_id)
-    before = coverage_summary(state)
-    index = next(i for i, d in enumerate(state["discards"]) if d["reason"] == "sans_enonce")
+async def test_an_accepted_discard_leaves_the_coverage_denominator(state: StateManager) -> None:
+    """Accepting a discard is arithmetic on the version state, not a route in this surface
+    any more (DEC-003 removed the only control that used to set it): the behaviour this
+    guards is coverage_summary excluding an accepted reference from the denominator."""
+    pid, version = await _new_run(state, DOC_WITH_A_DANGLING_REFERENCE)
+    probe = _ScriptedLLM(scenario_generator={"tests": []}, coverage={"updated": [], "added": [], "untestable": []})
+    await Orchestrator(state).run(pid, version, "m", probe, DOC_WITH_A_DANGLING_REFERENCE)  # type: ignore[arg-type]
 
-    await orchestrator._state.decide_discard(project_id, index, "accepted")
-    await orchestrator.validate_map(project_id)
-    await orchestrator.run_pipeline(project_id)
-
-    state = await orchestrator._state.load(project_id)
-    summary = state["summary"]
+    final = await state.load_version(pid, version)
+    before = coverage_summary(final)
+    index = next(i for i, d in enumerate(final["discards"]) if d["reason"] == "sans_enonce")
     assert "E01.N0X" in before["missing"]
-    assert summary["requirements"] == before["requirements"] - 1
-    assert "E01.N0X" not in summary["missing"]
-    assert summary["discarded"] == 1
-    # And nothing was generated for it: no gap to close, no untestable verdict to write
-    assert not [s for s in state["scenarios"] if "E01.N0X" in (s.get("uncovered_refs") or [])]
-    assert not [u for s in state["scenarios"] for u in (s.get("untestable") or []) if u.get("ref") == "E01.N0X"]
+
+    final["discards"][index]["decision"] = "accepted"
+    after = coverage_summary(final)
+    assert after["requirements"] == before["requirements"] - 1
+    assert "E01.N0X" not in after["missing"]
+    assert after["discarded"] == 1

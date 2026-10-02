@@ -1,244 +1,213 @@
-"""Tests for the JSON state manager."""
+"""Tests for the disk layout: project.json plus source/, and versions as v<n>/ folders."""
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from tgi.services.state_manager import StateManager
+from tgi.services.paths import InvalidIdentifier
+from tgi.services.state_manager import ProjectCorrupted, StateManager, VersionCorrupted
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
 def manager(projects_dir: Path) -> StateManager:
-    # projects_dir fixture patches settings.projects_dir
     return StateManager()
 
 
-async def _create_sample(manager: StateManager) -> str:
-    return await manager.create(
-        doc_path="/tmp/doc.txt",
-        doc_text="contenu",
-        model_generator="gen",
-    )
+async def test_create_project_writes_project_json_and_source(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"# Spec\n")
+
+    assert len(project["id"]) == 12
+    assert project["source_filename"] == "spec.md"
+    assert project["next_version"] == 1
+    assert project["created_at"].endswith("Z")
+    assert (projects_dir / project["id"] / "project.json").is_file()
+    assert (projects_dir / project["id"] / "source" / "spec.md").read_bytes() == b"# Spec\n"
 
 
-async def test_create_and_load(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    state = await manager.load(pid)
-    assert state["project_id"] == pid
-    assert state["doc_text"] == "contenu"
-    assert state["scenarios"] == []
-    assert state["requirements"] == []
-    assert state["tests_per_scenario"] == 5
-    assert state["validated"] is False
-    assert "created_at" in state
+async def test_create_project_id_is_opaque_hex(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"content")
+    assert all(c in "0123456789abcdef" for c in project["id"])
 
 
-async def test_load_missing_raises(manager: StateManager) -> None:
+async def test_load_project_raises_on_missing(manager: StateManager) -> None:
     with pytest.raises(FileNotFoundError):
-        await manager.load("ffffffffffff")
+        await manager.load_project("0123456789ab")
 
 
-async def test_resolving_a_project_dir_does_not_create_it(manager: StateManager, projects_dir: Path) -> None:
-    """DRIFT-002: a read must leave no trace.
+async def test_load_project_raises_corrupted_on_bad_json(manager: StateManager, projects_dir: Path) -> None:
+    (projects_dir / "0123456789ab").mkdir()
+    (projects_dir / "0123456789ab" / "project.json").write_text("{ not json", encoding="utf-8")
 
-    project_dir() used to mkdir what it resolved, so merely probing GET /projects/<id>
-    created the directory. A probe that writes is a probe that tells the prober it
-    reached something, and it litters the listing with projects nobody created.
-    """
-    resolved = manager.project_dir("ffffffffffff")
-
-    assert resolved == projects_dir / "ffffffffffff"
-    assert not resolved.exists()
-    assert not (projects_dir / "ffffffffffff").exists()
+    with pytest.raises(ProjectCorrupted):
+        await manager.load_project("0123456789ab")
 
 
-async def test_update_and_get_scenario(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
-    await manager.update_scenario(pid, "SC-001", {"status": "done", "tests": [{"id": "TEST-0001"}]})
-
-    scenario = await manager.get_scenario(pid, "SC-001")
-    assert scenario is not None
-    assert scenario["status"] == "done"
-    assert len(scenario["tests"]) == 1
-    assert await manager.get_scenario(pid, "SC-999") is None
+async def test_project_dir_refuses_an_invalid_identifier(manager: StateManager) -> None:
+    with pytest.raises(InvalidIdentifier):
+        manager.project_dir("..")
 
 
-async def test_update_test(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "tests": [{"id": "TEST-001", "status": "draft"}]}])
-    updated = await manager.update_test(pid, "TEST-001", {"status": "validated"})
-    assert updated is not None
-    assert updated["status"] == "validated"
-    assert "updated_at" in updated
-    assert await manager.update_test(pid, "missing", {"x": 1}) is None
+async def test_existing_source_is_none_when_the_file_vanished(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    (projects_dir / project["id"] / "source" / "spec.md").unlink()
+
+    assert manager.existing_source(project["id"], project) is None
 
 
-async def test_get_all_tests(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(
-        pid,
-        "scenarios",
-        [
-            {"id": "SC-001", "tests": [{"id": "T1"}]},
-            {"id": "SC-002", "tests": [{"id": "T2"}, {"id": "T3"}]},
-        ],
-    )
-    tests = await manager.get_all_tests(pid)
-    assert {t["id"] for t in tests} == {"T1", "T2", "T3"}
+async def test_add_source_updates_project_json(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    (projects_dir / project["id"] / "source" / "spec.md").unlink()
+    await manager.add_source(project["id"], "nouveau.md", b"y")
+
+    reloaded = await manager.load_project(project["id"])
+    assert reloaded["source_filename"] == "nouveau.md"
+    assert manager.existing_source(project["id"], reloaded) is not None
 
 
-async def test_list_projects(manager: StateManager) -> None:
-    assert await manager.list_projects() == []
-    pid = await _create_sample(manager)
-    assert pid in await manager.list_projects()
+async def test_list_projects_sorts_newest_first_and_ignores_non_projects(
+    manager: StateManager, projects_dir: Path
+) -> None:
+    import time
+
+    first = await manager.create_project("a.md", b"a")
+    time.sleep(0.01)
+    second = await manager.create_project("b.md", b"b")
+
+    (projects_dir / "not_a_project_dir").mkdir()
+    (projects_dir / "0123456789ab").mkdir()  # no project.json: old format, ignored
+
+    listed = await manager.list_projects()
+    ids = [p["id"] for p in listed]
+    assert ids[:2] == [second["id"], first["id"]]
+    assert "0123456789ab" not in ids
 
 
-async def test_concurrent_scenario_updates_no_lost_update(manager: StateManager) -> None:
-    """Two scenarios finishing at the same time must not overwrite each other."""
-    pid = await _create_sample(manager)
-    await manager.update_field(
-        pid, "scenarios", [{"id": f"SC-{i:03d}", "status": "pending", "tests": []} for i in range(1, 11)]
-    )
+async def test_list_projects_reports_a_corrupted_entry_minimally(manager: StateManager, projects_dir: Path) -> None:
+    (projects_dir / "0123456789ab").mkdir()
+    (projects_dir / "0123456789ab" / "project.json").write_text("{ not json", encoding="utf-8")
 
-    await asyncio.gather(
-        *(
-            manager.update_scenario(pid, f"SC-{i:03d}", {"status": "done", "tests": [{"id": f"T{i}"}]})
-            for i in range(1, 11)
-        )
-    )
-
-    state = await manager.load(pid)
-    assert [s["status"] for s in state["scenarios"]] == ["done"] * 10
-    assert sum(len(s["tests"]) for s in state["scenarios"]) == 10
+    listed = await manager.list_projects()
+    assert listed == [{"id": "0123456789ab", "name": "0123456789ab", "status": "corrompu"}]
 
 
-async def test_save_is_atomic_no_empty_read(manager: StateManager) -> None:
-    """Interleaving many saves and loads never yields a truncated (empty) file."""
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
+async def test_list_projects_sorts_corrupted_entries_after_ok_ones(manager: StateManager, projects_dir: Path) -> None:
+    ok = await manager.create_project("a.md", b"a")
+    (projects_dir / "0123456789ab").mkdir()
+    (projects_dir / "0123456789ab" / "project.json").write_text("{ not json", encoding="utf-8")
 
-    async def writer(n: int) -> None:
-        await manager.update_scenario(pid, "SC-001", {"status": f"s{n}"})
-
-    async def reader() -> None:
-        # load must always parse valid JSON, never hit an empty file
-        state = await manager.load(pid)
-        assert state["project_id"] == pid
-
-    async with asyncio.TaskGroup() as tg:
-        for n in range(30):
-            tg.create_task(writer(n))
-            tg.create_task(reader())
-
-    # No temp files left behind
-    leftovers = list((manager.state_path(pid).parent).glob("state.json.*.tmp"))
-    assert leftovers == []
+    listed = await manager.list_projects()
+    assert listed[-1]["status"] == "corrompu"
+    assert listed[0]["id"] == ok["id"]
 
 
-async def test_replace_with_retry_survives_a_transient_lock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Windows raises PermissionError while a reader holds the target open."""
-    from tgi.services import state_manager as sm
+async def test_symlinked_entries_are_not_listed(manager: StateManager, projects_dir: Path) -> None:
+    real = await manager.create_project("a.md", b"a")
+    (projects_dir / "zzzzzzzzzzzz").symlink_to(projects_dir / real["id"], target_is_directory=True)
 
-    calls = {"n": 0}
-    real_replace = Path.replace
-
-    def flaky(self: Path, target: object) -> object:
-        calls["n"] += 1
-        if calls["n"] < 3:
-            raise PermissionError("used by another process")
-        return real_replace(self, target)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(Path, "replace", flaky)
-    monkeypatch.setattr(sm.time, "sleep", lambda _: None)
-
-    manager = StateManager()
-    pid = await _create_sample(manager)
-    await manager.save(pid, {"project_id": pid, "blocs": []})
-    assert calls["n"] >= 3
-    assert (await manager.load(pid))["project_id"] == pid
+    listed = await manager.list_projects()
+    assert "zzzzzzzzzzzz" not in {p["id"] for p in listed}
 
 
-async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.MonkeyPatch, projects_dir: Path) -> None:
-    from tgi.services import state_manager as sm
-
-    def always_locked(self: Path, target: object) -> None:
-        raise PermissionError("used by another process")
-
-    monkeypatch.setattr(Path, "replace", always_locked)
-    monkeypatch.setattr(sm.time, "sleep", lambda _: None)
-
-    manager = StateManager()
-    # project_dir() no longer creates what it resolves (DRIFT-002), and this test exercises
-    # save()'s retry loop rather than creation, so the directory is made explicitly here.
-    # It also used to run without the projects_dir fixture, writing into the repository.
-    manager.project_dir("bbbbbbbbb001").mkdir(parents=True, exist_ok=True)
-    with pytest.raises(PermissionError):
-        await manager.save("bbbbbbbbb001", {"blocs": []})
+# ---------------------------------------------------------------------------
+# Versions
+# ---------------------------------------------------------------------------
 
 
-async def test_update_requirement_edits_the_statement(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(
-        pid,
-        "requirements",
-        [
-            {"ref": "F01.EU01.CU01.RM01", "kind": "RM", "statement": "avant", "parent": "F01.EU01.CU01"},
-            {"ref": "F01.EU01.CU01.RM02", "kind": "RM", "statement": "autre", "parent": "F01.EU01.CU01"},
-        ],
+async def test_create_version_writes_prompts_and_state(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    version = await manager.create_version(
+        project["id"], "my-model", {"distiller": "d", "scenario_generator": "s", "coverage": "c"}
     )
 
-    updated = await manager.update_requirement(pid, "F01.EU01.CU01.RM01", {"statement": "apres", "reviewed": True})
-    assert updated is not None
-    assert updated["statement"] == "apres"
+    assert version == "v1"
+    directory = projects_dir / project["id"] / "v1"
+    assert (directory / "prompts" / "distiller.md").read_text(encoding="utf-8") == "d"
+    state = await manager.load_version(project["id"], "v1")
+    assert state["status"] == "running"
+    assert state["model"] == "my-model"
+    assert state["prompts"]["distiller"] == "prompts/distiller.md"
 
-    state = await manager.load(pid)
-    assert state["requirements"][0]["statement"] == "apres"
-    assert state["requirements"][0]["reviewed"] is True
-    assert state["requirements"][1]["statement"] == "autre"  # the neighbour is untouched
-
-
-async def test_update_requirement_ignores_unknown_fields(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "requirements", [{"ref": "R.A1", "kind": "RM", "statement": "x", "parent": ""}])
-
-    updated = await manager.update_requirement(pid, "R.A1", {"ref": "PIRATE", "parent": "PIRATE"})
-    assert updated is not None
-    assert updated["ref"] == "R.A1"
-    assert updated["parent"] == ""
+    reloaded_project = await manager.load_project(project["id"])
+    assert reloaded_project["next_version"] == 2
 
 
-async def test_update_requirement_missing_returns_none(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    assert await manager.update_requirement(pid, "PAS.LA1", {"statement": "x"}) is None
+async def test_version_numbering_is_monotone_and_never_reused(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    v1 = await manager.create_version(project["id"], "m", {})
+    await manager.delete_version(project["id"], v1)
+    v2 = await manager.create_version(project["id"], "m", {})
+
+    assert v1 == "v1"
+    assert v2 == "v2"  # not reused despite v1's deletion
 
 
-async def test_get_all_tests_carries_the_scenario(manager: StateManager) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(
-        pid,
-        "scenarios",
-        [
-            {"id": "SC-001", "tests": [{"id": "TEST-0001", "name": "a"}]},
-            {"id": "SC-002", "tests": [{"id": "TEST-0002", "name": "b", "scenario_id": "SC-002"}]},
-        ],
-    )
-    tests = await manager.get_all_tests(pid)
-    assert {t["id"]: t["scenario_id"] for t in tests} == {"TEST-0001": "SC-001", "TEST-0002": "SC-002"}
+async def test_next_version_id_falls_back_to_max_plus_one_when_counter_is_missing(
+    manager: StateManager, projects_dir: Path
+) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    project_json = projects_dir / project["id"] / "project.json"
+    data = await manager.load_project(project["id"])
+    del data["next_version"]
+    import json as _json
+
+    project_json.write_text(_json.dumps(data), encoding="utf-8")
+    (projects_dir / project["id"] / "v3").mkdir()
+
+    assert await manager.next_version_id(project["id"]) == "v4"
 
 
-async def test_a_discard_decision_is_recorded_not_applied(manager: StateManager) -> None:
-    """Accepting a discard takes references out of the corpus, so it is stored explicitly."""
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "discards", [{"what": "cartouche", "reason": "sans_valeur_test", "refs": []}])
+async def test_read_prompts_dereferences_the_relative_paths(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    await manager.create_version(project["id"], "m", {"distiller": "contenu d"})
 
-    decided = await manager.decide_discard(pid, 0, "accepted")
-    assert decided is not None
-    assert decided["decision"] == "accepted"
-    assert "decided_at" in decided
+    prompts = await manager.read_prompts(project["id"], "v1")
+    assert prompts["distiller"] == "contenu d"
 
-    assert await manager.decide_discard(pid, 9, "accepted") is None
-    assert await manager.decide_discard(pid, 0, "n'importe quoi") is None
+
+async def test_list_versions_sorts_numerically_not_lexicographically(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    for _ in range(10):
+        await manager.create_version(project["id"], "m", {})
+
+    listed = await manager.list_versions(project["id"])
+    assert [v["id"] for v in listed][:2] == ["v10", "v9"]
+
+
+async def test_a_corrupted_version_state_is_reported_minimally(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    broken = projects_dir / project["id"] / "v1"
+    broken.mkdir()
+    (broken / "state.json").write_text("{ not json", encoding="utf-8")
+
+    listed = await manager.list_versions(project["id"])
+    assert listed == [{"id": "v1", "status": "corrompue"}]
+
+    with pytest.raises(VersionCorrupted):
+        await manager.load_version(project["id"], "v1")
+
+
+async def test_delete_version_removes_its_folder_and_nothing_else(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    await manager.create_version(project["id"], "m", {})
+
+    await manager.delete_version(project["id"], "v1")
+
+    assert not (projects_dir / project["id"] / "v1").exists()
+    assert (projects_dir / project["id"] / "source").exists()
+
+
+async def test_delete_version_raises_on_missing(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    with pytest.raises(FileNotFoundError):
+        await manager.delete_version(project["id"], "v9")
+
+
+async def test_version_dir_refuses_an_invalid_identifier(manager: StateManager) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    with pytest.raises(InvalidIdentifier):
+        manager.version_dir(project["id"], "..")

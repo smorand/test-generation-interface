@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.grammar import keep_known_references
@@ -23,8 +22,6 @@ if TYPE_CHECKING:
     from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
-
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "scenario_generator.md"
 
 _SHAPE_HINT = (
     'Return a JSON object shaped exactly like: {"tests": [{"name": "...", "description": "...", '
@@ -82,9 +79,9 @@ class ScenarioGeneratorAgent:
 
     __slots__ = ("_client", "_system_prompt")
 
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(self, client: LLMClient, system_prompt: str) -> None:
         self._client = client
-        self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
+        self._system_prompt = system_prompt.strip()
 
     async def generate(
         self,

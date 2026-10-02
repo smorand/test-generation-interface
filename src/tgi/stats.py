@@ -149,15 +149,21 @@ def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
     if not projects_dir.exists():
         return {"scenarios": 0, "projects": 0}
 
-    for state_path in sorted(projects_dir.glob("*/state.json")):
+    executions_by_project: Counter[str] = Counter()
+    seen_projects: set[str] = set()
+    for state_path in sorted(projects_dir.glob("*/v[1-9]*/state.json")):
+        project_name = state_path.parent.parent.name
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         summary = coverage_summary(state)
+        executions_by_project[project_name] += 1
         if not summary["scenarios"]:
             continue
-        projects += 1
+        if project_name not in seen_projects:
+            seen_projects.add(project_name)
+            projects += 1
         scenarios_total += summary["scenarios"]
         tests_total += summary["tests"]
         steps_total += summary["steps"]
@@ -177,7 +183,8 @@ def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
         }
         per_project.append(
             {
-                "id": state_path.parent.name[:8],
+                "id": project_name[:8],
+                "version": state_path.parent.name,
                 "scenarios": summary["scenarios"],
                 "requirements": summary["requirements"],
                 "carried": len(carried),
@@ -190,6 +197,7 @@ def aggregate_projects(projects_dir: Path) -> dict[str, Any]:
 
     return {
         "projects": projects,
+        "executions": sum(executions_by_project.values()),
         "per_project": per_project,
         "scenarios": scenarios_total,
         "statuses": statuses,
@@ -256,7 +264,7 @@ def format_report(roles: dict[str, RoleStats], projects: dict[str, Any]) -> str:
         lines.append("No generated project found in the projects directory.")
         return "\n".join(lines)
 
-    lines.append(f"Projects: {projects['projects']}")
+    lines.append(f"Projects: {projects['projects']} ({projects.get('executions', 0)} execution(s))")
     lines.append(f"  scenarios: {projects['scenarios']} ({dict(projects['statuses'])})")
     lines.append(f"  kinds: {dict(projects['kinds'])}")
     lines.append(

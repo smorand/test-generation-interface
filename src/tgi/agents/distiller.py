@@ -15,7 +15,6 @@ model asked about one named use case returned 17 references where the document d
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.config import settings
@@ -25,8 +24,6 @@ if TYPE_CHECKING:
     from tgi.services.llm import LLMClient
 
 logger = logging.getLogger(__name__)
-
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "distiller.md"
 
 _SHAPE_HINT = (
     'Return a JSON object shaped exactly like: {"context": "...", "scenarios": [{"title": "...", '
@@ -129,9 +126,12 @@ class DistillerAgent:
 
     __slots__ = ("_client", "_system_prompt")
 
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(self, client: LLMClient, system_prompt: str) -> None:
+        # The prompt is given, not read from disk here: it is the version's own copy
+        # (FR-NEW-048), never the file this module used to read at construction, which
+        # is exactly how an implementation could write the edit and still run the default.
         self._client = client
-        self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
+        self._system_prompt = system_prompt.strip()
 
     async def distil(self, model: str, text: str) -> dict[str, Any]:
         """Return the distilled corpus: context, scenarios, discards.
@@ -147,6 +147,8 @@ class DistillerAgent:
         scenarios: list[dict[str, Any]] = []
         discards: list[dict[str, Any]] = []
 
+        any_success = False
+        last_error: RuntimeError | None = None
         for number, part in enumerate(parts, start=1):
             position = f" (partie {number}/{len(parts)})" if len(parts) > 1 else ""
             try:
@@ -164,7 +166,9 @@ class DistillerAgent:
                 )
             except RuntimeError as exc:
                 logger.warning("Distillation of part %d/%d produced nothing: %s", number, len(parts), exc)
+                last_error = exc
                 continue
+            any_success = True
 
             context = str(result.get("context") or "").strip()
             if context:
@@ -177,6 +181,11 @@ class DistillerAgent:
                 cleaned_discard = _clean_discard(raw, text)
                 if cleaned_discard:
                     discards.append(cleaned_discard)
+
+        if parts and not any_success and last_error is not None:
+            # Every part failed: this is a distillation failure, not an empty document, and
+            # the version must say so rather than silently producing nothing (FR-NEW-050).
+            raise last_error
 
         logger.info(
             "Distilled %d scenario(s) and %d discard(s) from %d part(s)", len(scenarios), len(discards), len(parts)

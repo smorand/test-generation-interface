@@ -1,38 +1,44 @@
 # QA Test Generator
 
 A QA agent that reads a functional specification (Word, PDF, text) whole, distils it into the
-context, the user scenarios and the requirements that serve test writing, has a human validate
-that map, then writes the tests of each scenario and closes the coverage gaps. Coverage is
-counted against the requirements the document declares, never scored by a model. FastAPI and
-HTMX interface, human in the loop, local git versioning per project.
+context, the user scenarios and the requirements that serve test writing, then writes the
+tests of each scenario and closes the coverage gaps. Coverage is counted against the
+requirements the document declares, never scored by a model. The parcours is two gestures:
+deposit a document, then launch a generation. A project is a self-contained folder; each
+execution is a numbered, disposable version inside it (`v1`, `v2`, ...), never merged with
+the previous one — relaunching never loses earlier work, and a version can be deleted and
+redone. FastAPI backend, IBM Carbon Design System interface (CSS + Web Components via CDN,
+no bundler).
 
 ## Architecture
 
 ```
 test-generation-interface/
 ├── src/tgi/
-│   ├── tgi.py                 # FastAPI app factory, routes, SSE, tracing
+│   ├── tgi.py                 # FastAPI app factory, the 18 routes, SSE, tracing
 │   ├── config.py              # pydantic-settings configuration
 │   ├── grammar.py             # reads the numbering the document gives itself
 │   ├── coverage_report.py     # coverage counted, and the traceability matrix
 │   ├── deliverable.py         # the two reading axes: scenarios, requirements
-│   ├── progress.py            # run progress and remaining estimate
-│   ├── workbook.py            # reviewable xlsx export
+│   ├── progress.py            # run progress, remaining estimate, SSE payload
+│   ├── workbook.py            # the recette xlsx export
+│   ├── qc_export.py           # the QC xlsx export, a second artefact
 │   ├── testset.py             # deduplication and similarity
 │   ├── locks.py               # locks bound to the loop that runs them
-│   ├── events.py              # SSE fan out, one queue per connected browser
+│   ├── events.py              # SSE fan out, keyed by "<project_id>:<version>"
 │   ├── agents/
-│   │   ├── orchestrator.py     # distil, validate, generate, close gaps
+│   │   ├── orchestrator.py     # one version: distil, generate, close gaps, finalize
 │   │   ├── distiller.py        # phase 1: context, scenarios, discards
 │   │   ├── scenario_generator.py  # phase 2: the tests of one scenario
 │   │   └── coverage.py         # phase 3: close the gaps, editing before adding
 │   ├── services/
-│   │   ├── llm.py              # OpenAI compatible async client (traced)
+│   │   ├── llm.py              # OpenAI compatible async client, built per run (traced)
+│   │   ├── model_store.py      # models.json: the table of endpoints, edited from the UI
+│   │   ├── prompts.py          # the three prompts shipped with the tool
 │   │   ├── doc_parser.py       # Word/PDF/text parsing
-│   │   ├── git_service.py      # async git per project
-│   │   └── state_manager.py    # JSON state persistence
-│   ├── prompts/               # one per agent
-│   ├── templates/             # Jinja2 + HTMX
+│   │   └── state_manager.py    # project.json + source/, v<n>/ per version
+│   ├── prompts/               # one per agent, the defaults a version can override
+│   ├── templates/             # base.html, project.html, parametres.html, partials/progress.html
 │   └── schemas/test_schema.json
 └── tests/                     # unit + functional, no network
 ```
@@ -78,18 +84,23 @@ the settings to change. Exit code 0 means usable. Step by step runbook:
 
 ## Configuration (.env)
 
-All variables use the `TGI_` prefix.
+All variables use the `TGI_` prefix. None of them configure a model any more: the model
+table (`TGI_CONFIG_DIR/models.json`) is entered from the `/parametres` page, so a fresh
+install needs `TGI_PROJECTS_DIR` and optionally `TGI_CONFIG_DIR`, nothing else.
+`TGI_LLM_BASE_URL` / `TGI_LLM_API_KEY` below are read only by `tgi-validate`, which validates
+a model and endpoint independently of the web app's own table.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TGI_LLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI compatible endpoint |
-| `TGI_LLM_API_KEY` | — | Bearer token, any non empty value if the server needs none |
+| `TGI_CONFIG_DIR` | `$HOME/.config/tgi` | Where `models.json` lives (mode `0600`) |
+| `TGI_LLM_BASE_URL` | `http://localhost:8000/v1` | `tgi-validate` only: OpenAI compatible endpoint |
+| `TGI_LLM_API_KEY` | — | `tgi-validate` only: bearer token, any non empty value if the server needs none |
 | `TGI_LLM_VERIFY_SSL` | `true` | Set to `false` to skip TLS verification (exposes the traffic) |
 | `TGI_LLM_CA_BUNDLE` | — | Certificate bundle to verify against, the clean fix behind a TLS gateway |
 | `TGI_MODEL_GENERATOR` | `gemma-4-26b-a4b-it` | LLM for extraction + generation |
 | `TGI_MAX_PARALLEL_SCENARIOS` | `5` | Scenarios generated in parallel |
 | `TGI_TESTS_PER_SCENARIO` | `5` | Target tests per scenario, editable per project |
-| `TGI_LLM_JSON_RETRIES` | `5` | Retries when the model returns no usable JSON |
+| `TGI_LLM_JSON_RETRIES` | `3` | Retries when the model returns no usable JSON |
 | `TGI_DISABLE_THINKING` | `false` | Send the vLLM/SGLang switch turning reasoning off |
 | `TGI_TEST_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two tests of the same rule are duplicates |
 | `TGI_RULE_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two rules are flagged for review, never merged |
@@ -230,28 +241,26 @@ of the document.
 
 ### Export
 
-`GET /projects/{id}/export` returns the four artefacts in reading order:
+Each version downloads two artefacts once it has run:
 
-1. `1-document.md`, the document as it was read
-2. `2-distilled.json`, the corpus every later phase used
-3. `3-scenarios.json` and `3-requirements.json`
-4. `4-tests.json` for tooling, `4-tests.xlsx` for review
+- `GET /api/v1/projects/{id}/versions/{v}/xlsx`, the recette workbook: a summary, the
+  traceability sheet, then one sheet per functionality with one row per test step
+- `POST` then `GET .../versions/{v}/qc` / `.../qc.xlsx`, a second workbook with one `QC`
+  sheet shaped for ALM's Excel import, produced on demand and never overwriting the first
 
-The workbook opens on a summary, then the traceability sheet, then one sheet per
-functionality with one row per test step, then the discards. Frozen header, autofilter, no
-merged cells, since merged cells break sorting.
+Frozen header, autofilter, no merged cells, since merged cells break sorting.
 
 ### Live updates
 
 Events are an optimisation, never the only path to the truth. Each browser subscribes with its
-own queue, because a single shared queue handed every event to whichever client called first,
-so a second tab stole the completion event and the watched tab spun forever. On top of that,
-every fragment restates the server state when it refreshes and carries its own stopping poll,
-so a dropped connection costs at most four seconds. Verified with the event stream closed: the
-whole run still reported through to 30 of 30, then stopped polling.
+own queue to `GET .../versions/{v}/events`, keyed by `"<project_id>:<version>"`, because a
+single shared queue handed every event to whichever client called first, so a second tab stole
+the completion event and the watched tab spun forever. Subscribing replays the version's
+current state first, so a client that connects after the run finished still gets its terminal
+event instead of hanging.
 
-Generation is refused server side while the document is being read, while the map is not
-validated, and while a run is already going. Hiding the button is not a guard.
+Generation is refused server side: no model configured, the chosen model unknown, an invalid
+prompt key, or a run already going for this project. Hiding the button is not a guard.
 
 ### Resilience
 
@@ -274,44 +283,30 @@ There is no judge. Coverage is arithmetic on the requirements the document decla
 
 ## API Routes
 
+Two pages, 16 JSON routes. `project_id` and `version` are always validated before they can
+compose a disk path (`src/tgi/services/paths.py`); a malformed or absent identifier gets the
+same 404 body.
+
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | Home page, upload form, recent projects |
-| `POST` | `/upload` | Upload a document, create a project, start phase 1 |
-| `GET` | `/projects/{id}` | Project UI (tabbed) |
-| `GET` | `/projects/{id}/stream` | SSE event stream |
-| `POST` | `/projects/{id}/redistil` | Read the document again |
-| `POST` | `/projects/{id}/validate-map` | Human accepts the distilled map |
-| `POST` | `/projects/{id}/run` | Generate the tests of every scenario |
-| `POST` | `/projects/{id}/scenarios/{sid}/rerun` | Replay one scenario |
-| `POST` | `/projects/{id}/discards/{index}` | Accept or keep a proposed discard |
-| `GET` | `/projects/{id}/tests` | All tests JSON |
-| `PUT` | `/projects/{id}/tests/{test_id}` | Edit one test |
-| `GET` | `/projects/{id}/requirements` | Traceability matrix JSON |
-| `PUT` | `/projects/{id}/requirements/{ref}` | Edit one requirement |
-| `POST` | `/projects/{id}/chat` | Ask about the document, read only |
-| `GET` | `/projects/{id}/history` | Git log |
-| `POST` | `/projects/{id}/rollback` | Roll back to a commit |
-| `GET` | `/projects/{id}/export` | Download the four artefacts |
-| `GET` | `/projects/{id}/partials/map` | Distilled map fragment |
-| `GET` | `/projects/{id}/partials/scenarios` | Scenario tree (`q`, `gaps`) |
-| `GET` | `/projects/{id}/scenarios/{sid}/tests` | Tests of one scenario, on expansion |
-| `GET` | `/projects/{id}/partials/requirements` | Matrix (`q`, `status`, `kind`, `page`) |
-| `GET` | `/projects/{id}/partials/tests` | Test search (`q`, `requirement`, `scenario`, `status`, `page`) |
-| `GET` | `/projects/{id}/partials/progress` | Run progress fragment |
-| `GET` | `/projects/{id}/partials/history` | Git history fragment |
-
-## Git Commit Convention
-
-```
-init:           project initialization
-feat(doc):        document uploaded and parsed
-feat(map):        map validated by human
-feat(SC-X):       tests generated for one scenario
-feat(SC-X):       coverage gap closed
-fix(SC-X):        human modification
-export:           final JSON export
-```
+| `GET` | `/` | The work: project list, deposit, prompts, launch, progress, versions |
+| `GET` | `/parametres` | The model table |
+| `GET` | `/api/v1/projects` | List projects |
+| `POST` | `/api/v1/projects` | Deposit a document, create a project (no generation) |
+| `GET` | `/api/v1/projects/{id}/source` | Download the deposited document |
+| `POST` | `/api/v1/projects/{id}/source` | Add a source to a project that has none |
+| `GET` | `/api/v1/projects/{id}/prompts` | The three default prompts |
+| `POST` | `/api/v1/projects/{id}/runs` | Create the next version, launch it in the background |
+| `GET` | `/api/v1/projects/{id}/versions` | List versions, newest first |
+| `GET` | `/api/v1/projects/{id}/versions/{v}` | Version detail, including the prompts it ran with |
+| `GET` | `/api/v1/projects/{id}/versions/{v}/events` | SSE: progress, then done or error |
+| `GET` | `/api/v1/projects/{id}/versions/{v}/xlsx` | Download the recette workbook |
+| `POST` | `/api/v1/projects/{id}/versions/{v}/qc` | Produce the QC export |
+| `GET` | `/api/v1/projects/{id}/versions/{v}/qc.xlsx` | Download the QC export |
+| `DELETE` | `/api/v1/projects/{id}/versions/{v}` | Delete a version (not while running) |
+| `GET` | `/api/v1/models` | List the model table (api key masked) |
+| `POST` | `/api/v1/models` | Add a model entry |
+| `DELETE` | `/api/v1/models/{name}` | Remove a model entry |
 
 ## Test JSON Schema
 

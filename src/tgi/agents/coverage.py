@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tgi.agents.scenario_generator import _clean_data_rows, _clean_steps
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "coverage.md"
 _SHAPE_HINT = (
     'Return a JSON object shaped exactly like: {"updated": [{"id": "TEST-0007", "name": "...", '
     '"steps": [...], "requirement_refs": [...], "rationale": "..."}], "added": [...], "untestable": []}'
@@ -59,9 +57,9 @@ class CoverageAgent:
 
     __slots__ = ("_client", "_system_prompt")
 
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(self, client: LLMClient, system_prompt: str) -> None:
         self._client = client
-        self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
+        self._system_prompt = system_prompt.strip()
 
     async def close_gaps(
         self,

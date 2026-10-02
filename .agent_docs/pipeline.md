@@ -105,7 +105,16 @@ The 404 requirements once parked as unnumbered were mostly screens and batches. 
 also exactly what the 38 percent of screen detail tests were about, and what the
 parameterised tests now cover as data rows.
 
-## Phase 1: distil, then let a human validate
+## Phase 1: distil
+
+> **SPEC-0001b, DEC-002.** The validation gate described below ("What the human validates")
+> was removed from the interface: deposit and launch are now the whole parcours, with no
+> screen in between. The measurements of what distillation recovers are unchanged and still
+> hold; what changed is that nobody is asked to look at the map before generation runs. The
+> safety net is that a version can be deleted and the project relaunched (SC-005, SC-006),
+> which did not exist when this section was written. Discards are still proposed data on the
+> version (`source: grammaire` or the model's own), but no route currently lets a human decide
+> one; that is backlog, not a regression this increment introduces.
 
 The whole document goes in one call when it fits: **78 000 tokens against a 128 000 token
 window**. Whether it needs splitting is computed from the reading model's window
@@ -265,10 +274,11 @@ Proof it holds without any event at all: with the `EventSource` closed and recon
 disabled, the interface still went reading, map, validated, 0/30, 11/30, 30/30, and stopped
 polling at 30/30, 25 requests in total and none after.
 
-**Generation is refused server side**, not merely hidden. Clicking during distillation ran the
-pipeline over zero scenarios, declared it complete and committed an empty deliverable. The
-three refusals are that the document has not been read, that a human has not validated the map,
-and that a run is already going.
+**Generation is refused server side**, not merely hidden. Since SPEC-0001b the refusals are:
+no model is configured (`models.json` absent, unreadable, or empty), the chosen model name is
+not in the table, a prompt key is invalid or blank, and a run is already going for this
+project (`run:<project_id>` lock). The map-validation refusal described above no longer
+applies, the gate it protected having been removed (DEC-002).
 
 ## Two measurement traps
 

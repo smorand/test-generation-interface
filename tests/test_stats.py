@@ -79,8 +79,10 @@ def test_aggregate_roles_handles_missing_attributes(tmp_path: Path) -> None:
     assert roles["unknown"].durations == []
 
 
-def _project(projects: Path, name: str, scenarios: list[dict[str, object]], requirements: list[str]) -> None:
-    directory = projects / name
+def _project(
+    projects: Path, name: str, scenarios: list[dict[str, object]], requirements: list[str], version: str = "v1"
+) -> None:
+    directory = projects / name / version
     directory.mkdir(parents=True, exist_ok=True)
     state = {
         "scenarios": scenarios,
@@ -140,8 +142,8 @@ def test_aggregate_projects_missing_dir(tmp_path: Path) -> None:
 
 def test_aggregate_projects_skips_unreadable_state(tmp_path: Path) -> None:
     projects = tmp_path / "projects"
-    (projects / "broken").mkdir(parents=True)
-    (projects / "broken" / "state.json").write_text("{ not json", encoding="utf-8")
+    (projects / "broken" / "v1").mkdir(parents=True)
+    (projects / "broken" / "v1" / "state.json").write_text("{ not json", encoding="utf-8")
     assert aggregate_projects(projects)["projects"] == 0
 
 
@@ -315,8 +317,8 @@ def test_report_aggregates_several_files(tmp_path: Path) -> None:
 def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path) -> None:
     """An aggregate hid which project was in which state, and that is the first thing to know
     when the requirement axis of one of them comes out empty."""
-    healthy = tmp_path / "aaaa1111"
-    healthy.mkdir()
+    healthy = tmp_path / "aaaa1111" / "v1"
+    healthy.mkdir(parents=True)
     (healthy / "state.json").write_text(
         json.dumps(
             {
@@ -335,8 +337,8 @@ def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path)
         ),
         encoding="utf-8",
     )
-    empty = tmp_path / "bbbb2222"
-    empty.mkdir()
+    empty = tmp_path / "bbbb2222" / "v1"
+    empty.mkdir(parents=True)
     (empty / "state.json").write_text(
         json.dumps(
             {
@@ -367,8 +369,8 @@ def test_a_project_that_extracted_nothing_is_named_in_the_report(tmp_path: Path)
 
 def test_the_per_project_section_is_printed_even_for_a_single_healthy_project(tmp_path: Path) -> None:
     """A conditional section hides the answer on the one run where somebody needs it."""
-    project = tmp_path / "cccc3333"
-    project.mkdir()
+    project = tmp_path / "cccc3333" / "v1"
+    project.mkdir(parents=True)
     (project / "state.json").write_text(
         json.dumps(
             {

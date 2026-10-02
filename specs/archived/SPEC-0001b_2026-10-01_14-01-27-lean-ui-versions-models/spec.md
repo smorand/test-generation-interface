@@ -3127,7 +3127,7 @@ traité que la première.
 - **Detected by:** E2E-007, qui envoie `../../../../etc/passwd` comme clé de prompt et asserte
   `list(tmp_path.rglob("passwd*")) == []`.
 - **Blocks which requirement:** FR-NEW-019
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 La trouvaille qui justifie ce gate à elle seule est F-01, devenue FR-NEW-048 : chaque agent lit
 son prompt une fois, depuis une constante de module, à la construction
@@ -3164,7 +3164,7 @@ test qui n'attaque pas.
   version au travers de `update_scenario` sur `v<n>/state.json`.
 - **Detected by:** E2E-043, qui compare les empreintes de `v1/state.json` avant et après la v2.
 - **Blocks which requirement:** FR-MOD-001
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-002: le nombre de reprises vaut 5 et doit être ramené à 3
 - **Spec says:** « 3 tentatives au total », FR-NEW-024 et FR-NEW-051.
@@ -3176,7 +3176,7 @@ test qui n'attaque pas.
   compte d'appels devient illisible.
 - **Detected by:** E2E-041, qui compte exactement 3 requêtes HTTP de génération.
 - **Blocks which requirement:** FR-NEW-051
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-003: la liste des appels à `git_service` de FR-DEL-002 est incomplète
 - **Spec says:** appels en `src/tgi/tgi.py:302`, `:403`, `:414`, `:430`, `:448`, `:459`,
@@ -3191,7 +3191,7 @@ test qui n'attaque pas.
 - **Detected by:** `make typecheck` dès que `git_service.py` est supprimé, puis
   `tests/test_orchestrator_pipeline.py:17` et `tests/test_validate.py` qui échouent à l'import.
 - **Blocks which requirement:** FR-DEL-002
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-004: trois fichiers de tests classés « inchangés » ne le sont pas
 - **Spec says:** « les 10 autres fichiers | 135 | Inchangés », sections 9.3 et 12.3.
@@ -3202,7 +3202,7 @@ test qui n'attaque pas.
   62 / 69 / 173 de la section 12.3.
 - **Detected by:** pytest, par `ImportError` puis `TypeError` au premier lancement.
 - **Blocks which requirement:** aucune, informationnel sur le périmètre
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-005: `configuration_problems()` n'est consultée par personne
 - **Spec says:** « rien ne le consulte avant de lancer une génération », section 2.1 et
@@ -3216,7 +3216,7 @@ test qui n'attaque pas.
   disparaît avec FR-MOD-002.
 - **Detected by:** mypy, puis `tests/test_config.py` dès que `llm_client` est retiré.
 - **Blocks which requirement:** FR-MOD-002
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-006: `tests/<test_id>.json` ferait partie de tout projet
 - **Spec says:** « contenant [...] `tests/<test_id>.json`
@@ -3229,7 +3229,7 @@ test qui n'attaque pas.
 - **Resolution during implementation:** aucune au-delà de FR-NEW-056, qui supprime le puits.
 - **Detected by:** E2E-097, qui vérifie `list(projects.rglob("tests")) == []`.
 - **Blocks which requirement:** FR-NEW-056
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-007: le puits `state_manager.py:188` classé « vulnérable » est du code mort
 - **Spec says:** « vulnérable : le segment vient de la sortie du modèle », section 2.4.
@@ -3242,7 +3242,7 @@ test qui n'attaque pas.
   rien ne le signale.
 - **Detected by:** E2E-097, et la disparition du symbole vérifiée par `rg`.
 - **Blocks which requirement:** FR-NEW-056
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-008: la sévérité de la classe CWE-22 est sous-évaluée dans le bloc de tête
 - **Spec says:** `Security: internal finding`, `CVSS: not scored`, bloc de tête.
@@ -3261,7 +3261,7 @@ test qui n'attaque pas.
   consommateur de contrat n'observe de différence entre deux implémentations : seul le document
   change.
 - **Blocks which requirement:** aucune
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.
 
 #### DRIFT-009: `api.list_models` trace le point d'accès du singleton
 - **Spec says:** « `LLMClient.list_models()` existe mais aucune route ne l'expose », section 2.1,
@@ -3273,4 +3273,4 @@ test qui n'attaque pas.
 - **Resolution during implementation:** lire `base_url` sur l'instance du client.
 - **Detected by:** mypy puis `tests/test_llm.py` dès que les champs de `Settings` disparaissent.
 - **Blocks which requirement:** FR-MOD-002
-- **Status:** open
+- **Status:** resolved — closed during SPEC-0001b implementation (branch feat/SPEC-0001b-lean-ui-versions-models), verified by the functional suite.

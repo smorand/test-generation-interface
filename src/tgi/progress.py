@@ -97,12 +97,33 @@ def compute_progress(state: dict[str, Any], now: datetime | None = None) -> dict
         "in_progress": bool(state.get("run_started_at")) and total > 0 and processed < total,
     }
 
+    progress["elapsed_s"] = None
+    progress["remaining_s"] = None
     started = _parse_started_at(state.get("run_started_at"))
     if started:
         current = now or datetime.now(UTC)
         elapsed = (current - started).total_seconds()
         progress["elapsed_label"] = format_duration(elapsed)
+        progress["elapsed_s"] = int(elapsed)
         remaining = total - processed
         if processed and remaining > 0:
             progress["remaining_label"] = format_duration(elapsed / processed * remaining)
+            progress["remaining_s"] = int(elapsed / processed * remaining)
     return progress
+
+
+def sse_progress_payload(version_id: str, state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """The `progress` event body of FR-NEW-022: version, percent, done, total, timings.
+
+    `done` counts every scenario in a final status (done, needs_human, error), which is
+    `processed` in compute_progress's own vocabulary, not the `done` status count alone.
+    """
+    progress = compute_progress(state, now=now)
+    return {
+        "version": version_id,
+        "percent": progress["percent"],
+        "done": progress["processed"],
+        "total": progress["total"],
+        "elapsed_s": progress["elapsed_s"],
+        "remaining_s": progress["remaining_s"],
+    }

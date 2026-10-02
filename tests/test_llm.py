@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
+import httpx2 as httpx
 import pytest
 
 from tgi.services.llm import LLMClient, LLMJSONError, extract_json, strip_code_fences
@@ -589,3 +591,100 @@ def test_llm_client_wires_the_custom_transport(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(llm_mod.settings, "llm_verify_ssl", False)
     client = LLMClient()
     assert client._client._client is not None  # the SDK received our httpx client
+
+
+# ---------------------------------------------------------------------------
+# FR-MOD-002: construction by run, FR-NEW-051: classification of failures
+# ---------------------------------------------------------------------------
+
+
+def test_build_llm_client_uses_the_entrys_base_url_and_api_key() -> None:
+    from tgi.services.llm import build_llm_client
+
+    client = build_llm_client({"name": "n", "base_url": "https://endpoint", "api_key": "k", "model": "m"})
+    assert client._base_url == "https://endpoint"
+
+
+def test_the_client_is_built_with_no_retries_of_its_own() -> None:
+    client = LLMClient()
+    assert client._client.max_retries == 0
+
+
+async def test_a_connection_error_is_classified_and_not_retried() -> None:
+    from openai import APIConnectionError
+
+    from tgi.services.llm import LLMConnectionError
+
+    class _Failing(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            raise APIConnectionError(request=httpx.Request("POST", "http://x"))
+
+    client = LLMClient(base_url="http://127.0.0.1:1")
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Failing([])
+    client._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(LLMConnectionError, match=re.escape("endpoint injoignable: http://127.0.0.1:1")):
+        await client.chat_json(model="m", system_prompt="s", user_content="u", expected_type=dict)
+
+
+async def test_an_authentication_error_is_classified_and_not_retried() -> None:
+    from openai import AuthenticationError
+
+    from tgi.services.llm import LLMAuthError
+
+    class _Failing(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            raise AuthenticationError(
+                message="401", response=httpx.Response(401, request=httpx.Request("POST", "http://x")), body=None
+            )
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Failing([])
+    client._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(LLMAuthError, match="authentification refusée \\(401\\)"):
+        await client.chat_json(model="m", system_prompt="s", user_content="u", expected_type=dict)
+
+
+async def test_an_httpx_401_status_error_is_classified_as_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services.llm import LLMAuthError
+
+    class _Failing(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            raise httpx.HTTPStatusError(
+                "401",
+                request=httpx.Request("POST", "http://x"),
+                response=httpx.Response(401, request=httpx.Request("POST", "http://x")),
+            )
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Failing([])
+    client._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(LLMAuthError):
+        await client.chat_json(model="m", system_prompt="s", user_content="u", expected_type=dict)
+
+
+async def test_an_httpx_connect_error_is_classified_as_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services.llm import LLMConnectionError
+
+    class _Failing(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            raise httpx.ConnectError("boom", request=httpx.Request("POST", "http://x"))
+
+    client = LLMClient(base_url="http://nope")
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Failing([])
+    client._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(LLMConnectionError, match=re.escape("endpoint injoignable: http://nope")):
+        await client.chat_json(model="m", system_prompt="s", user_content="u", expected_type=dict)
+
+
+def test_default_json_retries_is_now_three() -> None:
+    from tgi.config import Settings
+
+    assert Settings(llm_api_key="k").llm_json_retries == 3

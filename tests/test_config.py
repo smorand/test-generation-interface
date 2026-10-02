@@ -155,3 +155,23 @@ def test_a_removed_variable_is_a_notice_not_a_problem(tmp_path: Path, monkeypatc
     assert len(notices) == 1
     assert "TGI_MODEL_JUDGE" in notices[0]
     assert "no judge any more" in notices[0]
+
+
+# ---------------------------------------------------------------------------
+# config_dir (FR-NEW-026)
+# ---------------------------------------------------------------------------
+
+
+def test_config_dir_defaults_to_home_config_tgi() -> None:
+    default = Settings(llm_api_key="k").config_dir
+    assert default == Path.home() / ".config" / "tgi"
+
+
+def test_config_dir_is_overridable(tmp_path: Path) -> None:
+    custom = tmp_path / "custom-config"
+    assert Settings(llm_api_key="k", config_dir=custom).config_dir == custom
+
+
+def test_config_dir_env_var_is_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TGI_CONFIG_DIR", str(tmp_path / "from-env"))
+    assert Settings().config_dir == tmp_path / "from-env"

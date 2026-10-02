@@ -62,27 +62,11 @@ Le programme est maintenant dans `Documents\test-generation-interface`.
 
 ## Étape 3 : indiquer où trouver le modèle d'IA
 
-Le programme a besoin de deux informations : l'adresse du serveur d'IA et la clé d'accès.
-Elles vous ont été fournies séparément.
-
-1. Ouvrir l'Explorateur de fichiers, aller dans `Documents\test-generation-interface`
-2. Faire un clic droit sur le fichier `.env.example`, choisir **Copier**, puis clic droit
-   dans le dossier et **Coller**
-3. Renommer la copie en `.env` exactement, sans autre extension
-4. Clic droit sur `.env`, **Ouvrir avec**, **Bloc-notes**
-5. Remplir ces trois lignes, en gardant le reste tel quel :
-
-```
-TGI_LLM_BASE_URL=https://adresse-du-serveur/v1
-TGI_LLM_API_KEY=votre-cle
-TGI_MODEL_GENERATOR=Qwen3.6-27B
-```
-
-6. Enregistrer, fermer le Bloc-notes.
-
-Si Windows cache les extensions et que le fichier s'appelle `.env.txt`, il ne sera pas lu.
-Dans l'Explorateur : onglet **Affichage**, cocher **Extensions de noms de fichiers**, puis
-renommer proprement en `.env`.
+Rien à préparer dans un fichier : le modèle se saisit directement dans l'interface, page
+**Paramètres**, une fois le programme lancé (voir plus bas). Aucun fichier `.env` n'est
+nécessaire pour un premier démarrage ; `TGI_PROJECTS_DIR` et `TGI_CONFIG_DIR` restent
+disponibles pour un exploitant qui veut changer où les projets et la table de modèles sont
+rangés, mais aucun des deux n'est obligatoire.
 
 ---
 

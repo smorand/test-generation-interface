@@ -93,7 +93,7 @@ async def test_distillation_keeps_context_scenarios_and_discards() -> None:
             }
         ]
     )
-    result = await DistillerAgent(client).distil("m", DOC)  # type: ignore[arg-type]
+    result = await DistillerAgent(client, "prompt").distil("m", DOC)  # type: ignore[arg-type]
 
     assert result["context"].startswith("Application")
     scenario = result["scenarios"][0]
@@ -127,7 +127,7 @@ async def test_fabricated_references_are_dropped() -> None:
             }
         ]
     )
-    result = await DistillerAgent(client).distil("m", DOC)  # type: ignore[arg-type]
+    result = await DistillerAgent(client, "prompt").distil("m", DOC)  # type: ignore[arg-type]
     assert result["scenarios"][0]["requirement_refs"] == ["F01.EU01.CU02.RM01"]
 
 
@@ -135,7 +135,7 @@ async def test_a_container_cited_as_a_requirement_becomes_the_container() -> Non
     client = _FakeClient(
         [{"context": "c", "scenarios": [{"title": "t", "requirement_refs": ["F01.EU01.CU01"]}], "discards": []}]
     )
-    result = await DistillerAgent(client).distil("m", DOC)  # type: ignore[arg-type]
+    result = await DistillerAgent(client, "prompt").distil("m", DOC)  # type: ignore[arg-type]
     scenario = result["scenarios"][0]
     assert scenario["container"] == "F01.EU01.CU01"
     assert scenario["requirement_refs"] == []
@@ -151,7 +151,7 @@ async def test_unusable_scenarios_and_discards_are_ignored() -> None:
             }
         ]
     )
-    result = await DistillerAgent(client).distil("m", DOC)  # type: ignore[arg-type]
+    result = await DistillerAgent(client, "prompt").distil("m", DOC)  # type: ignore[arg-type]
     assert [s["title"] for s in result["scenarios"]] == ["ok"]
     assert result["scenarios"][0]["kind"] == "nominal"  # unknown kind falls back
     assert [d["reason"] for d in result["discards"]] == ["sans_valeur_test"]
@@ -169,7 +169,7 @@ async def test_a_failing_part_does_not_lose_the_others(monkeypatch: pytest.Monke
             {"context": "deuxieme partie", "scenarios": [{"title": "ok"}], "discards": []},
         ]
     )
-    result = await DistillerAgent(client).distil("m", DOC * 60)  # type: ignore[arg-type]
+    result = await DistillerAgent(client, "prompt").distil("m", DOC * 60)  # type: ignore[arg-type]
     assert len(client.calls) > 1
     assert result["context"] == "deuxieme partie" or "deuxieme partie" in result["context"]
     assert result["scenarios"]

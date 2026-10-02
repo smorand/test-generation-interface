@@ -1,479 +1,209 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Projet {{ project_id[:8] }} — QA Test Generator</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ build }}" />
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-</head>
-<body class="bg-gray-950 text-gray-100 min-h-screen"
-  x-data="projectApp('{{ project_id }}')"
-  x-init="init()">
+{% extends "base.html" %}
+{% block title %}Travail — Générateur de tests{% endblock %}
+{% block content %}
+<div class="bx--row">
+  <div class="bx--col-lg-5 bx--col-md-8 bx--col-sm-4">
 
-  <header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-    <a href="/" class="text-blue-400 hover:text-blue-300 font-bold">⚡ QA Test Generator</a>
-    <div class="flex items-center gap-4">
-      <span class="text-xs text-gray-500 font-mono">{{ project_id[:8] }}</span>
-      <span class="text-xs text-gray-600 font-mono" title="Version du code servi. Après un git pull, elle doit changer.">build {{ build }}</span>
-      <a href="/projects/{{ project_id }}/export" class="btn-secondary text-xs">⬇ Export ZIP</a>
-    </div>
-  </header>
-
-  <!-- Tab bar -->
-  <nav class="border-b border-gray-800 px-6 flex gap-0">
-    <template x-for="tab in tabs" :key="tab.id">
-      <button
-        class="tab-btn"
-        :class="{ 'active': activeTab === tab.id }"
-        @click="activeTab = tab.id; refreshTab(tab.id)"
-        x-text="tab.label"
-      ></button>
-    </template>
-  </nav>
-
-  <!-- Pipeline controls. The three steps are always named, because a button labelled
-       "Valider la carte" that appears and vanishes tells nobody what was validated. -->
-  <div class="px-6 py-3 border-b border-gray-800 flex flex-wrap items-center gap-x-3 gap-y-2">
-    <ol class="steps text-xs">
-      <li class="step" :class="mapReady ? 'step-done' : 'step-current'">
-        <span x-text="mapReady ? '\u2713' : '1'"></span> Lecture du document
-      </li>
-      <li class="step-arrow">&rsaquo;</li>
-      <li class="step" :class="!mapReady ? 'step-todo' : (mapValidated ? 'step-done' : 'step-current')">
-        <span x-text="mapValidated ? '\u2713' : '2'"></span> Relecture de la carte, par vous
-      </li>
-      <li class="step-arrow">&rsaquo;</li>
-      <li class="step" :class="!mapValidated ? 'step-todo' : (pipelineRunning ? 'step-current' : (runFinished ? 'step-done' : 'step-current'))">
-        <span x-text="runFinished ? '\u2713' : '3'"></span> Génération des tests
-      </li>
-    </ol>
-
-    <div x-show="!mapReady" class="flex items-center gap-2 text-blue-400 text-sm">
-      <span class="spinner"></span> Lecture en cours…
-    </div>
-
-    <template x-if="mapReady && !mapValidated">
-      <div class="flex flex-wrap items-center gap-2">
-        <button class="btn-secondary text-sm" @click="validateMap()"
-          title="Confirme que les scénarios et les exigences relevés sont les bons, et débloque la génération">
-          ✓ Je valide la carte, on peut générer
-        </button>
-        <span class="text-xs text-gray-500">
-          Onglets CARTE et EXIGENCES: vérifiez ce que le document a donné. Corriger ici coûte
-          une minute, corriger après coûte une génération entière.
-        </span>
-      </div>
-    </template>
-
-    <template x-if="mapReady && mapValidated && !pipelineRunning">
-      <div class="flex flex-wrap items-center gap-2">
-        <button class="btn-primary text-sm" @click="runPipeline()"
-          x-text="runFinished ? '\u21bb Relancer la génération' : '\u25b6 Lancer la génération'"></button>
-        <span class="badge badge-green">carte validée</span>
-        <span class="text-xs text-gray-500">
-          Pour revenir en arrière: ↺ Relire dans l'onglet CARTE, la validation sera redemandée.
-        </span>
-      </div>
-    </template>
-
-    <div x-show="pipelineRunning" class="flex items-center gap-2 text-blue-400 text-sm">
-      <span class="spinner"></span> Génération en cours…
-    </div>
-    <div class="ml-auto text-xs text-gray-500" x-text="statusMessage"></div>
-  </div>
-
-  <!-- Progression du run, visible depuis tous les onglets -->
-  <div class="px-6 py-2 border-b border-gray-800">
-    <div id="progress-container"
-      hx-get="/projects/{{ project_id }}/partials/progress"
-      hx-trigger="load"
-      hx-swap="innerHTML"></div>
-  </div>
-
-  <!-- Tab content -->
-  <main class="px-6 py-4">
-
-    <!-- DOC tab -->
-    <div x-show="activeTab === 'doc'">
-      <div class="card">
-        <h2 class="text-sm font-semibold text-gray-400 mb-2 uppercase tracking-wide">Document source</h2>
-        <div class="text-xs text-gray-500 mb-3">{{ state.doc_path }}</div>
-        <pre class="doc-preview text-xs text-gray-300 overflow-auto max-h-96 bg-gray-900 rounded p-3">{{ state.doc_text[:3000] }}{% if state.doc_text|length > 3000 %}
-… (tronqué){% endif %}</pre>
-      </div>
-    </div>
-
-    <!-- BLOCS tab -->
-    <div x-show="activeTab === 'map'">
-      <div id="map-container"
-        hx-get="/projects/{{ project_id }}/partials/map"
-        hx-trigger="load"
-        hx-swap="innerHTML"></div>
-    </div>
-
-    <div x-show="activeTab === 'scenarios'">
-      <div id="scenarios-container"
-        hx-get="/projects/{{ project_id }}/partials/scenarios"
-        hx-trigger="load"
-        hx-swap="innerHTML"></div>
-    </div>
-
-    <div x-show="activeTab === 'requirements'">
-      <div id="requirements-container"
-        hx-get="/projects/{{ project_id }}/partials/requirements"
-        hx-trigger="load"
-        hx-swap="innerHTML"></div>
-    </div>
-
-    <div x-show="activeTab === 'tests'">
-      <div id="tests-container"
-        hx-get="/projects/{{ project_id }}/partials/tests"
-        hx-trigger="load"
-        hx-swap="innerHTML"
+    <section class="bx--tile tgi-tile" x-data="{ uploading: false, error: '', filename: '', dragging: false }">
+      <h2 class="bx--type-productive-heading-03 tgi-heading">Nouveau projet</h2>
+      <form
+        x-on:submit.prevent="
+          uploading = true; error = '';
+          const fd = new FormData($el);
+          fetch('/api/v1/projects', { method: 'POST', body: fd })
+            .then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => { if (ok) window.location = '/?project=' + d.id; else { error = d.detail || 'Erreur'; uploading = false; } })
+            .catch(e => { error = e.message; uploading = false; })
+        "
       >
-        <div class="text-gray-500 text-sm">Chargement des tests…</div>
-      </div>
-    </div>
-
-    <!-- CHAT tab -->
-    <div x-show="activeTab === 'chat'" class="flex flex-col h-[60vh]">
-      <div class="flex-1 overflow-y-auto space-y-3 mb-4" id="chat-messages">
-        <template x-for="(msg, i) in chatMessages" :key="i">
-          <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
-            <div
-              :class="msg.role === 'user'
-                ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-lg text-sm'
-                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm px-4 py-2 max-w-xl text-sm chat-md'"
-              x-html="msg.role === 'user' ? escapeText(msg.content) : renderMarkdown(msg.content)"
-            ></div>
-          </div>
-        </template>
-        <div x-show="chatLoading" class="flex justify-start">
-          <div class="bg-gray-800 rounded-2xl px-4 py-2 text-sm text-gray-400">
-            <span class="spinner"></span> Réflexion…
+        <div class="bx--form-item">
+          <label class="bx--label" for="file-upload">Document (Word, PDF, texte, Markdown)</label>
+          <label
+            for="file-upload"
+            class="tgi-dropzone"
+            :class="{ 'tgi-dropzone--active': dragging }"
+            x-on:dragover.prevent="dragging = true"
+            x-on:dragleave.prevent="dragging = false"
+            x-on:drop.prevent="
+              dragging = false;
+              const dropped = $event.dataTransfer.files;
+              if (dropped.length) { $refs.fileInput.files = dropped; filename = dropped[0].name; }
+            "
+          >
+            <span class="tgi-dropzone__icon" aria-hidden="true">&#8679;</span>
+            <span class="tgi-dropzone__text" x-show="!filename">
+              Glissez-déposez un fichier ici, ou <strong>cliquez pour parcourir</strong>
+            </span>
+            <span class="tgi-dropzone__text" x-show="filename" x-text="filename"></span>
+            <span class="tgi-dropzone__hint">Word, PDF, texte ou Markdown, 50 Mo maximum</span>
+          </label>
+          <input
+            id="file-upload"
+            x-ref="fileInput"
+            class="tgi-visually-hidden"
+            type="file"
+            name="file"
+            accept=".docx,.pdf,.txt,.md"
+            required
+            x-on:change="filename = $event.target.files.length ? $event.target.files[0].name : ''"
+          />
+        </div>
+        <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
+          <div class="bx--inline-notification__details">
+            <p class="bx--inline-notification__text" x-text="error"></p>
           </div>
         </div>
+        <button type="submit" class="bx--btn bx--btn--primary tgi-btn-block" :disabled="uploading">
+          <span x-show="!uploading">Déposer et analyser</span>
+          <span x-show="uploading">Dépôt en cours…</span>
+        </button>
+      </form>
+    </section>
+
+    <section class="bx--tile tgi-tile">
+      <h2 class="bx--type-productive-heading-03 tgi-heading">Projets</h2>
+      {% if not projects %}
+      <p class="bx--type-body-long-01">Aucun projet</p>
+      {% else %}
+      <ul class="bx--structured-list-tbody tgi-project-list">
+        {% for p in projects %}
+        <li>
+          <a class="bx--link" href="/?project={{ p.id }}">
+            {{ p.name or p.id }}
+          </a>
+          {% if p.status == "corrompu" %}
+          <span class="bx--tag bx--tag--red">corrompu</span>
+          {% elif p.status == "source_manquante" %}
+          <span class="bx--tag bx--tag--magenta">source manquante</span>
+          {% else %}
+          <span class="bx--tag bx--tag--green">{{ p.version_count }} version(s)</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+
+  </div>
+
+  <div class="bx--col-lg-11 bx--col-md-8 bx--col-sm-4">
+    {% if project %}
+    <section class="bx--tile tgi-tile">
+      <h2 class="bx--type-productive-heading-03 tgi-heading">{{ project.name }}</h2>
+      <p class="bx--type-helper-text-01">Source : {{ project.source_filename }}</p>
+
+      {% if not models %}
+      <div class="bx--inline-notification bx--inline-notification--warning" role="alert">
+        <div class="bx--inline-notification__details">
+          <p class="bx--inline-notification__text">aucun modèle configuré — ajoutez-en un dans
+            <a class="bx--link" href="/parametres">Paramètres</a> avant de lancer une génération.</p>
+        </div>
       </div>
-      <div class="flex gap-2">
-        <input
-          type="text"
-          class="input flex-1"
-          placeholder="Question sur le document, les règles, les tests ou ce run…"
-          x-model="chatInput"
-          @keydown.enter="sendChat()"
-        />
-        <button class="btn-primary" @click="sendChat()" :disabled="chatLoading">Envoyer</button>
-      </div>
-    </div>
+      {% endif %}
 
-    <!-- HISTORIQUE tab -->
-    <div x-show="activeTab === 'history'">
-      <div id="history-container"
-        hx-get="/projects/{{ project_id }}/partials/history"
-        hx-trigger="load"
-        hx-swap="innerHTML"
-      >
-        <div class="text-gray-500 text-sm">Chargement de l'historique…</div>
-      </div>
-    </div>
-
-  </main>
-
-  <script>
-  // ── Rendu markdown des reponses du chat ──────────────────────────────────
-  // L'echappement HTML vient EN PREMIER: aucune reponse de modele ne peut injecter
-  // de balise. Le markdown est ensuite applique sur du texte deja neutralise.
-  function escapeText(text) {
-    return String(text == null ? '' : text)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  function renderMarkdown(text) {
-    let src = escapeText(text);
-    const blocks = [];
-    // Blocs de code mis de cote pour que leur contenu ne soit pas reinterprete
-    src = src.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, (m, code) => {
-      blocks.push('<pre class="md-pre"><code>' + code.replace(/\n$/, '') + '</code></pre>');
-      return '\u0000BLOCK' + (blocks.length - 1) + '\u0000';
-    });
-
-    const inline = (s) => s
-      .replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>')
-      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
-               '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-
-    const lines = src.split('\n');
-    const out = [];
-    let list = null;      // 'ul' ou 'ol'
-    let table = null;     // lignes du tableau en cours
-
-    const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-    const closeTable = () => {
-      if (!table) return;
-      const cells = (row) => row.replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
-      const head = cells(table[0]);
-      const body = table.slice(table.length > 1 && /^[\s|:-]+$/.test(table[1]) ? 2 : 1);
-      out.push('<table class="md-table"><thead><tr>' + head.map(c => '<th>' + c + '</th>').join('') + '</tr></thead><tbody>');
-      body.forEach(row => out.push('<tr>' + cells(row).map(c => '<td>' + c + '</td>').join('') + '</tr>'));
-      out.push('</tbody></table>');
-      table = null;
-    };
-
-    for (const raw of lines) {
-      const line = raw.trimEnd();
-      if (/^\u0000BLOCK\d+\u0000$/.test(line.trim())) { closeList(); closeTable(); out.push(line.trim()); continue; }
-      if (/^\s*\|.*\|\s*$/.test(line)) { closeList(); (table = table || []).push(line.trim()); continue; }
-      closeTable();
-      const heading = line.match(/^(#{1,6})\s+(.*)$/);
-      if (heading) {
-        closeList();
-        const level = Math.min(6, heading[1].length + 2);  // # devient h3, pour rester sous le titre de page
-        out.push('<h' + level + '>' + inline(heading[2]) + '</h' + level + '>');
-        continue;
-      }
-      const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
-      if (bullet) {
-        if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
-        out.push('<li>' + inline(bullet[1]) + '</li>');
-        continue;
-      }
-      const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
-      if (numbered) {
-        if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
-        out.push('<li>' + inline(numbered[1]) + '</li>');
-        continue;
-      }
-      if (!line.trim()) { closeList(); continue; }
-      closeList();
-      out.push('<p>' + inline(line) + '</p>');
-    }
-    closeList(); closeTable();
-
-    let html = out.join('\n');
-    blocks.forEach((block, i) => { html = html.replace('\u0000BLOCK' + i + '\u0000', block); });
-    return html;
-  }
-
-    // Fonctions des partials definies ici, pas dans les fragments: Alpine initialise
-  // la racine du fragment avant que le <script> de fin de fragment ne soit execute.
-function testsPanel() {
-  return {
-    query: '',
-    ruleFilter: '',
-    get visible() {
-      return document.querySelectorAll('.test-wrap:not([style*="display: none"])').length;
-    },
-    matches(card) {
-      // Un test peut couvrir plusieurs regles: le filtre accepte si l'une correspond
-      if (this.ruleFilter && !card.dataset.rules.split(' ').includes(this.ruleFilter)) return false;
-      const q = this.query.trim().toLowerCase();
-      if (!q) return true;
-      return q.split(/\s+/).every(term => card.dataset.search.includes(term));
-    },
-  };
-}
-
-function testEditor(projectId, initialTest) {
-  return {
-    projectId,
-    test: initialTest,
-    draft: JSON.parse(JSON.stringify(initialTest)),
-    editing: false,
-    addStep() {
-      const next = this.draft.steps.length + 1;
-      this.draft.steps.push({ order: next, description: '', expected_result: '' });
-    },
-    async saveTest() {
-      try {
-        const r = await fetch(`/projects/${this.projectId}/tests/${this.test.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.draft),
-        });
-        if (r.ok) {
-          const updated = await r.json();
-          this.test = updated;
-          this.draft = JSON.parse(JSON.stringify(updated));
-          this.editing = false;
-        }
-      } catch (e) {
-        console.error('Save failed', e);
-      }
-    },
-  };
-}
-
-// Recharger un fragment. htmx.trigger(el, 'load') ne fonctionne pas: pour un
-// hx-trigger="load", htmx appelle loadImmediately une seule fois, sans installer d'ecouteur,
-// et marque le noeud comme charge. Le panneau des exigences restait donc fige sur son rendu
-// d'avant la distillation, et aucun clic sur l'onglet ne le rafraichissait.
-function tgiReload(selector) {
-  const el = document.querySelector(selector);
-  if (!el) return;
-  const url = el.getAttribute('hx-get');
-  if (!url) return;
-  htmx.ajax('GET', url, { target: el, swap: 'innerHTML' });
-}
-
-// Les trois etats d'un ecart, dans la langue de l'interface
-const DISCARD_LABELS = { proposed: 'proposé', accepted: 'écarté', rejected: 'gardé' };
-
-function discardRow(projectId, index) {
-  return {
-    label: '',
-    text(decision) { return DISCARD_LABELS[decision] || decision; },
-    // Accepter un ecart retire l'element du corpus de verite: la decision est envoyee, pas devinee
-    async decide(decision) {
-      const r = await fetch(`/projects/${projectId}/discards/${index}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      });
-      if (r.ok) {
-        this.label = decision;
-        tgiReload('#requirements-container');
-      }
-    },
-  };
-}
-
-    function projectApp(projectId) {
-      return {
-        projectId,
-        activeTab: 'map',
-        mapReady: {{ 'true' if state.get('distilled_at') else 'false' }},
-        mapValidated: {{ 'true' if state.get('validated') else 'false' }},
-        // Un onglet affiche l'etat au moment de son activation, pas celui du chargement de la page
-        containers: { map: '#map-container', scenarios: '#scenarios-container', requirements: '#requirements-container', tests: '#tests-container', history: '#history-container' },
-        refreshTab(tab) {
-          if (this.containers[tab]) tgiReload(this.containers[tab]);
-        },
-        tabs: [
-          { id: 'doc', label: '📄 DOC' },
-          { id: 'map', label: '🧭 CARTE' },
-          { id: 'requirements', label: '📋 EXIGENCES' },
-          { id: 'scenarios', label: '🎬 SCÉNARIOS & TESTS' },
-          { id: 'tests', label: '🔍 RECHERCHE' },
-          { id: 'chat', label: '💬 CHAT' },
-          { id: 'history', label: '🕑 HISTORIQUE' },
-        ],
-        pipelineRunning: false,
-        runFinished: false,
-        statusMessage: '',
-        chatMessages: [],
-        chatInput: '',
-        chatLoading: false,
-        eventSource: null,
-
-        init() {
-          this.connectSSE();
-        },
-
-        connectSSE() {
-          if (this.eventSource) this.eventSource.close();
-          this.eventSource = new EventSource(`/projects/${this.projectId}/stream`);
-          this.eventSource.onmessage = (e) => {
-            const evt = JSON.parse(e.data);
-            this.handleEvent(evt);
+      <form id="run-form" x-data="{ running: false, error: '' }"
+        x-on:submit.prevent="
+          running = true; error = '';
+          const fd = new FormData($el);
+          const body = {
+            model: fd.get('model'),
+            prompts: {
+              distiller: fd.get('distiller'),
+              scenario_generator: fd.get('scenario_generator'),
+              coverage: fd.get('coverage')
+            }
           };
-          this.eventSource.onerror = () => {
-            setTimeout(() => this.connectSSE(), 3000);
-          };
-        },
+          fetch('/api/v1/projects/{{ project.id }}/runs', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+          }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => { if (ok) window.location = '/?project={{ project.id }}&version=' + d.version; else { error = d.detail || 'Erreur'; running = false; } })
+            .catch(e => { error = e.message; running = false; })
+        ">
+        <div class="bx--form-item">
+          <label class="bx--label" for="model-select">Modèle</label>
+          <select id="model-select" class="bx--select-input" name="model">
+            {% for m in models %}
+            <option value="{{ m.name }}">{{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="distiller-prompt">Prompt — distillation</label>
+          <textarea id="distiller-prompt" class="bx--text-area tgi-prompt" name="distiller">{{ prompts.get("distiller", "") }}</textarea>
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="scenario-prompt">Prompt — génération des scénarios</label>
+          <textarea id="scenario-prompt" class="bx--text-area tgi-prompt" name="scenario_generator">{{ prompts.get("scenario_generator", "") }}</textarea>
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="coverage-prompt">Prompt — couverture</label>
+          <textarea id="coverage-prompt" class="bx--text-area tgi-prompt" name="coverage">{{ prompts.get("coverage", "") }}</textarea>
+        </div>
+        <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
+          <div class="bx--inline-notification__details">
+            <p class="bx--inline-notification__text" x-text="error"></p>
+          </div>
+        </div>
+        <button type="submit" class="bx--btn bx--btn--primary" :disabled="running" {% if not models %}disabled{% endif %}>
+          Lancer la génération
+        </button>
+      </form>
+    </section>
 
-        handleEvent(evt) {
-          if (evt.type === 'distil_start') {
-            this.statusMessage = 'Lecture du document…';
-          } else if (evt.type === 'distil_done') {
-            this.mapReady = true;
-            this.statusMessage = `Carte prête: ${evt.data.scenarios} scénarios, ${evt.data.requirements} exigences`;
-            this.refreshActiveTab();
-          } else if (evt.type === 'map_validated') {
-            this.mapValidated = true;
-            this.statusMessage = 'Carte validée';
-            this.refreshActiveTab();
-          } else if (evt.type === 'pipeline_start') {
-            this.pipelineRunning = true;
-            this.statusMessage = `Génération de ${evt.data.total} scénarios…`;
-            tgiReload('#progress-container');
-          } else if (evt.type === 'pipeline_done') {
-            this.pipelineRunning = false;
-            this.statusMessage = `Terminé: ${evt.data.tests} tests, ${evt.data.coverage_percent} % des exigences couvertes`;
-            this.refreshAll();
-          } else if (evt.type === 'scenario_status') {
-            // Un run de 70 scenarios emet 140 evenements: recharger quatre fragments a chaque
-            // fois, dont une matrice de 468 lignes, noierait le navigateur. La barre de
-            // progression porte son propre rafraichissement, ca suffit pendant le run.
-            const parts = [`${evt.data.scenario_id}: ${evt.data.status}`];
-            if (evt.data.tests !== undefined) parts.push(`${evt.data.tests} tests`);
-            if (evt.data.uncovered) parts.push(`${evt.data.uncovered} non couvertes`);
-            this.statusMessage = parts.join(' · ');
-          }
-        },
+    {% if version_state %}
+    <section class="bx--tile tgi-tile"
+      x-data="{
+        status: '{{ version_state.status }}',
+        percent: 0,
+        error: '{{ version_state.error or '' }}'
+      }"
+      x-init="
+        const source = new EventSource('/api/v1/projects/{{ project.id }}/versions/{{ version_state.id }}/events');
+        source.addEventListener('progress', e => { percent = JSON.parse(e.data).percent; });
+        source.addEventListener('done', e => { status = 'done'; source.close(); });
+        source.addEventListener('error', e => { status = 'failed'; error = JSON.parse(e.data).error; source.close(); });
+      ">
+      <h3 class="bx--type-productive-heading-02 tgi-heading">{{ version_state.id }}</h3>
+      {% include "partials/progress.html" %}
+      <div class="tgi-actions">
+        <a class="bx--btn bx--btn--tertiary" x-show="status === 'done'"
+          href="/api/v1/projects/{{ project.id }}/versions/{{ version_state.id }}/xlsx">Télécharger le classeur</a>
+      </div>
+    </section>
+    {% endif %}
 
-        // Seul l'onglet visible est recharge: personne ne regarde les autres, et les recharger
-        // coute une matrice complete a chaque fois.
-        refreshActiveTab() {
-          tgiReload('#progress-container');
-          this.refreshTab(this.activeTab);
-        },
-        refreshAll() {
-          this.refreshActiveTab();
-        },
-
-        async validateMap() {
-          await fetch(`/projects/${this.projectId}/validate-map`, { method: 'POST' });
-          this.mapValidated = true;
-          this.statusMessage = 'Carte validée';
-          tgiReload('#map-container');
-        },
-
-        async runPipeline() {
-          const r = await fetch(`/projects/${this.projectId}/run`, { method: 'POST' });
-          const body = await r.json().catch(() => ({}));
-          if (!r.ok) {
-            this.statusMessage = body.reason || "La génération a été refusée.";
-            return;
-          }
-          this.pipelineRunning = true;
-        },
-
-        async sendChat() {
-          const msg = this.chatInput.trim();
-          if (!msg || this.chatLoading) return;
-          this.chatMessages.push({ role: 'user', content: msg });
-          this.chatInput = '';
-          this.chatLoading = true;
-          this.$nextTick(() => {
-            const el = document.getElementById('chat-messages');
-            if (el) el.scrollTop = el.scrollHeight;
-          });
-          try {
-            const r = await fetch(`/projects/${this.projectId}/chat`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: msg }),
-            });
-            const d = await r.json();
-            this.chatMessages.push({ role: 'agent', content: d.response });
-          } catch (e) {
-            this.chatMessages.push({ role: 'agent', content: '⚠ Erreur: ' + e.message });
-          } finally {
-            this.chatLoading = false;
-            this.$nextTick(() => {
-              const el = document.getElementById('chat-messages');
-              if (el) el.scrollTop = el.scrollHeight;
-            });
-          }
-        },
-      };
-    }
-  </script>
-
-</body>
-</html>
+    <section class="bx--tile tgi-tile">
+      <h3 class="bx--type-productive-heading-02 tgi-heading">Versions</h3>
+      {% if not versions %}
+      <p class="bx--type-body-long-01">Aucune version</p>
+      {% else %}
+      <table class="bx--data-table tgi-versions-table">
+        <thead>
+          <tr><th>Version</th><th>Statut</th><th>Modèle</th><th>Date</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for v in versions %}
+          <tr>
+            <td><a class="bx--link" href="/?project={{ project.id }}&version={{ v.id }}">{{ v.id }}</a></td>
+            <td>{{ v.status }}</td>
+            <td>{{ v.get("model", "") }}</td>
+            <td>{{ v.get("created_at", "") }}</td>
+            <td>
+              {% if v.status == "done" %}
+              <a class="bx--link" href="/api/v1/projects/{{ project.id }}/versions/{{ v.id }}/xlsx">xlsx</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+    {% else %}
+    <section class="bx--tile tgi-tile">
+      <p class="bx--type-body-long-01">Déposez une spécification ou ouvrez un projet dans la liste.</p>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -130,13 +130,18 @@ class Settings(BaseSettings):
     # OpenAI standard; turn it on once the target endpoint is known to accept it.
     # Endpoints that reject it are detected once and it is then dropped.
     disable_thinking: bool = False
-    llm_json_retries: int = 5
+    # 3 attempts total, first included: a client built with max_retries=0 keeps this the
+    # only retry mechanism, so the count stays legible (FR-NEW-051).
+    llm_json_retries: int = 3
     # The launcher listens here. Loopback by default, because this reads a client's functional
     # specification on a laptop and binding every interface put it on the local network; the
     # container sets its own host on the uvicorn command line.
     host: str = "127.0.0.1"
     port: int = 8080
     projects_dir: str = "./projects"
+    # Where models.json lives. An exploitant provisions this once; the models themselves
+    # are entered from the interface, never from an environment variable (FR-NEW-026).
+    config_dir: Path = Path.home() / ".config" / "tgi"
     # Target volume per scenario, honoured by generation and shown in the interface.
     # At 5, the reference specification yields about 290 tests against 2199 before.
     tests_per_scenario: int = 5

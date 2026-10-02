@@ -27,8 +27,8 @@ from tgi.agents.orchestrator import Orchestrator
 from tgi.config import settings
 from tgi.coverage_report import coverage_summary
 from tgi.logging_config import setup_logging
-from tgi.services.git_service import GitService
 from tgi.services.llm import LLMClient
+from tgi.services.prompts import default_prompts
 from tgi.services.state_manager import StateManager
 from tgi.stats import aggregate_roles, format_switch_line, read_attempt_spans, reasoning_switch_usage
 from tgi.tracing import configure_tracing
@@ -182,23 +182,16 @@ async def _run_sample(projects_dir: Path, client: LLMClient) -> tuple[dict[str, 
     """Run the real pipeline on the bundled sample, in a throwaway project."""
     settings.projects_dir = str(projects_dir)
     state_manager = StateManager()
-    git_service = GitService()
-    orchestrator = Orchestrator(state_manager, git_service, client)
+    orchestrator = Orchestrator(state_manager)
 
     text = SAMPLE_PATH.read_text(encoding="utf-8")
-    project_id = await state_manager.create(
-        doc_path=str(SAMPLE_PATH),
-        doc_text=text,
-        model_generator=settings.model_generator,
-    )
-    await git_service.init(project_id)
-    await orchestrator.distil(project_id)
-    await orchestrator.validate_map(project_id)
+    project = await state_manager.create_project(SAMPLE_PATH.name, SAMPLE_PATH.read_bytes())
+    version = await state_manager.create_version(project["id"], settings.model_generator, default_prompts())
 
     started = time.monotonic()
-    await orchestrator.run_pipeline(project_id)
+    await orchestrator.run(project["id"], version, settings.model_generator, client, text)
     duration = time.monotonic() - started
-    return await state_manager.load(project_id), duration
+    return await state_manager.load_version(project["id"], version), duration
 
 
 def _collect_measurements(

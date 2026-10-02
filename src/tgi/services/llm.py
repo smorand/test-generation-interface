@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 import httpx2 as httpx
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI, AuthenticationError
 
 from tgi.config import settings
 from tgi.tracing import trace_span
@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # Strip ```json ... ``` or ``` ... ``` markdown wrappers from LLM output
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
+_HTTP_UNAUTHORIZED = 401
+
 
 class LLMJSONError(RuntimeError):
     """Raised when the model fails to return valid JSON after all retries.
@@ -25,6 +27,22 @@ class LLMJSONError(RuntimeError):
     This is an expected, recoverable outcome (a weak model returning prose),
     not a bug. Callers should log it as a warning and mark the unit rerunnable,
     not dump a traceback.
+    """
+
+
+class LLMConnectionError(Exception):
+    """The endpoint could not be reached at all: retrying it is not useful.
+
+    Deliberately not a RuntimeError: DistillerAgent.distil catches RuntimeError around
+    one part's call to carry on with the others, and a transport failure must instead
+    abort the whole version (FR-NEW-050, FR-NEW-051).
+    """
+
+
+class LLMAuthError(Exception):
+    """The endpoint refused the credentials: retrying it is not useful.
+
+    Not a RuntimeError either, for the same reason as LLMConnectionError.
     """
 
 
@@ -237,13 +255,20 @@ def _build_http_client() -> httpx.AsyncClient | None:
 class LLMClient:
     """Async OpenAI compatible client with JSON extraction and retry logic."""
 
-    __slots__ = ("_client", "_model_cache", "_thinking_switch_supported")
+    __slots__ = ("_base_url", "_client", "_model_cache", "_thinking_switch_supported")
 
-    def __init__(self) -> None:
+    def __init__(self, base_url: str | None = None, api_key: str | None = None) -> None:
+        # Read at call time rather than frozen at import: the table of models supplies a
+        # fresh base_url and api_key on every run (FR-MOD-002), and the default here only
+        # serves tgi-validate, which has no table to read from.
+        self._base_url = base_url if base_url is not None else settings.llm_base_url
         self._client = AsyncOpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
+            api_key=api_key if api_key is not None else settings.llm_api_key,
+            base_url=self._base_url,
             http_client=_build_http_client(),
+            # The only retry mechanism is chat_json's own, so the attempt count it reports
+            # stays accurate (FR-NEW-051).
+            max_retries=0,
         )
         self._model_cache: dict[str, Any] | None = None
         # Assume the switch is accepted until an endpoint proves otherwise.
@@ -413,6 +438,25 @@ class LLMClient:
                             shape_hint=shape_hint,
                             truncated=truncated,
                         )
+                except (APIConnectionError, httpx.ConnectError) as exc:
+                    span.set_attribute("outcome", "connection_error")
+                    raise LLMConnectionError(f"endpoint injoignable: {self._base_url}") from exc
+                except AuthenticationError as exc:
+                    span.set_attribute("outcome", "auth_error")
+                    raise LLMAuthError("authentification refusée (401)") from exc
+                except httpx.HTTPStatusError as exc:
+                    if exc.response is not None and exc.response.status_code == _HTTP_UNAUTHORIZED:
+                        span.set_attribute("outcome", "auth_error")
+                        raise LLMAuthError("authentification refusée (401)") from exc
+                    last_error = exc
+                    span.set_attribute("outcome", "api_error")
+                    logger.warning(
+                        "LLM call failed on attempt %d/%d for model %s: %s",
+                        attempt + 1,
+                        max_attempts,
+                        model,
+                        exc,
+                    )
                 except Exception as exc:
                     # Transport / API error: retry silently up to the limit.
                     last_error = exc
@@ -439,7 +483,7 @@ class LLMClient:
         if self._model_cache is not None:
             return list(self._model_cache.values())
 
-        with trace_span("api.list_models", {"endpoint": f"{settings.llm_base_url}/models", "method": "GET"}):
+        with trace_span("api.list_models", {"endpoint": f"{self._base_url}/models", "method": "GET"}):
             page = await self._client.models.list()
 
         models: list[dict[str, Any]] = []
@@ -471,5 +515,10 @@ class LLMClient:
             return True, 0
 
 
-# Singleton
-llm_client = LLMClient()
+def build_llm_client(entry: dict[str, Any]) -> LLMClient:
+    """Construct a client for one run, from the model table entry chosen (FR-NEW-030).
+
+    Replaces the module level singleton whose base_url and api_key were frozen at
+    import (FR-MOD-002): the table of models carries several endpoints, not one.
+    """
+    return LLMClient(base_url=str(entry.get("base_url", "")), api_key=str(entry.get("api_key", "")))

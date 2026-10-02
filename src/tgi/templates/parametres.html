@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Paramètres — Générateur de tests{% endblock %}
+{% block content %}
+<div class="bx--row">
+  <div class="bx--col-lg-10 bx--col-md-8 bx--col-sm-4">
+    <section class="bx--tile tgi-tile">
+      <h2 class="bx--type-productive-heading-03 tgi-heading">Modèles</h2>
+
+      {% if warning %}
+      <div class="bx--inline-notification bx--inline-notification--warning" role="alert">
+        <div class="bx--inline-notification__details">
+          <p class="bx--inline-notification__text">{{ warning }}</p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if not models %}
+      <p class="bx--type-body-long-01">Aucun modèle configuré</p>
+      {% else %}
+      <table class="bx--data-table tgi-models-table">
+        <thead>
+          <tr><th>Nom</th><th>Point d'accès</th><th>Modèle</th><th>Clé</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for m in models %}
+          <tr>
+            <td>{{ m.name }}</td>
+            <td>{{ m.base_url }}</td>
+            <td>{{ m.model }}</td>
+            <td><code>{{ m.api_key }}</code></td>
+            <td>
+              <button class="bx--btn bx--btn--danger--tertiary bx--btn--sm"
+                onclick="fetch('/api/v1/models/' + encodeURIComponent('{{ m.name }}'), {method: 'DELETE'}).then(() => location.reload())">
+                Retirer
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    <section class="bx--tile tgi-tile" x-data="{ error: '' }">
+      <h3 class="bx--type-productive-heading-02 tgi-heading">Ajouter un modèle</h3>
+      <form
+        x-on:submit.prevent="
+          error = '';
+          const fd = new FormData($el);
+          const body = Object.fromEntries(fd.entries());
+          fetch('/api/v1/models', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+            .then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => { if (ok) location.reload(); else { error = (typeof d.detail === 'string') ? d.detail : 'Erreur'; } })
+            .catch(e => { error = e.message; })
+        ">
+        <div class="bx--form-item">
+          <label class="bx--label" for="model-name">Nom</label>
+          <input id="model-name" class="bx--text-input" type="text" name="name" required />
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="model-base-url">Point d'accès (http/https)</label>
+          <input id="model-base-url" class="bx--text-input" type="text" name="base_url" required />
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="model-api-key">Clé d'API</label>
+          <input id="model-api-key" class="bx--text-input" type="password" name="api_key" required />
+        </div>
+        <div class="bx--form-item">
+          <label class="bx--label" for="model-model">Identifiant du modèle</label>
+          <input id="model-model" class="bx--text-input" type="text" name="model" required />
+        </div>
+        <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
+          <div class="bx--inline-notification__details">
+            <p class="bx--inline-notification__text" x-text="error"></p>
+          </div>
+        </div>
+        <button type="submit" class="bx--btn bx--btn--primary">Ajouter</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -1,4 +1,9 @@
-"""Orchestrator: coordinates the full test generation pipeline."""
+"""Orchestrator: coordinates the full test generation pipeline, one version at a time.
+
+A version carries its own prompts, its own model and its own scenario state, so this
+module threads (project_id, version) through every call where the old one-project-one-run
+design only ever knew project_id (FR-NEW-048, FR-NEW-049).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiofiles
+
 from tgi.agents.coverage import CoverageAgent, uncovered_refs
 from tgi.agents.distiller import DistillerAgent, attach_requirements, unstated_discards
 from tgi.agents.scenario_generator import ScenarioGeneratorAgent
@@ -19,11 +26,12 @@ from tgi.coverage_report import coverage_summary, discarded_refs
 from tgi.events import publish
 from tgi.grammar import Requirement, containers, extract_requirements, infer_grammar, section_of
 from tgi.locks import lock_for
-from tgi.services.llm import LLMJSONError
+from tgi.services.llm import LLMAuthError, LLMConnectionError, LLMJSONError
+from tgi.services.state_manager import WORKBOOK_FILENAME
 from tgi.testset import merge_tests, normalize_label
+from tgi.workbook import build_workbook
 
 if TYPE_CHECKING:
-    from tgi.services.git_service import GitService
     from tgi.services.llm import LLMClient
     from tgi.services.state_manager import StateManager
 
@@ -38,193 +46,176 @@ def _test_offset(scenario_id: str) -> int:
     return (int(digits) if digits else 1) * 100
 
 
-# Locks per project to prevent concurrent pipeline runs
-
-
-def get_project_lock(project_id: str) -> asyncio.Lock:
-    """Serialise the read, modify, write cycles of one project.
-
-    Same key as the state manager on purpose: one file, one mutex. Two keys meant no mutual
-    exclusion at all between the two modules that both load, mutate and save this file.
-    """
-    return lock_for(f"project:{project_id}")
-
-
-# Heading boundaries: markdown levels produced by the docx parser, or an
-# underlined title in plain text sources.
-_HEADING_SPLIT_RE = re.compile(r"(?=\n#{1,6}\s+|\n[A-Z][^\n]{5,60}\n[-=]{3,})")
-_PARAGRAPH_SPLIT_RE = re.compile(r"\n{2,}")
+def run_lock(project_id: str) -> asyncio.Lock:
+    """One run at a time per project: FR-NEW-021 refuses a second while one is running."""
+    return lock_for(f"run:{project_id}")
 
 
 class Orchestrator:
-    """Main pipeline coordinator."""
+    """Drives one version from distillation through the finished workbook."""
 
-    __slots__ = (
-        "_coverage",
-        "_distiller",
-        "_generator",
-        "_git",
-        "_llm",
-        "_state",
-    )
+    __slots__ = ("_state",)
 
-    def __init__(
-        self,
-        state_manager: StateManager,
-        git_service: GitService,
-        llm_client: LLMClient,
-    ) -> None:
+    def __init__(self, state_manager: StateManager) -> None:
         self._state = state_manager
-        self._git = git_service
-        self._llm = llm_client
-        self._distiller = DistillerAgent(llm_client)
-        self._generator = ScenarioGeneratorAgent(llm_client)
-        self._coverage = CoverageAgent(llm_client)
 
-    async def _emit(self, project_id: str, event_type: str, data: dict[str, Any]) -> None:
-        """Publish a UI event to every browser watching this project.
+    async def _emit(self, project_id: str, version: str, event_type: str, data: dict[str, Any]) -> None:
+        """Publish an SSE event, scoped to this version.
 
-        Delivery is best effort by design: a headless run has no subscriber and must not be
-        slowed down or held up by that. The interface never depends on an event alone, it
-        polls as well, because an event lost to a dropped connection would otherwise leave a
-        panel claiming work is still running.
+        Delivery is best effort: a headless run has no subscriber, and the interface
+        polls as well, so a dropped connection never leaves a panel stuck.
         """
-        publish(project_id, {"type": event_type, "data": data})
+        publish(f"{project_id}:{version}", {"type": event_type, "data": data})
 
-    async def distil(self, project_id: str) -> dict[str, Any]:
-        """Phase one: read the whole document and produce the corpus useful for testing.
+    async def _emit_progress(self, project_id: str, version: str) -> None:
+        from tgi.progress import sse_progress_payload  # noqa: PLC0415 - avoids a cycle at import time
 
-        The skeleton is extracted deterministically because the numbering is the only
-        trustworthy source: 51 of 51 use cases and 401 of 401 requirements, against 46 and
-        fabrications when a model is asked the same question. The model contributes the
-        context, the scenarios and the discards, and every reference it emits is verified.
+        state = await self._state.load_version(project_id, version)
+        await self._emit(project_id, version, "progress", sse_progress_payload(version, state))
+
+    async def _fail(self, project_id: str, version: str, message: str) -> None:
+        """Mark the version failed, keeping whatever scenarios already finished (FR-NEW-025)."""
+        state = await self._state.load_version(project_id, version)
+        state["status"] = "failed"
+        state["error"] = message
+        await self._state.save_version(project_id, version, state)
+        await self._emit(project_id, version, "error", {"version": version, "error": message})
+        logger.warning("Version %s/%s failed: %s", project_id, version, message)
+
+    async def _finalize(self, project_id: str, version: str) -> None:
+        """Write the workbook and close the version out as done.
+
+        A full disk here must fail the version instead of crashing the background task
+        silently, and must not leave a truncated workbook on disk (FR-NEW-024, FR-NEW-041).
         """
-        state = await self._state.load(project_id)
-        text = state["doc_text"]
-        await self._emit(project_id, "distil_start", {"chars": len(text)})
-
-        grammar = infer_grammar(text)
-        requirements = extract_requirements(text, grammar)
-        container_titles = containers(requirements, text)
-
-        distilled = await self._distiller.distil(state.get("model_generator", ""), text)
-        scenarios = attach_requirements(distilled["scenarios"], requirements, container_titles)
-
-        async with get_project_lock(project_id):
-            fresh = await self._state.load(project_id)
-            fresh["context"] = distilled["context"]
-            fresh["scenarios"] = scenarios
-            fresh["requirements"] = [asdict(requirement) for requirement in requirements]
-            fresh["containers"] = container_titles
-            # The document's own defects are proposed for discard by code, ahead of what the
-            # model proposed: a reference cited and never stated cannot be tested, and left as
-            # a plain gap it is indistinguishable from work left undone.
-            fresh["discards"] = unstated_discards(requirements) + distilled["discards"]
-            fresh["axes"] = {
-                axis.prefix: {
-                    "leaf_prefixes": list(axis.leaf_prefixes),
-                    "leaf_depth": axis.leaf_depth,
-                    "count": axis.count,
-                }
-                for axis in grammar.axes.values()
-            }
-            fresh["distilled_at"] = datetime.now(UTC).isoformat()
-            # A map nobody has read is not a validated map. Reading the document again kept
-            # the previous approval, so a fresh map went straight to generation unreviewed.
-            fresh["validated"] = False
-            await self._state.save(project_id, fresh)
-
-        await self._git.commit(
-            project_id,
-            f"distil: {len(scenarios)} scenario(s), {len(requirements)} requirement(s)",
-        )
-        await self._emit(
-            project_id,
-            "distil_done",
-            {"scenarios": len(scenarios), "requirements": len(requirements), "discards": len(distilled["discards"])},
-        )
-        logger.info(
-            "Distilled project %s: %d scenario(s), %d requirement(s), %d discard(s)",
-            project_id,
-            len(scenarios),
-            len(requirements),
-            len(distilled["discards"]),
-        )
-        return {"scenarios": scenarios, "requirements": requirements}
-
-    async def validate_map(self, project_id: str) -> None:
-        """Record that a human accepted the distilled map, which unlocks generation."""
-        await self._state.update_field(project_id, "validated", True)
-        await self._git.commit(project_id, "validate: human accepted the distilled map")
-        await self._emit(project_id, "map_validated", {})
-
-    async def run_pipeline(self, project_id: str) -> None:
-        """Phase two and three: generate the tests of every scenario, then close the gaps."""
-        state = await self._state.load(project_id)
-        scenarios = state.get("scenarios") or []
-        await self._emit(project_id, "pipeline_start", {"total": len(scenarios)})
-        await self._state.set_run_started(project_id)
-
-        semaphore = asyncio.Semaphore(max(settings.max_parallel_scenarios, 1))
-
-        async def guarded(scenario_id: str) -> None:
-            async with semaphore:
-                await self._process_scenario(project_id, scenario_id)
-
-        outcomes = await asyncio.gather(*(guarded(str(s["id"])) for s in scenarios), return_exceptions=True)
-        # A swallowed exception left 58 scenarios stuck at running with no trace: report each
-        for scenario, outcome in zip(scenarios, outcomes, strict=False):
-            if isinstance(outcome, BaseException):
-                scenario_id = str(scenario.get("id"))
-                logger.exception(
-                    "Scenario %s failed", scenario_id, exc_info=(type(outcome), outcome, outcome.__traceback__)
-                )
-                await self._state.update_scenario(
-                    project_id, scenario_id, {"status": "error", "error": f"{type(outcome).__name__}: {outcome}"[:300]}
-                )
-                await self._emit(project_id, "scenario_status", {"scenario_id": scenario_id, "status": "error"})
-        await self._finalize(project_id)
-
-    async def rerun_scenario(self, project_id: str, scenario_id: str) -> None:
-        """Replay one scenario, dropping its previous tests."""
-        await self._state.update_scenario(project_id, scenario_id, {"tests": [], "status": "pending"})
-        await self._process_scenario(project_id, scenario_id)
-        await self._finalize(project_id)
-
-    async def _finalize(self, project_id: str) -> None:
-        """Summarise the run: coverage is counted, never judged by a model."""
-        state = await self._state.load(project_id)
+        state = await self._state.load_version(project_id, version)
+        directory = self._state.version_dir(project_id, version)
+        workbook_path = directory / WORKBOOK_FILENAME
+        try:
+            workbook_bytes = build_workbook(state)
+            async with aiofiles.open(workbook_path, "wb") as f:
+                await f.write(workbook_bytes)
+        except OSError:
+            workbook_path.unlink(missing_ok=True)
+            await self._fail(project_id, version, "disque plein, classeur non écrit")
+            return
         summary = coverage_summary(state)
-        await self._state.update_field(project_id, "summary", summary)
-        await self._git.commit(
-            project_id,
-            f"run: {summary['tests']} test(s), {summary['coverage_percent']}% of requirements covered",
-        )
-        await self._emit(project_id, "pipeline_done", summary)
+        state["status"] = "done"
+        await self._state.save_version(project_id, version, state)
+        await self._emit(project_id, version, "done", {"version": version, "tests": summary["tests"]})
         logger.info(
-            "Project %s finished: %d test(s), %d/%d requirement(s) covered (%d%%)",
+            "Version %s/%s done: %d test(s), %d/%d requirement(s) covered (%d%%)",
             project_id,
+            version,
             summary["tests"],
             summary["covered"],
             summary["requirements"],
             summary["coverage_percent"],
         )
 
-    async def _process_scenario(self, project_id: str, scenario_id: str) -> None:
-        """Generate the tests of one scenario, then close its coverage gaps."""
-        state = await self._state.load(project_id)
-        scenario = next((s for s in state.get("scenarios") or [] if str(s.get("id")) == scenario_id), None)
-        if scenario is None:
-            logger.warning("Scenario %s not found in project %s", scenario_id, project_id)
+    async def run(self, project_id: str, version: str, model: str, llm: LLMClient, source_text: str) -> None:
+        """Phase one, two and three for this version: distil, generate, close gaps, finalize.
+
+        A connection or authentication failure, wherever it happens, aborts the whole
+        version; an illegible answer on one scenario only marks that scenario
+        (FR-NEW-050, DEC-012).
+        """
+        prompts = await self._state.read_prompts(project_id, version)
+        distiller = DistillerAgent(llm, prompts["distiller"])
+        generator = ScenarioGeneratorAgent(llm, prompts["scenario_generator"])
+        coverage_agent = CoverageAgent(llm, prompts["coverage"])
+
+        grammar = infer_grammar(source_text)
+        requirements = extract_requirements(source_text, grammar)
+        container_titles = containers(requirements, source_text)
+
+        try:
+            distilled = await distiller.distil(model, source_text)
+        except (LLMConnectionError, LLMAuthError) as exc:
+            await self._fail(project_id, version, str(exc))
+            return
+        except LLMJSONError:
+            await self._fail(project_id, version, "r\u00e9ponse du mod\u00e8le illisible")
             return
 
-        text = state["doc_text"]
-        model = state.get("model_generator", "")
-        target = int(state.get("tests_per_scenario") or settings.tests_per_scenario)
+        scenarios = attach_requirements(distilled["scenarios"], requirements, container_titles)
+
+        state = await self._state.load_version(project_id, version)
+        state.update(
+            {
+                "context": distilled["context"],
+                "scenarios": scenarios,
+                "requirements": [asdict(requirement) for requirement in requirements],
+                "containers": container_titles,
+                "discards": unstated_discards(requirements) + distilled["discards"],
+                "axes": {
+                    axis.prefix: {
+                        "leaf_prefixes": list(axis.leaf_prefixes),
+                        "leaf_depth": axis.leaf_depth,
+                        "count": axis.count,
+                    }
+                    for axis in grammar.axes.values()
+                },
+                "run_started_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        await self._state.save_version(project_id, version, state)
+        await self._emit_progress(project_id, version)
+
+        semaphore = asyncio.Semaphore(max(settings.max_parallel_scenarios, 1))
+        abort: dict[str, str] = {}
+        stop_event = asyncio.Event()
+
+        async def guarded(scenario_id: str) -> None:
+            if stop_event.is_set():
+                return
+            async with semaphore:
+                if stop_event.is_set():
+                    return
+                try:
+                    await self._process_scenario(
+                        project_id, version, scenario_id, model, generator, coverage_agent, source_text
+                    )
+                except (LLMConnectionError, LLMAuthError) as exc:
+                    abort["error"] = str(exc)
+                    stop_event.set()
+                except Exception as exc:
+                    logger.exception("Scenario %s failed", scenario_id)
+                    await self._state.update_version_scenario(
+                        project_id,
+                        version,
+                        scenario_id,
+                        {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:300]},
+                    )
+                await self._emit_progress(project_id, version)
+
+        await asyncio.gather(*(guarded(str(s["id"])) for s in scenarios), return_exceptions=True)
+
+        if abort:
+            await self._fail(project_id, version, abort["error"])
+            return
+
+        await self._finalize(project_id, version)
+
+    async def _process_scenario(
+        self,
+        project_id: str,
+        version: str,
+        scenario_id: str,
+        model: str,
+        generator: ScenarioGeneratorAgent,
+        coverage_agent: CoverageAgent,
+        text: str,
+    ) -> None:
+        """Generate the tests of one scenario, then close its coverage gaps."""
+        state = await self._state.load_version(project_id, version)
+        scenario = next((s for s in state.get("scenarios") or [] if str(s.get("id")) == scenario_id), None)
+        if scenario is None:
+            logger.warning("Scenario %s not found in %s/%s", scenario_id, project_id, version)
+            return
+
+        target = int(settings.tests_per_scenario)
         by_ref = {str(r["ref"]): r for r in state.get("requirements") or []}
-        # An accepted discard has to cost nothing: it used to leave the coverage denominator
-        # and still be handed to the model, so a human decision changed the number and not the
-        # work. Accepting is the one place where a requirement stops being generated for.
         discarded = discarded_refs(state)
         requirements = [
             Requirement(**{k: v for k, v in by_ref[ref].items() if k in _REQUIREMENT_FIELDS})
@@ -233,11 +224,11 @@ class Orchestrator:
         ]
         evidence = section_of(text, str(scenario.get("container") or "")) if scenario.get("container") else ""
 
-        await self._state.update_scenario(project_id, scenario_id, {"status": "running"})
-        await self._emit(project_id, "scenario_status", {"scenario_id": scenario_id, "status": "running"})
+        await self._state.update_version_scenario(project_id, version, scenario_id, {"status": "running"})
+        await self._emit(project_id, version, "scenario_status", {"scenario_id": scenario_id, "status": "running"})
 
         try:
-            tests = await self._generator.generate(
+            tests = await generator.generate(
                 model,
                 context=str(state.get("context") or ""),
                 scenario=scenario,
@@ -249,10 +240,12 @@ class Orchestrator:
             )
         except LLMJSONError as exc:
             logger.warning("Scenario %s produced no test: %s", scenario_id, exc)
-            await self._state.update_scenario(
-                project_id, scenario_id, {"status": "needs_human", "error": str(exc)[:300]}
+            await self._state.update_version_scenario(
+                project_id, version, scenario_id, {"status": "needs_human", "error": str(exc)[:300]}
             )
-            await self._emit(project_id, "scenario_status", {"scenario_id": scenario_id, "status": "needs_human"})
+            await self._emit(
+                project_id, version, "scenario_status", {"scenario_id": scenario_id, "status": "needs_human"}
+            )
             return
 
         tests = merge_tests([], tests, similarity=settings.test_similarity_threshold).tests
@@ -261,7 +254,7 @@ class Orchestrator:
         gaps = [r for r in requirements if r.ref in set(uncovered_refs([r.ref for r in requirements], tests))]
         if gaps:
             try:
-                closed = await self._coverage.close_gaps(
+                closed = await coverage_agent.close_gaps(
                     model,
                     scenario=scenario,
                     tests=tests,
@@ -280,8 +273,9 @@ class Orchestrator:
         remaining = uncovered_refs([r.ref for r in requirements], tests)
         declared = {entry["ref"] for entry in untestable}
         status = "done" if not [ref for ref in remaining if ref not in declared] else "needs_human"
-        await self._state.update_scenario(
+        await self._state.update_version_scenario(
             project_id,
+            version,
             scenario_id,
             {
                 "tests": tests,
@@ -291,28 +285,27 @@ class Orchestrator:
                 "error": None,
             },
         )
-        await self._git.commit(project_id, f"tests: {scenario_id} produced {len(tests)} test(s)")
         await self._emit(
             project_id,
+            version,
             "scenario_status",
             {"scenario_id": scenario_id, "status": status, "tests": len(tests), "uncovered": len(remaining)},
         )
 
-    async def handle_chat(self, project_id: str, message: str, model: str) -> str:
-        """Answer a question about this document, its rules, its tests and this run.
+    async def handle_chat(self, state: dict[str, Any], message: str, model: str, llm: LLMClient) -> str:
+        """Answer a question about a version's document, rules, tests and run.
 
-        Read only by design: nothing here modifies the project. Editing happens in the
-        rules and tests tabs, where a human sees what changes.
+        Read only by design: nothing here modifies the project. Kept for the context
+        builders below, even though no route serves it any more (DEC-003 removed the tab).
         """
         chat_prompt_path = Path(__file__).parent.parent / "prompts" / "chat.md"
         chat_system = chat_prompt_path.read_text(encoding="utf-8").strip()
 
-        state = await self._state.load(project_id)
         context = _chat_context(state, message)
         user_content = (
             f"Contexte du projet:\n{json.dumps(context, ensure_ascii=False, indent=2)}\n\nQuestion: {message}"
         )
-        return await self._llm.chat(
+        return await llm.chat(
             model=model,
             system_prompt=chat_system,
             user_content=user_content,
