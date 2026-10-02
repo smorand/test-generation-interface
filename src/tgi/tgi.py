@@ -9,10 +9,10 @@ import logging
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import aiofiles
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +32,12 @@ from tgi.progress import compute_progress
 from tgi.services.doc_parser import doc_parser
 from tgi.services.git_service import git_service
 from tgi.services.llm import llm_client
+from tgi.services.paths import (
+    InvalidIdentifier,
+    safe_basename,
+    validated_project_id,
+    validated_test_id,
+)
 from tgi.services.state_manager import state_manager
 from tgi.tracing import configure_tracing
 from tgi.workbook import build_workbook
@@ -42,6 +48,59 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+# An unauthenticated service that writes an unbounded file is a disk saturation, which is
+# the A:H of this increment's CVSS vector. 50 MiB leaves a factor of seven over the
+# reference specification document.
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _route_template(request: Request) -> str:
+    """The route's pattern, not the concrete path.
+
+    request.url.path carries the decoded payload, so logging it would copy the attack
+    into the very traces the shape exists to keep clean.
+    """
+    return str(getattr(request.scope.get("route"), "path", "<unmatched>"))
+
+
+def _identifier_shape(raw: str) -> str:
+    """Describe a rejected identifier without echoing it.
+
+    A payload copied verbatim into the logs is a payload stored somewhere else, read by
+    something else later: a log viewer that renders HTML, a shipper that indexes it. The
+    shape says enough to recognise a scan without carrying the attack along.
+    """
+    classes = {"a" if c.isalpha() else "9" if c.isdigit() else "." if c == "." else "-" for c in raw}
+    return f"len={len(raw)} classes={''.join(sorted(classes))}"
+
+
+def _valid_project_id(request: Request, project_id: str) -> str:
+    """Refuse a project id at the boundary, before it can compose a path.
+
+    The body is identical whether the id is malformed or merely absent, so a probe cannot
+    tell the two apart. Validating here, rather than only inside the path helpers, is what
+    lets the answer carry the right error at all and avoids resolving before refusing.
+    """
+    try:
+        return validated_project_id(project_id)
+    except InvalidIdentifier:
+        logger.warning(
+            "rejected project identifier on %s (%s)", _route_template(request), _identifier_shape(project_id)
+        )
+        raise HTTPException(status_code=404, detail=f"projet inconnu: {project_id}") from None
+
+
+def _valid_test_id(request: Request, test_id: str) -> str:
+    try:
+        return validated_test_id(test_id)
+    except InvalidIdentifier:
+        logger.warning("rejected test identifier on %s (%s)", _route_template(request), _identifier_shape(test_id))
+        raise HTTPException(status_code=404, detail=f"test inconnu: {test_id}") from None
+
+
+ValidProjectId = Annotated[str, Depends(_valid_project_id)]
+ValidTestId = Annotated[str, Depends(_valid_test_id)]
 
 # Guard rail on the page weight: a test card is about 5 kB of HTML.
 _MAX_PER_PAGE = 200
@@ -222,7 +281,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     # -----------------------------------------------------------------------
 
     def _raise_404(project_id: str) -> None:
-        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+        # Same wording as the validation refusal: a probe must not be able to tell a
+        # malformed identifier from a well formed one that names nothing
+        raise HTTPException(status_code=404, detail=f"projet inconnu: {project_id}")
 
     async def _load_or_404(project_id: str) -> dict[str, Any]:
         try:
@@ -272,13 +333,18 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     ) -> JSONResponse:
         model_gen = model_generator or app_settings.model_generator
 
-        # Save uploaded file
+        # Read and judge before writing: an oversized upload must cost no disk at all
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="document vide")
+        if len(content) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="document trop volumineux (max 50 Mo)")
+
         upload_dir = Path(app_settings.projects_dir) / "_uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
-        file_path = upload_dir / (file.filename or "upload.txt")
+        file_path = upload_dir / safe_basename(file.filename or "upload.txt")
 
         async with aiofiles.open(file_path, "wb") as f:
-            content = await file.read()
             await f.write(content)
 
         # Parse document
@@ -310,7 +376,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"project_id": project_id, "redirect": f"/projects/{project_id}"})
 
     @application.get("/projects/{project_id}", response_class=HTMLResponse)
-    async def project_view(request: Request, project_id: str) -> HTMLResponse:
+    async def project_view(request: Request, project_id: ValidProjectId) -> HTMLResponse:
         state = await _load_or_404(project_id)
         return templates.TemplateResponse(
             request,
@@ -319,7 +385,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.get("/projects/{project_id}/stream")
-    async def project_stream(project_id: str) -> StreamingResponse:
+    async def project_stream(project_id: ValidProjectId) -> StreamingResponse:
         """SSE endpoint for live project events.
 
         Each connection subscribes with its own queue. A single shared queue handed every
@@ -351,13 +417,13 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.post("/projects/{project_id}/validate-map")
-    async def validate_map(project_id: str) -> JSONResponse:
+    async def validate_map(project_id: ValidProjectId) -> JSONResponse:
         await _load_or_404(project_id)
         await orchestrator.validate_map(project_id)
         return JSONResponse({"status": "ok"})
 
     @application.post("/projects/{project_id}/redistil")
-    async def redistil(project_id: str) -> JSONResponse:
+    async def redistil(project_id: ValidProjectId) -> JSONResponse:
         """Read the document again, for instance after changing the model."""
         await _load_or_404(project_id)
         task = asyncio.create_task(orchestrator.distil(project_id))
@@ -366,7 +432,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"status": "started"})
 
     @application.post("/projects/{project_id}/run")
-    async def run_pipeline(project_id: str) -> JSONResponse:
+    async def run_pipeline(project_id: ValidProjectId) -> JSONResponse:
         state = await _load_or_404(project_id)
         refusal = _why_generation_is_refused(state)
         if refusal:
@@ -380,7 +446,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"status": "started"})
 
     @application.post("/projects/{project_id}/scenarios/{scenario_id}/rerun")
-    async def rerun_scenario(project_id: str, scenario_id: str) -> JSONResponse:
+    async def rerun_scenario(project_id: ValidProjectId, scenario_id: str) -> JSONResponse:
         await _load_or_404(project_id)
         task = asyncio.create_task(orchestrator.rerun_scenario(project_id, scenario_id))
         _BACKGROUND_TASKS.add(task)
@@ -388,23 +454,25 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"status": "started", "scenario_id": scenario_id})
 
     @application.get("/projects/{project_id}/tests")
-    async def get_tests(project_id: str) -> JSONResponse:
+    async def get_tests(project_id: ValidProjectId) -> JSONResponse:
         await _load_or_404(project_id)
         tests = await state_manager.get_all_tests(project_id)
         return JSONResponse({"tests": tests})
 
     @application.put("/projects/{project_id}/tests/{test_id}")
-    async def update_test(project_id: str, test_id: str, request: Request) -> JSONResponse:
+    async def update_test(project_id: ValidProjectId, test_id: ValidTestId, request: Request) -> JSONResponse:
         await _load_or_404(project_id)
         body = await request.json()
         updated = await state_manager.update_test(project_id, test_id, body)
         if not updated:
-            raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+            # Same wording as the validation refusal in _valid_test_id: FR-NEW-002 requires
+            # the two to be indistinguishable, and this is the "well formed but absent" half
+            raise HTTPException(status_code=404, detail=f"test inconnu: {test_id}")
         await git_service.commit(project_id, f"fix(test): human edit on {test_id}")
         return JSONResponse(updated)
 
     @application.put("/projects/{project_id}/requirements/{ref}")
-    async def update_requirement(project_id: str, ref: str, request: Request) -> JSONResponse:
+    async def update_requirement(project_id: ValidProjectId, ref: str, request: Request) -> JSONResponse:
         """Edit a requirement: its wording, or the fact a human has reviewed it."""
         await _load_or_404(project_id)
         body = await request.json()
@@ -415,12 +483,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse(updated)
 
     @application.get("/projects/{project_id}/requirements")
-    async def get_requirements(project_id: str) -> JSONResponse:
+    async def get_requirements(project_id: ValidProjectId) -> JSONResponse:
         state = await _load_or_404(project_id)
         return JSONResponse({"requirements": requirement_rows(state)})
 
     @application.post("/projects/{project_id}/discards/{index}")
-    async def decide_discard(project_id: str, index: int, request: Request) -> JSONResponse:
+    async def decide_discard(project_id: ValidProjectId, index: int, request: Request) -> JSONResponse:
         """Arbitrate a proposed discard: accepting it takes it out of the corpus of truth."""
         await _load_or_404(project_id)
         body = await request.json()
@@ -431,7 +499,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse(decided)
 
     @application.post("/projects/{project_id}/chat")
-    async def chat(project_id: str, request: Request) -> JSONResponse:
+    async def chat(project_id: ValidProjectId, request: Request) -> JSONResponse:
         state = await _load_or_404(project_id)
         body = await request.json()
         message = body.get("message", "").strip()
@@ -443,13 +511,13 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"response": response})
 
     @application.get("/projects/{project_id}/history")
-    async def get_history(project_id: str) -> JSONResponse:
+    async def get_history(project_id: ValidProjectId) -> JSONResponse:
         await _load_or_404(project_id)
         log = await git_service.log(project_id)
         return JSONResponse({"commits": log})
 
     @application.post("/projects/{project_id}/rollback")
-    async def rollback(project_id: str, request: Request) -> JSONResponse:
+    async def rollback(project_id: ValidProjectId, request: Request) -> JSONResponse:
         await _load_or_404(project_id)
         body = await request.json()
         commit_hash = body.get("hash", "").strip()
@@ -465,7 +533,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         return JSONResponse({"status": "ok", "state": state})
 
     @application.get("/projects/{project_id}/export")
-    async def export_project(project_id: str) -> StreamingResponse:
+    async def export_project(project_id: ValidProjectId) -> StreamingResponse:
         state = await _load_or_404(project_id)
 
         buf = io.BytesIO()
@@ -512,7 +580,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     # -----------------------------------------------------------------------
 
     @application.get("/projects/{project_id}/partials/map", response_class=HTMLResponse)
-    async def partial_map(request: Request, project_id: str) -> HTMLResponse:
+    async def partial_map(request: Request, project_id: ValidProjectId) -> HTMLResponse:
         """The distilled document a human validates before any expensive generation."""
         state = await _load_or_404(project_id)
         declared = {ref for ref in references_in(state.get("doc_text", "")) if _is_container(state, ref)}
@@ -545,7 +613,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.get("/projects/{project_id}/partials/scenarios", response_class=HTMLResponse)
-    async def partial_scenarios(request: Request, project_id: str, q: str = "", gaps: bool = False) -> HTMLResponse:
+    async def partial_scenarios(
+        request: Request, project_id: ValidProjectId, q: str = "", gaps: bool = False
+    ) -> HTMLResponse:
         """The scenario axis: functionality, use case, scenario, then its tests on demand."""
         state = await _load_or_404(project_id)
         selected = filter_scenarios([s for s in state.get("scenarios") or [] if isinstance(s, dict)], q, gaps)
@@ -568,7 +638,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         "/projects/{project_id}/scenarios/{scenario_id}/tests",
         response_class=HTMLResponse,
     )
-    async def partial_scenario_tests(request: Request, project_id: str, scenario_id: str) -> HTMLResponse:
+    async def partial_scenario_tests(request: Request, project_id: ValidProjectId, scenario_id: str) -> HTMLResponse:
         """Tests of one scenario, loaded when the scenario is expanded."""
         state = await _load_or_404(project_id)
         scenario = next((s for s in state.get("scenarios") or [] if str(s.get("id")) == scenario_id), None)
@@ -589,7 +659,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     @application.get("/projects/{project_id}/partials/requirements", response_class=HTMLResponse)
     async def partial_requirements(
         request: Request,
-        project_id: str,
+        project_id: ValidProjectId,
         q: str = "",
         status: str = "",
         kind: str = "",
@@ -628,7 +698,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     @application.get("/projects/{project_id}/partials/tests", response_class=HTMLResponse)
     async def partial_tests(
         request: Request,
-        project_id: str,
+        project_id: ValidProjectId,
         q: str = "",
         requirement: str = "",
         scenario: str = "",
@@ -666,7 +736,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.get("/projects/{project_id}/partials/progress", response_class=HTMLResponse)
-    async def partial_progress(request: Request, project_id: str) -> HTMLResponse:
+    async def partial_progress(request: Request, project_id: ValidProjectId) -> HTMLResponse:
         """Where the run stands, visible from every tab."""
         state = await _load_or_404(project_id)
         return templates.TemplateResponse(
@@ -676,7 +746,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         )
 
     @application.get("/projects/{project_id}/partials/history", response_class=HTMLResponse)
-    async def partial_history(request: Request, project_id: str) -> HTMLResponse:
+    async def partial_history(request: Request, project_id: ValidProjectId) -> HTMLResponse:
         await _load_or_404(project_id)
         commits = await git_service.log(project_id)
         return templates.TemplateResponse(

@@ -12,6 +12,7 @@ import aiofiles
 
 from tgi.config import settings
 from tgi.locks import lock_for
+from tgi.services.paths import validated_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,13 @@ class GitService:
     __slots__ = ()
 
     def repo_dir(self, project_id: str) -> Path:
-        return Path(settings.projects_dir) / project_id
+        """Resolve a project repository, refusing an identifier that could leave it.
+
+        This one guards a subprocess, not a file write: rollback() runs `git reset --hard`
+        with this path as cwd, so a `..` here reaches the server's own working directory,
+        which under `make run` is the source checkout.
+        """
+        return Path(settings.projects_dir) / validated_project_id(project_id)
 
     async def _run_git(self, project_id: str, *args: str) -> tuple[int, str, str]:
         """Run a git command in the project directory. Returns (returncode, stdout, stderr)."""

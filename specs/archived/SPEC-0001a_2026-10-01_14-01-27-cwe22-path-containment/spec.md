@@ -1141,7 +1141,13 @@ valide que **mesuré contre le code non corrigé**, jamais raisonné.
 - **Detected by:** E2E-004, mais **seulement sous Windows** ; ailleurs il est ignoré. C'est la
   raison pour laquelle cette entrée existe plutôt qu'une confiance dans le test.
 - **Blocks which requirement:** FR-NEW-001 sur la cible Windows uniquement
-- **Status:** open
+- **Status:** resolved (mesuré sur Windows 11, 4 passed 0 skipped, Python 3.13.11,
+  commit `143de51`, le 2026-10-02 ; sortie brute conservée dans
+  `DRIFT-004-windows-evidence.txt` à côté de ce document)
+  L'entrée demandait la mesure et non le report : elle a été faite plutôt que déférée.
+  Les quatre cas `CON`, `NUL`, `COM1.md` et `con.MD` passent là où la sémantique de
+  périphérique existe, ce qui ferme le seul point de ce lot qui reposait sur un
+  raisonnement plutôt que sur une mesure.
 
 #### DRIFT-005: six exigences restent sous trois tests distincts
 - **Spec says:** la règle de suffisance demande au moins trois tests par exigence.
@@ -1157,7 +1163,7 @@ valide que **mesuré contre le code non corrigé**, jamais raisonné.
   manquent.
 - **Detected by:** le recomptage de la section 12.1, refait à chaque round du gate.
 - **Blocks which requirement:** aucune
-- **Status:** open
+- **Status:** resolved (documentaire : la section 12.1 recompte la couverture sur ce que chaque test vérifie réellement et annonce les six exigences sous le seuil plutôt que de relever le compte par des étiquettes ; FR-NEW-005 est passée de 1 à 3 tests réels pendant l'implémentation, par les deux tests d'effet à frontière contournée)
 
 #### DRIFT-001: la saturation disque n'est pas fermée par la seule borne de taille
 - **Spec says:** FR-NEW-006 ferme la part `A:H` du vecteur.
@@ -1177,7 +1183,7 @@ valide que **mesuré contre le code non corrigé**, jamais raisonné.
   reste de nature A, et non promue en F, parce qu'aucun utilisateur ni consommateur de contrat
   n'observe de différence entre deux implémentations : seul le document change.
 - **Blocks which requirement:** aucune, informationnel sur la portée de FR-NEW-006
-- **Status:** open
+- **Status:** moved to backlog/BL-0002 (limitation de débit; risque résiduel écrit en 7.2)
 
 #### DRIFT-002: `project_dir()` crée le dossier qu'il résout
 - **Spec says:** un identifiant bien formé mais absent rend un 404 sans effet.
@@ -1189,7 +1195,7 @@ valide que **mesuré contre le code non corrigé**, jamais raisonné.
   `create()` seul, qui est le seul appelant qui doive créer.
 - **Detected by:** E2E-009, dont la dernière assertion est `projects/ffffffffffff` n'existe pas.
 - **Blocks which requirement:** FR-NEW-002
-- **Status:** open
+- **Status:** resolved (test_resolving_a_project_dir_does_not_create_it, RED `assert not True` then GREEN)
 
 #### DRIFT-003: `git_service.py` n'est pas inchangé
 - **Spec says:** la première rédaction de la section 9.1 classait `git_service.py` « Inchangé »,
@@ -1203,4 +1209,4 @@ valide que **mesuré contre le code non corrigé**, jamais raisonné.
 - **Detected by:** E2E-010, qui vérifie que `GitService().repo_dir("..")` lève
   `InvalidIdentifier`.
 - **Blocks which requirement:** FR-NEW-005
-- **Status:** open
+- **Status:** resolved (E2E-010, RED `DID NOT RAISE InvalidIdentifier` then GREEN)

@@ -39,7 +39,11 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/{logging_config,tracing}.py` : rich console plus file logs, OpenTelemetry
 - `src/tgi/{stats,validate}.py` : `tgi-stats` from traces, `tgi-validate` verdict on a model
 - `src/tgi/events.py` : SSE fan out, one queue per connection (a shared queue got stolen)
-- `src/tgi/services/` : llm, doc_parser, git_service, state_manager
+- `src/tgi/services/` : llm, doc_parser, git_service, state_manager, paths
+- `src/tgi/services/paths.py` : **every identifier received from a client passes through here**
+  before it can compose a disk path. `safe_basename` confines an uploaded filename;
+  `validated_project_id` / `validated_version` / `validated_test_id` refuse anything else and
+  raise `InvalidIdentifier`, which the HTTP layer turns into a 404
 - `src/tgi/{prompts,schemas,templates,static}/` : resources (absolute-path resolved, shipped in wheel);
   `schemas/test_schema.json` is the export contract, held true by `tests/test_test_schema.py`
 - `tests/`, `tests/functional/` : unit + API tests (LLM mocked, no network)
@@ -53,6 +57,14 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - Live UI: fragments restate server truth (`x-init`) and carry their own stopping poll; never rely on an event alone
 - Module-level singletons kept intentionally: `settings`, `llm_client`, `state_manager`, `git_service`, `doc_parser`
 - Runtime data in `projects/` (gitignored); logs/otel under `TGI_LOGS` (default `$HOME/.cache/tgi/logs`)
+- **No identifier received from a client composes a disk path without `src/tgi/services/paths.py`.**
+  The guard is applied twice on purpose: at the HTTP boundary, where the right error body is
+  known, and inside `StateManager.project_dir()` and `GitService.repo_dir()`, where the traffic
+  actually passes. A route added later without the first still hits the second. `E2E-010`
+  enumerates `app.routes` rather than a fixed list, so it goes red when a new route skips it
+- A 404 body is identical whether an identifier is malformed or merely absent, so a probe cannot
+  tell the two apart. A rejected identifier is logged at `WARNING` by its **shape**, never its
+  value: `request.url.path` is the decoded path and would carry the payload into the logs
 
 ## Pipeline essentials
 

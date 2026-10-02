@@ -15,6 +15,7 @@ import aiofiles
 
 from tgi.config import settings
 from tgi.locks import lock_for
+from tgi.services.paths import is_project_id, validated_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -63,17 +64,20 @@ class StateManager:
     __slots__ = ()
 
     def project_dir(self, project_id: str) -> Path:
-        d = Path(settings.projects_dir) / project_id
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        """Resolve a project directory, refusing an identifier that could leave it.
+
+        The guard sits here and not only at the HTTP boundary, and the duplication is the
+        point: a route added later without the boundary check would silently reopen the
+        class, whereas everything that touches a project path comes through this function.
+
+        Resolving is also a read. It used to mkdir, so probing a project that does not
+        exist created it, which littered the listing and told the prober it had reached
+        something. Creation belongs to create(), the one caller that means it.
+        """
+        return Path(settings.projects_dir) / validated_project_id(project_id)
 
     def state_path(self, project_id: str) -> Path:
         return self.project_dir(project_id) / "state.json"
-
-    def tests_dir(self, project_id: str) -> Path:
-        d = self.project_dir(project_id) / "tests"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
 
     async def load(self, project_id: str) -> dict[str, Any]:
         path = self.state_path(project_id)
@@ -105,6 +109,8 @@ class StateManager:
         tests_per_scenario: int | None = None,
     ) -> str:
         project_id = str(uuid.uuid4())
+        # The only place a project directory comes into existence
+        self.project_dir(project_id).mkdir(parents=True, exist_ok=True)
         state: dict[str, Any] = {
             "project_id": project_id,
             "doc_path": doc_path,
@@ -167,28 +173,6 @@ class StateManager:
             decided: dict[str, Any] = discards[index]
         return decided
 
-    async def add_or_update_tests(self, project_id: str, scenario_id: str, tests: list[dict[str, Any]]) -> None:
-        """Merge tests into a scenario, replacing those whose id already exists."""
-        async with _state_lock(project_id):
-            state = await self.load(project_id)
-            for scenario in state.get("scenarios") or []:
-                if str(scenario.get("id")) != scenario_id:
-                    continue
-                existing = {str(t.get("id")): t for t in scenario.get("tests") or []}
-                for test in tests:
-                    existing[str(test.get("id"))] = test
-                scenario["tests"] = list(existing.values())
-                break
-            await self.save(project_id, state)
-
-        # One file per test, so an exported test can be diffed on its own
-        tests_dir = self.tests_dir(project_id)
-        tests_dir.mkdir(parents=True, exist_ok=True)
-        for test in tests:
-            path = tests_dir / f"{test.get('id')}.json"
-            async with aiofiles.open(path, "w", encoding="utf-8") as handle:
-                await handle.write(json.dumps(test, indent=2, ensure_ascii=False))
-
     async def update_test(self, project_id: str, test_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         async with _state_lock(project_id):
             state = await self.load(project_id)
@@ -202,11 +186,10 @@ class StateManager:
                         break
             if updated_test:
                 await self.save(project_id, state)
-        if updated_test:
-            # Update individual file
-            test_path = self.tests_dir(project_id) / f"{test_id}.json"
-            async with aiofiles.open(test_path, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(updated_test, indent=2, ensure_ascii=False))
+        # A test lives in state.json and nowhere else. The per-test file this used to write
+        # composed its path from an identifier the client supplies, which is the sink
+        # FR-NEW-008 closes; the companion sink, fed by model output, went with the merge
+        # helper that wrote it and that had no caller left.
         return updated_test
 
     async def set_run_started(self, project_id: str) -> None:
@@ -242,10 +225,19 @@ class StateManager:
         return tests
 
     async def list_projects(self) -> list[str]:
+        """Every directory that is a project, by name.
+
+        The name has to be a valid identifier, not merely a directory holding a state.json.
+        Uploads land in projects/_uploads, so a client that posts a file called state.json
+        makes that directory look like a project whose state it wrote; and once
+        project_dir() validates, the same directory makes this call raise on every GET /.
+        The exclusion is silent on purpose: a directory whose name is not an identifier is
+        not a project, which is not an error.
+        """
         base = Path(settings.projects_dir)
         if not base.exists():
             return []
-        return [d.name for d in base.iterdir() if d.is_dir() and (d / "state.json").exists()]
+        return [d.name for d in base.iterdir() if d.is_dir() and is_project_id(d.name) and (d / "state.json").exists()]
 
 
 state_manager = StateManager()

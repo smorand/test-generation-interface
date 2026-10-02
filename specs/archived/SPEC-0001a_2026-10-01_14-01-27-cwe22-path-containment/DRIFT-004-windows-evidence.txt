@@ -1,0 +1,30 @@
+DRIFT-004 of SPEC-0001a: Windows device names, measured
+========================================================
+
+date     : 2026-10-02 21:01:55 UTC
+platform : Windows 11 (AMD64)
+python   : 3.13.11
+branch   : feat/SPEC-0001a-cwe22-path-containment
+commit   : 143de5118cf7eaaa92f7281593409dbbb674e817
+command  : uv run pytest tests/functional/test_path_containment.py -k windows_device -v
+
+VERDICT  : PASS - the guard holds on Windows, DRIFT-004 can be closed
+
+Raw output
+--------------------------------------------------------
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\MORANSE\Documents\Projects\Tests\test-generation-interface\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\MORANSE\Documents\Projects\Tests\test-generation-interface
+configfile: pyproject.toml
+plugins: anyio-4.15.1, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 26 items / 22 deselected / 4 selected
+
+tests/functional/test_path_containment.py::test_e2e_004_a_windows_device_name_is_prefixed_not_opened[CON] PASSED [ 25%]
+tests/functional/test_path_containment.py::test_e2e_004_a_windows_device_name_is_prefixed_not_opened[NUL] PASSED [ 50%]
+tests/functional/test_path_containment.py::test_e2e_004_a_windows_device_name_is_prefixed_not_opened[COM1.md] PASSED [ 75%]
+tests/functional/test_path_containment.py::test_e2e_004_a_windows_device_name_is_prefixed_not_opened[con.MD] PASSED [100%]
+
+====================== 4 passed, 22 deselected in 11.43s ======================
+warning: The `native-tls` setting is deprecated and will be removed in a future release. Use `system-certs` instead.

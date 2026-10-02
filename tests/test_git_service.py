@@ -21,7 +21,7 @@ async def _seed_file(projects_dir: Path, project_id: str, name: str, content: st
 
 
 async def test_init_creates_repo_and_commit(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-init"
+    pid = "aaaaaaaaa001"
     await _seed_file(projects_dir, pid, "state.json", "{}")
     await service.init(pid, "init: project initialization")
     assert (projects_dir / pid / ".git").is_dir()
@@ -32,7 +32,7 @@ async def test_init_creates_repo_and_commit(service: GitService, projects_dir: P
 
 
 async def test_commit_and_current_hash(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-commit"
+    pid = "aaaaaaaaa002"
     await _seed_file(projects_dir, pid, "state.json", "{}")
     await service.init(pid)
     await _seed_file(projects_dir, pid, "state.json", '{"x": 1}')
@@ -43,7 +43,7 @@ async def test_commit_and_current_hash(service: GitService, projects_dir: Path) 
 
 
 async def test_commit_nothing_to_commit(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-noop"
+    pid = "aaaaaaaaa003"
     await _seed_file(projects_dir, pid, "state.json", "{}")
     await service.init(pid)
     # No new changes
@@ -51,7 +51,7 @@ async def test_commit_nothing_to_commit(service: GitService, projects_dir: Path)
 
 
 async def test_rollback(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-rollback"
+    pid = "aaaaaaaaa004"
     await _seed_file(projects_dir, pid, "state.json", "{}")
     await service.init(pid)
     first_hash = await service.current_hash(pid)
@@ -65,14 +65,14 @@ async def test_rollback(service: GitService, projects_dir: Path) -> None:
 
 
 async def test_rollback_bad_hash(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-badhash"
+    pid = "aaaaaaaaa005"
     await _seed_file(projects_dir, pid, "state.json", "{}")
     await service.init(pid)
     assert await service.rollback(pid, "deadbeef") is False
 
 
 async def test_log_empty_for_uninitialized(service: GitService, projects_dir: Path) -> None:
-    pid = "proj-empty"
+    pid = "aaaaaaaaa006"
     (projects_dir / pid).mkdir(parents=True, exist_ok=True)
     log = await service.log(pid)
     assert log == []
@@ -85,8 +85,8 @@ async def test_methods_noop_when_git_unavailable(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(gs, "_git_available", False)
     svc = gs.GitService()
 
-    assert await svc.init("any-id") is None
-    assert await svc.commit("any-id", "msg") is None
-    assert await svc.log("any-id") == []
-    assert await svc.rollback("any-id", "abc") is False
-    assert await svc.current_hash("any-id") is None
+    assert await svc.init("aaaaaaaaa007") is None
+    assert await svc.commit("aaaaaaaaa007", "msg") is None
+    assert await svc.log("aaaaaaaaa007") == []
+    assert await svc.rollback("aaaaaaaaa007", "abc") is False
+    assert await svc.current_hash("aaaaaaaaa007") is None

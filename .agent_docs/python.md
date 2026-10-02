@@ -138,3 +138,38 @@ project-name/
 | Testing | pytest, pytest-asyncio, respx |
 | Logging | rich |
 | Tracing | opentelemetry-api, opentelemetry-sdk |
+
+## Path containment (SPEC-0001a, 2026-10-02)
+
+Every identifier a client supplies goes through `src/tgi/services/paths.py` before it can
+compose a disk path. Two kinds of guard, not interchangeable: `safe_basename` keeps a name
+inside a directory by discarding everything before the last separator, while the `validated_*`
+functions refuse a value outright. A name is sanitised because the user is entitled to one; an
+identifier is refused because a wrong one means nothing.
+
+Things learned the hard way while closing CWE-22 here, each one a test that looked right and
+was not:
+
+- **`%2F` proves nothing.** Starlette decodes it before routing, and a segment holding a `/`
+  cannot match a `{param}`, so the router answers 404 without any handler running. The test is
+  green against code with no validation at all. Use `%2E%2E`, which decodes to `..` and does
+  reach the handler. `%5C` crosses as a single segment and is the one to use for a Windows-style
+  traversal.
+- **A partial decoy proves nothing either.** If `projects/..` holds no readable state, the
+  handler fails on its own and answers 404. The decoy has to be something the vulnerable code
+  would successfully serve: copy a real `state.json`.
+- **Assert the effect before the refusal.** Wrapping a call in `pytest.raises` short-circuits on
+  a guard that does not raise, and the fact that matters is the decoy being overwritten. Read it
+  back through a different channel than the one attacked: the filesystem for a write, `git
+  rev-parse` for a subprocess.
+- **Two attacks can cancel each other out.** `validate-map` creates a commit and `rollback`
+  undoes it, so chaining them leaves HEAD where it started and both effect assertions pass while
+  both attacks succeeded. Measure between the calls.
+- **A test can be unable to pass.** `/stream` is an endless SSE response and `ASGITransport`
+  buffers the whole body, so driving it with `AsyncClient` times out even on correct code.
+  Drive it in raw ASGI and resolve on the first `http.response.start`.
+- **Never log the raw value.** `request.url.path` is the decoded path: logging it copies the
+  payload into the traces. Log the route template and a shape.
+- **Mutate to check a test has teeth.** Three audit rounds each found a guard that could be
+  removed with nothing going red. Revert one guard at a time and confirm the specific test fails
+  on its effect assertion.

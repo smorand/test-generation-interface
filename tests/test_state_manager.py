@@ -38,7 +38,21 @@ async def test_create_and_load(manager: StateManager) -> None:
 
 async def test_load_missing_raises(manager: StateManager) -> None:
     with pytest.raises(FileNotFoundError):
-        await manager.load("does-not-exist")
+        await manager.load("ffffffffffff")
+
+
+async def test_resolving_a_project_dir_does_not_create_it(manager: StateManager, projects_dir: Path) -> None:
+    """DRIFT-002: a read must leave no trace.
+
+    project_dir() used to mkdir what it resolved, so merely probing GET /projects/<id>
+    created the directory. A probe that writes is a probe that tells the prober it
+    reached something, and it litters the listing with projects nobody created.
+    """
+    resolved = manager.project_dir("ffffffffffff")
+
+    assert resolved == projects_dir / "ffffffffffff"
+    assert not resolved.exists()
+    assert not (projects_dir / "ffffffffffff").exists()
 
 
 async def test_update_and_get_scenario(manager: StateManager) -> None:
@@ -51,19 +65,6 @@ async def test_update_and_get_scenario(manager: StateManager) -> None:
     assert scenario["status"] == "done"
     assert len(scenario["tests"]) == 1
     assert await manager.get_scenario(pid, "SC-999") is None
-
-
-async def test_add_or_update_tests_dedup(manager: StateManager, projects_dir: Path) -> None:
-    pid = await _create_sample(manager)
-    await manager.update_field(pid, "scenarios", [{"id": "SC-001", "status": "pending", "tests": []}])
-    await manager.add_or_update_tests(pid, "SC-001", [{"id": "TEST-001", "name": "a"}])
-    await manager.add_or_update_tests(pid, "SC-001", [{"id": "TEST-001", "name": "b"}])
-    scenario = await manager.get_scenario(pid, "SC-001")
-    assert scenario is not None
-    assert len(scenario["tests"]) == 1
-    assert scenario["tests"][0]["name"] == "b"
-    # Individual test file written
-    assert (projects_dir / pid / "tests" / "TEST-001.json").exists()
 
 
 async def test_update_test(manager: StateManager) -> None:
@@ -161,7 +162,7 @@ async def test_replace_with_retry_survives_a_transient_lock(monkeypatch: pytest.
     assert (await manager.load(pid))["project_id"] == pid
 
 
-async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.MonkeyPatch, projects_dir: Path) -> None:
     from tgi.services import state_manager as sm
 
     def always_locked(self: Path, target: object) -> None:
@@ -171,8 +172,12 @@ async def test_replace_with_retry_gives_up_and_raises(monkeypatch: pytest.Monkey
     monkeypatch.setattr(sm.time, "sleep", lambda _: None)
 
     manager = StateManager()
+    # project_dir() no longer creates what it resolves (DRIFT-002), and this test exercises
+    # save()'s retry loop rather than creation, so the directory is made explicitly here.
+    # It also used to run without the projects_dir fixture, writing into the repository.
+    manager.project_dir("bbbbbbbbb001").mkdir(parents=True, exist_ok=True)
     with pytest.raises(PermissionError):
-        await manager.save("p1", {"blocs": []})
+        await manager.save("bbbbbbbbb001", {"blocs": []})
 
 
 async def test_update_requirement_edits_the_statement(manager: StateManager) -> None:

@@ -6,73 +6,12 @@ import asyncio
 import io
 import re
 import zipfile
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-from opentelemetry import trace
-
-from tgi.config import Settings
-
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
+    import pytest
+    from httpx import AsyncClient
     from starlette.types import Receive, Scope, Send
-
-
-@pytest.fixture(autouse=True)
-def _reset_tracer() -> None:
-    """Reset global tracer provider between tests."""
-    trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
-    trace._TRACER_PROVIDER_SET_ONCE._done = False  # type: ignore[attr-defined]
-
-
-@pytest.fixture
-def app_settings(tmp_path: Path) -> Settings:
-    return Settings(
-        app_name="test_tgi",
-        projects_dir=str(tmp_path / "projects"),
-        logs=str(tmp_path / "logs"),
-        llm_api_key="test-key",
-    )
-
-
-@pytest.fixture
-async def client(app_settings: Settings, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
-    # Point the singletons at the temp projects dir
-    from tgi.config import settings as global_settings
-    from tgi.services import llm as llm_module
-    from tgi.services.state_manager import state_manager
-
-    monkeypatch.setattr(global_settings, "projects_dir", app_settings.projects_dir)
-
-    async def _fake_check(self: object, model_id: str, required_tokens: int) -> tuple[bool, int]:
-        return True, 0
-
-    async def _fake_chat(self: object, **kwargs: object) -> str:
-        return "reponse simulee du QA agent"
-
-    async def _fake_chat_json(self: object, **kwargs: object) -> object:
-        # An upload starts a distillation in the background. Without this, the functional
-        # suite called the real endpoint, and the answer landed on top of the state a test
-        # had just prepared.
-        return {"context": "contexte simule", "scenarios": [], "discards": []}
-
-    monkeypatch.setattr(llm_module.LLMClient, "check_context_window", _fake_check)
-    monkeypatch.setattr(llm_module.LLMClient, "chat", _fake_chat)
-    monkeypatch.setattr(llm_module.LLMClient, "chat_json", _fake_chat_json)
-
-    # Sanity: state manager sees the patched dir
-    assert state_manager
-
-    from tgi.tgi import create_app
-
-    application = create_app(app_settings=app_settings)
-    transport = ASGITransport(app=application)
-    async with application.router.lifespan_context(application):
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            yield c
 
 
 async def _upload_sample(client: AsyncClient) -> str:
