@@ -135,11 +135,14 @@ class StateManager:
     # Project
     # ------------------------------------------------------------------
 
-    async def create_project(self, source_filename: str, content: bytes) -> dict[str, Any]:
+    async def create_project(
+        self, source_filename: str, content: bytes, source_hash: str | None = None
+    ) -> dict[str, Any]:
         """Create a self-contained project: project.json plus its source, nothing else.
 
         The id is a 12 hex opaque token, never derived from the file name, so two
-        specifications of the same name never collide (DEC-010).
+        specifications of the same name never collide (DEC-010). ``source_hash``, when
+        given, is stored so a later byte-identical upload can be matched (FR-NEW-009).
         """
         project_id = secrets.token_hex(6)
         directory = self.project_dir(project_id)
@@ -156,6 +159,8 @@ class StateManager:
                 "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "next_version": 1,
             }
+            if source_hash is not None:
+                project["source_hash"] = source_hash
             await _write_json_atomic(self.project_json_path(project_id), project)
         except OSError:
             # No half project left behind: ENOSPC and any other write failure alike.
@@ -163,6 +168,38 @@ class StateManager:
             raise
         logger.info("Created project %s", project_id)
         return project
+
+    async def find_by_source_hash(self, source_hash: str) -> dict[str, Any] | None:
+        """The existing project whose stored digest matches, or None (FR-NEW-008).
+
+        A project with no ``source_hash`` key is never a match (FR-NEW-015): absence is
+        not matched against an empty string or any digest. A corrupted ``project.json``
+        is skipped, not fatal (FR-NEW-016), reusing the same read used everywhere else.
+        Ties among pre-existing duplicates resolve to the earliest ``created_at``, then
+        the lexicographically smallest ``id`` (FR-NEW-017).
+        """
+        base = Path(settings.projects_dir)
+        if not base.exists():
+            return None
+
+        matches: list[dict[str, Any]] = []
+        for entry in base.iterdir():
+            if entry.is_symlink() or not entry.is_dir() or not is_project_id(entry.name):
+                continue
+            project_json = entry / PROJECT_FILENAME
+            if not project_json.is_file():
+                continue
+            try:
+                project = await _read_json(project_json)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if project.get("source_hash") == source_hash:
+                matches.append(project)
+
+        if not matches:
+            return None
+        matches.sort(key=lambda p: (p.get("created_at", ""), p["id"]))
+        return matches[0]
 
     async def load_project(self, project_id: str) -> dict[str, Any]:
         path = self.project_json_path(project_id)

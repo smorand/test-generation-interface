@@ -2,66 +2,16 @@
 {% block title %}Travail — Générateur de tests{% endblock %}
 {% block content %}
 <div class="bx--row">
-  <div class="bx--col-lg-5 bx--col-md-8 bx--col-sm-4">
-
-    <section class="bx--tile tgi-tile" x-data="{ uploading: false, error: '', filename: '', dragging: false }">
-      <h2 class="bx--type-productive-heading-03 tgi-heading">Nouveau projet</h2>
-      <form
-        x-on:submit.prevent="
-          uploading = true; error = '';
-          const fd = new FormData($el);
-          fetch('/api/v1/projects', { method: 'POST', body: fd })
-            .then(r => r.json().then(d => ({ ok: r.ok, d })))
-            .then(({ ok, d }) => { if (ok) window.location = '/?project=' + d.id; else { error = d.detail || 'Erreur'; uploading = false; } })
-            .catch(e => { error = e.message; uploading = false; })
-        "
-      >
-        <div class="bx--form-item">
-          <label class="bx--label" for="file-upload">Document (Word, PDF, texte, Markdown)</label>
-          <label
-            for="file-upload"
-            class="tgi-dropzone"
-            :class="{ 'tgi-dropzone--active': dragging }"
-            x-on:dragover.prevent="dragging = true"
-            x-on:dragleave.prevent="dragging = false"
-            x-on:drop.prevent="
-              dragging = false;
-              const dropped = $event.dataTransfer.files;
-              if (dropped.length) { $refs.fileInput.files = dropped; filename = dropped[0].name; }
-            "
-          >
-            <span class="tgi-dropzone__icon" aria-hidden="true">&#8679;</span>
-            <span class="tgi-dropzone__text" x-show="!filename">
-              Glissez-déposez un fichier ici, ou <strong>cliquez pour parcourir</strong>
-            </span>
-            <span class="tgi-dropzone__text" x-show="filename" x-text="filename"></span>
-            <span class="tgi-dropzone__hint">Word, PDF, texte ou Markdown, 50 Mo maximum</span>
-          </label>
-          <input
-            id="file-upload"
-            x-ref="fileInput"
-            class="tgi-visually-hidden"
-            type="file"
-            name="file"
-            accept=".docx,.pdf,.txt,.md"
-            required
-            x-on:change="filename = $event.target.files.length ? $event.target.files[0].name : ''"
-          />
-        </div>
-        <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
-          <div class="bx--inline-notification__details">
-            <p class="bx--inline-notification__text" x-text="error"></p>
-          </div>
-        </div>
-        <button type="submit" class="bx--btn bx--btn--primary tgi-btn-block" :disabled="uploading">
-          <span x-show="!uploading">Déposer et analyser</span>
-          <span x-show="uploading">Dépôt en cours…</span>
-        </button>
-      </form>
-    </section>
+  <div class="bx--col-lg-5 bx--col-md-8 bx--col-sm-4" x-data="{ showCreateModal: false, uploading: false, error: '', filename: '', dragging: false }">
 
     <section class="bx--tile tgi-tile">
-      <h2 class="bx--type-productive-heading-03 tgi-heading">Projets</h2>
+      <div class="tgi-list-header">
+        <button id="create-project-btn" type="button" class="bx--btn bx--btn--primary" x-on:click="showCreateModal = true">
+          <span aria-hidden="true">+</span> Créer un projet
+        </button>
+        <h2 class="bx--type-productive-heading-03 tgi-heading">Charger un projet</h2>
+      </div>
+      <p class="tgi-hint">cliquer sur un projet pour le charger</p>
       {% if not projects %}
       <p class="bx--type-body-long-01">Aucun projet</p>
       {% else %}
@@ -84,9 +34,98 @@
       {% endif %}
     </section>
 
+    <div
+      id="create-project-modal"
+      class="bx--modal"
+      :class="{ 'is-visible': showCreateModal }"
+      x-on:click.self="if (!uploading) showCreateModal = false"
+    >
+      <div class="bx--modal-container">
+        <div class="bx--modal-header">
+          <h2 class="bx--modal-header__heading tgi-heading">Nouveau projet</h2>
+          <button
+            type="button"
+            class="bx--modal-close"
+            aria-label="Fermer"
+            x-on:click="if (!uploading) showCreateModal = false"
+          >
+            <span class="bx--modal-close__icon" aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="bx--modal-content">
+          <form
+            x-on:submit.prevent="
+              uploading = true; error = '';
+              const fd = new FormData($el);
+              fetch('/api/v1/projects', { method: 'POST', body: fd })
+                .then(r => r.json().then(d => ({ ok: r.ok, d })))
+                .then(({ ok, d }) => {
+                  if (ok) {
+                    showCreateModal = false;
+                    window.location = d.duplicate ? '/?project=' + d.id + '&duplicate=true' : '/?project=' + d.id;
+                  } else {
+                    error = tgiErrorText(d.detail); uploading = false;
+                  }
+                })
+                .catch(e => { error = e.message; uploading = false; })
+            "
+          >
+            <div class="bx--form-item">
+              <label class="bx--label" for="file-upload">Document (Word, PDF, texte, Markdown)</label>
+              <label
+                for="file-upload"
+                class="tgi-dropzone"
+                :class="{ 'tgi-dropzone--active': dragging }"
+                x-on:dragover.prevent="dragging = true"
+                x-on:dragleave.prevent="dragging = false"
+                x-on:drop.prevent="
+                  dragging = false;
+                  const dropped = $event.dataTransfer.files;
+                  if (dropped.length) { $refs.fileInput.files = dropped; filename = dropped[0].name; }
+                "
+              >
+                <span class="tgi-dropzone__icon" aria-hidden="true">&#8679;</span>
+                <span class="tgi-dropzone__text" x-show="!filename">
+                  Glissez-déposez un fichier ici, ou <strong>cliquez pour parcourir</strong>
+                </span>
+                <span class="tgi-dropzone__text" x-show="filename" x-text="filename"></span>
+                <span class="tgi-dropzone__hint">Word, PDF, texte ou Markdown, 50 Mo maximum</span>
+              </label>
+              <input
+                id="file-upload"
+                x-ref="fileInput"
+                class="tgi-visually-hidden"
+                type="file"
+                name="file"
+                accept=".docx,.pdf,.txt,.md"
+                required
+                x-on:change="filename = $event.target.files.length ? $event.target.files[0].name : ''"
+              />
+            </div>
+            <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
+              <div class="bx--inline-notification__details">
+                <p class="bx--inline-notification__text" x-text="error"></p>
+              </div>
+            </div>
+            <button type="submit" class="bx--btn bx--btn--primary tgi-btn-block" :disabled="uploading">
+              <span x-show="!uploading">Déposer et analyser</span>
+              <span x-show="uploading">Dépôt en cours…</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <div class="bx--col-lg-11 bx--col-md-8 bx--col-sm-4">
+    {% if project and duplicate %}
+    <div class="bx--inline-notification bx--inline-notification--warning" role="alert">
+      <div class="bx--inline-notification__details">
+        <p class="bx--inline-notification__text">Fichier déjà existant dans un projet</p>
+      </div>
+    </div>
+    {% endif %}
     {% if project %}
     <section class="bx--tile tgi-tile">
       <h2 class="bx--type-productive-heading-03 tgi-heading">{{ project.name }}</h2>
@@ -116,7 +155,7 @@
           fetch('/api/v1/projects/{{ project.id }}/runs', {
             method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
           }).then(r => r.json().then(d => ({ ok: r.ok, d })))
-            .then(({ ok, d }) => { if (ok) window.location = '/?project={{ project.id }}&version=' + d.version; else { error = d.detail || 'Erreur'; running = false; } })
+            .then(({ ok, d }) => { if (ok) window.location = '/?project={{ project.id }}&version=' + d.version; else { error = tgiErrorText(d.detail); running = false; } })
             .catch(e => { error = e.message; running = false; })
         ">
         <div class="bx--form-item">

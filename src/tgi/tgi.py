@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import tempfile
@@ -32,6 +33,7 @@ from tgi.build import build_id
 from tgi.config import Settings, settings
 from tgi.coverage_report import coverage_summary
 from tgi.events import subscribe
+from tgi.locks import lock_for
 from tgi.logging_config import setup_logging
 from tgi.progress import sse_progress_payload
 from tgi.qc_export import build_qc_workbook
@@ -263,7 +265,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
     # -----------------------------------------------------------------------
 
     @application.get("/", response_class=HTMLResponse)
-    async def index(request: Request, project: str = "", version: str = "") -> HTMLResponse:
+    async def index(request: Request, project: str = "", version: str = "", duplicate: str = "") -> HTMLResponse:
         selected_project: dict[str, Any] | None = None
         selected_version_state: dict[str, Any] | None = None
         pid = ""
@@ -302,6 +304,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "version_state": selected_version_state,
                 "prompts": prompts,
                 "tests_per_scenario": app_settings.tests_per_scenario,
+                "duplicate": duplicate == "true",
             },
         )
 
@@ -330,14 +333,29 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         ext = Path(filename).suffix.lower()
         await _ensure_document_readable(content, ext)
         safe_name = safe_basename(filename)
+        source_hash = hashlib.sha256(content).hexdigest()
 
-        try:
-            with trace_span("project.create", {}):
-                project = await manager.create_project(safe_name, content)
-        except OSError as exc:
-            if exc.errno == errno.ENOSPC:
-                raise HTTPException(status_code=507, detail="disque plein, projet non créé") from exc
-            raise
+        async with lock_for(f"source-hash:{source_hash}"):
+            existing = await manager.find_by_source_hash(source_hash)
+            if existing is not None:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "id": existing["id"],
+                        "name": existing["name"],
+                        "source_filename": existing["source_filename"],
+                        "created_at": existing["created_at"],
+                        "duplicate": True,
+                    },
+                )
+
+            try:
+                with trace_span("project.create", {}):
+                    project = await manager.create_project(safe_name, content, source_hash=source_hash)
+            except OSError as exc:
+                if exc.errno == errno.ENOSPC:
+                    raise HTTPException(status_code=507, detail="disque plein, projet non créé") from exc
+                raise
 
         return JSONResponse(
             status_code=201,
@@ -346,6 +364,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
                 "name": project["name"],
                 "source_filename": project["source_filename"],
                 "created_at": project["created_at"],
+                "duplicate": False,
             },
         )
 

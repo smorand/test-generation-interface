@@ -26,6 +26,24 @@
   margin-bottom: 1rem;
 }
 
+.tgi-list-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tgi-list-header .tgi-heading {
+  margin-bottom: 0;
+}
+
+.tgi-hint {
+  font-style: italic;
+  color: #525252;
+  font-size: 12px;
+  margin-bottom: 1rem;
+}
+
 .tgi-btn-block {
   width: 100%;
   margin-top: 1.5rem;

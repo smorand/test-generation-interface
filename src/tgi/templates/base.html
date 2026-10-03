@@ -9,6 +9,18 @@
   <link rel="stylesheet" href="/static/style.css?v={{ build }}" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script>
+    // FastAPI returns a string `detail` for our own HTTPExceptions, but an array of
+    // {msg, loc, ...} objects for a 422 raised by request validation before our route
+    // code runs (e.g. a malformed field). Rendering that array directly used to show
+    // the literal text "[object Object]".
+    function tgiErrorText(detail) {
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) return detail.map(e => (e && e.msg) || JSON.stringify(e)).join('; ');
+      if (detail) return JSON.stringify(detail);
+      return 'Erreur';
+    }
+  </script>
 </head>
 <body class="bx--body tgi-body">
 

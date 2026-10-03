@@ -292,7 +292,7 @@ same 404 body.
 | `GET` | `/` | The work: project list, deposit, prompts, launch, progress, versions |
 | `GET` | `/parametres` | The model table |
 | `GET` | `/api/v1/projects` | List projects |
-| `POST` | `/api/v1/projects` | Deposit a document, create a project (no generation) |
+| `POST` | `/api/v1/projects` | Deposit a document, create a project (no generation). Deduplicated by content: a byte-identical re-upload returns `200` with `duplicate: true` and the existing project instead of creating a second one; a genuinely new upload returns `201` with `duplicate: false` |
 | `GET` | `/api/v1/projects/{id}/source` | Download the deposited document |
 | `POST` | `/api/v1/projects/{id}/source` | Add a source to a project that has none |
 | `GET` | `/api/v1/projects/{id}/prompts` | The three default prompts |

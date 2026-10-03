@@ -48,6 +48,11 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/services/state_manager.py` : disk layout. `projects/<project_id>/project.json` +
   `source/<filename>`; `projects/<project_id>/v<n>/state.json` + `prompts/*.md` +
   `testplan.xlsx` + `qc.xlsx` once produced. No database, no git repo per project.
+  `project.json` carries an optional `source_hash` (SHA-256 of the raw uploaded bytes),
+  set on creation only (SPEC-0002), never backfilled onto a project created before it
+  shipped; `find_by_source_hash` is the dedup lookup `POST /api/v1/projects` runs under a
+  per-hash `lock_for` before creating, so a byte-identical re-upload loads the existing
+  project instead of creating a duplicate.
 - `src/tgi/services/paths.py` : **every identifier received from a client passes through here**
   before it can compose a disk path. `safe_basename` confines an uploaded filename;
   `validated_project_id` / `validated_version` / `validated_test_id` refuse anything else and

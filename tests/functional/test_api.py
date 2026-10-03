@@ -141,14 +141,16 @@ async def test_a_unicode_filename_is_kept_as_is(client: AsyncClient, projects_di
     assert unicodedata.normalize("NFC", unicode_name) in stored
 
 
-async def test_two_concurrent_deposits_get_distinct_ids(client: AsyncClient, projects_dir: Path) -> None:
-    async def _deposit() -> str:
-        r = await client.post("/api/v1/projects", files={"file": ("x.md", spec_markdown(), "text/markdown")})
+async def test_two_concurrent_deposits_of_distinct_content_get_distinct_ids(
+    client: AsyncClient, projects_dir: Path
+) -> None:
+    async def _deposit(content: bytes) -> str:
+        r = await client.post("/api/v1/projects", files={"file": ("x.md", content, "text/markdown")})
         return str(r.json()["id"])
 
     async with asyncio.TaskGroup() as tg:
-        t1 = tg.create_task(_deposit())
-        t2 = tg.create_task(_deposit())
+        t1 = tg.create_task(_deposit(spec_markdown()))
+        t2 = tg.create_task(_deposit(spec_markdown() + b"\n# distinct\n"))
 
     assert t1.result() != t2.result()
     assert len(list(projects_dir.iterdir())) == 2

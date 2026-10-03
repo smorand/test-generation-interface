@@ -224,6 +224,17 @@ def _is_unsupported_param_error(exc: Exception) -> bool:
     return _THINKING_SWITCH_PARAM in str(exc).lower()
 
 
+def _is_temperature_unsupported_error(exc: Exception) -> bool:
+    """True when the endpoint refuses any temperature but its own fixed value.
+
+    Some reasoning models behind a litellm gateway only accept temperature=1
+    ("litellm.UnsupportedParamsError: ... does not support temperature=0.2").
+    The parameter name in the error is the reliable signal, same reasoning as
+    _is_unsupported_param_error.
+    """
+    return "temperature" in str(exc).lower()
+
+
 def _tls_verification() -> bool | str:
     """What httpx should verify against: a bundle, the system store, or nothing."""
     if not settings.llm_verify_ssl:
@@ -255,7 +266,7 @@ def _build_http_client() -> httpx.AsyncClient | None:
 class LLMClient:
     """Async OpenAI compatible client with JSON extraction and retry logic."""
 
-    __slots__ = ("_base_url", "_client", "_model_cache", "_thinking_switch_supported")
+    __slots__ = ("_base_url", "_client", "_model_cache", "_temperature_supported", "_thinking_switch_supported")
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None) -> None:
         # Read at call time rather than frozen at import: the table of models supplies a
@@ -273,6 +284,9 @@ class LLMClient:
         self._model_cache: dict[str, Any] | None = None
         # Assume the switch is accepted until an endpoint proves otherwise.
         self._thinking_switch_supported = True
+        # Assume a chosen temperature is accepted until an endpoint proves otherwise
+        # (some reasoning models only accept their own fixed value).
+        self._temperature_supported = True
 
     async def chat(
         self,
@@ -307,42 +321,56 @@ class LLMClient:
         on a tight output budget.
         """
         budget = max_tokens if max_tokens is not None else settings.max_output_tokens
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        def _kwargs(*, send_switch: bool, send_temperature: bool) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": budget}
+            if send_temperature:
+                kwargs["temperature"] = temperature
+            if send_switch:
+                kwargs["extra_body"] = dict(_NO_THINKING_BODY)
+            return kwargs
+
         send_switch = settings.disable_thinking and self._thinking_switch_supported
-        extra_body = dict(_NO_THINKING_BODY) if send_switch else None
+        send_temperature = self._temperature_supported
         with trace_span(
             "llm.chat",
             {"model": model, "max_tokens": budget, "thinking_disabled": bool(send_switch)},
         ):
-            try:
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
-                    temperature=temperature,
-                    max_tokens=budget,
-                    extra_body=extra_body,
-                )
-            except Exception as exc:
-                if not send_switch or not _is_unsupported_param_error(exc):
+            # Up to two corrective retries, each disabling one parameter an endpoint
+            # just proved it refuses, and remembered so later calls skip straight
+            # past it instead of failing every time (same reasoning as the switch).
+            for _ in range(3):
+                try:
+                    response = await self._client.chat.completions.create(
+                        **_kwargs(send_switch=send_switch, send_temperature=send_temperature)
+                    )
+                    break
+                except Exception as exc:
+                    if send_switch and _is_unsupported_param_error(exc):
+                        logger.warning(
+                            "Endpoint rejects the thinking switch, disabling it for this process: %s",
+                            str(exc)[:200],
+                        )
+                        self._thinking_switch_supported = False
+                        send_switch = False
+                        continue
+                    if send_temperature and _is_temperature_unsupported_error(exc):
+                        logger.warning(
+                            "Endpoint rejects temperature=%s for model %s, disabling it for this process: %s",
+                            temperature,
+                            model,
+                            str(exc)[:200],
+                        )
+                        self._temperature_supported = False
+                        send_temperature = False
+                        continue
                     raise
-                # This endpoint validates parameters and refuses the switch. Stop
-                # sending it instead of failing every call from now on.
-                logger.warning(
-                    "Endpoint rejects the thinking switch, disabling it for this process: %s",
-                    str(exc)[:200],
-                )
-                self._thinking_switch_supported = False
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
-                    temperature=temperature,
-                    max_tokens=budget,
-                )
+            else:
+                raise RuntimeError(f"unreachable: exhausted parameter retries for model {model}")
         choice = response.choices[0]
         msg = choice.message
         content = msg.content or ""

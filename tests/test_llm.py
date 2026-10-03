@@ -430,6 +430,35 @@ async def test_thinking_switch_dropped_once_endpoint_rejects_it(monkeypatch: pyt
     assert len(seen) == 3
 
 
+async def test_temperature_dropped_once_endpoint_rejects_it() -> None:
+    """A gateway that only accepts temperature=1 must not break every call."""
+    seen: list[Any] = []
+
+    class _RejectingCompletions(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            seen.append(kwargs.get("temperature"))
+            if kwargs.get("temperature") is not None:
+                raise RuntimeError(
+                    "400 - litellm.UnsupportedParamsError: global.anthropic.claude-sonnet-5 "
+                    "does not support temperature=0.2. Only temperature=1 is supported."
+                )
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _RejectingCompletions([_FakeResponse(_FakeMessage("ok"))])
+    client._client = fake  # type: ignore[assignment]
+
+    # First call retries without forcing a temperature and succeeds
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "ok"
+    assert seen == [0.2, None]
+
+    # temperature is not sent again for this client instance
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[-1] is None
+    assert len(seen) == 3
+
+
 async def test_other_api_errors_still_propagate(monkeypatch: pytest.MonkeyPatch) -> None:
     from tgi.services import llm as llm_mod
 
