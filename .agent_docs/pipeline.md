@@ -120,6 +120,13 @@ The whole document goes in one call when it fits: **78 000 tokens against a 128 
 window**. Whether it needs splitting is computed from the reading model's window
 (`reading_budget_chars`), never fixed by design.
 
+A call for one part can still fail by running out of *output* budget: the model's honest
+answer (scenarios, labels) for that much input text needs more than
+`settings.max_output_tokens`. On that failure (SPEC-0006, BUG-001), `DistillerAgent` splits
+the failing part in half with the same `split_for_reading` and retries each half
+independently, recursing until a half cannot be divided further — at which point that half's
+failure is recorded exactly as any other part failure, with no infinite retry.
+
 The model returns context, scenarios and discards. Then arithmetic closes what it missed:
 
 | Step | Use cases with a scenario | Requirements carried |

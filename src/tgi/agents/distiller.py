@@ -162,37 +162,13 @@ class DistillerAgent:
         last_error: RuntimeError | None = None
         for number, part in enumerate(parts, start=1):
             position = f" (partie {number}/{len(parts)})" if len(parts) > 1 else ""
-            try:
-                result = await self._client.chat_json(
-                    model=model,
-                    system_prompt=self._system_prompt,
-                    user_content=(
-                        f"Spécification fonctionnelle{position}:\n\n---\n{part}\n---\n\n"
-                        "Extrais le contexte, les scénarios et les écarts. JSON uniquement."
-                    ),
-                    temperature=0.2,
-                    expected_type=dict,
-                    shape_hint=_SHAPE_HINT,
-                    purpose="distiller",
-                )
-            except RuntimeError as exc:
-                logger.warning("Distillation of part %d/%d produced nothing: %s", number, len(parts), exc)
-                last_error = exc
-                continue
-            any_success = True
-
-            context = str(result.get("context") or "").strip()
-            if context:
-                contexts.append(context)
-            for raw in result.get("scenarios") or []:
-                cleaned = _clean_scenario(raw, text, grammar, len(scenarios) + 1)
-                if cleaned:
-                    scenarios.append(cleaned)
-            for raw in result.get("discards") or []:
-                cleaned_discard = _clean_discard(raw, text)
-                if cleaned_discard:
-                    discards.append(cleaned_discard)
-            labels.update(_clean_labels(result.get("labels"), text))
+            error = await self._distil_part(
+                model, part, budget, position, text, grammar, contexts, scenarios, discards, labels
+            )
+            if error is None:
+                any_success = True
+            else:
+                last_error = error
 
         if parts and not any_success and last_error is not None:
             # Every part failed: this is a distillation failure, not an empty document, and
@@ -203,6 +179,72 @@ class DistillerAgent:
             "Distilled %d scenario(s) and %d discard(s) from %d part(s)", len(scenarios), len(discards), len(parts)
         )
         return {"context": "\n\n".join(contexts), "scenarios": scenarios, "discards": discards, "labels": labels}
+
+    async def _distil_part(
+        self,
+        model: str,
+        part: str,
+        budget_chars: int,
+        position: str,
+        text: str,
+        grammar: Grammar,
+        contexts: list[str],
+        scenarios: list[dict[str, Any]],
+        discards: list[dict[str, Any]],
+        labels: dict[str, str],
+    ) -> RuntimeError | None:
+        """Distil one part into the accumulators in place; return the error on failure, else None.
+
+        On a truncated answer, split the part in half and retry each half independently
+        (BR-001), recursing until split_for_reading stops changing anything — the point at
+        which a part truly cannot be divided further (BR-002).
+        """
+        try:
+            result = await self._client.chat_json(
+                model=model,
+                system_prompt=self._system_prompt,
+                user_content=(
+                    f"Spécification fonctionnelle{position}:\n\n---\n{part}\n---\n\n"
+                    "Extrais le contexte, les scénarios et les écarts. JSON uniquement."
+                ),
+                temperature=0.2,
+                expected_type=dict,
+                shape_hint=_SHAPE_HINT,
+                purpose="distiller",
+            )
+        except RuntimeError as exc:
+            # Filter empty pieces: split_for_reading on text that itself starts with "\n#"
+            # can hand back ["", part] unchanged, which must count as unsplittable too.
+            halves = [half for half in split_for_reading(part, max(budget_chars // 2, 1)) if half]
+            if len(halves) <= 1:
+                logger.warning("Distillation of part%s produced nothing: %s", position, exc)
+                return exc
+            logger.info("Part%s truncated, retrying as %d smaller part(s)", position, len(halves))
+            any_success = False
+            last_error: RuntimeError | None = None
+            for half in halves:
+                error = await self._distil_part(
+                    model, half, budget_chars // 2, position, text, grammar, contexts, scenarios, discards, labels
+                )
+                if error is None:
+                    any_success = True
+                else:
+                    last_error = error
+            return None if any_success else last_error
+
+        context = str(result.get("context") or "").strip()
+        if context:
+            contexts.append(context)
+        for raw in result.get("scenarios") or []:
+            cleaned = _clean_scenario(raw, text, grammar, len(scenarios) + 1)
+            if cleaned:
+                scenarios.append(cleaned)
+        for raw in result.get("discards") or []:
+            cleaned_discard = _clean_discard(raw, text)
+            if cleaned_discard:
+                discards.append(cleaned_discard)
+        labels.update(_clean_labels(result.get("labels"), text))
+        return None
 
 
 def unstated_discards(requirements: list[Requirement]) -> list[dict[str, Any]]:

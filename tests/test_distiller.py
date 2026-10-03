@@ -202,6 +202,87 @@ async def test_a_failing_part_does_not_lose_the_others(monkeypatch: pytest.Monke
     assert result["scenarios"]
 
 
+_FILLER = "Le système applique cette règle décrite ici. "
+# Two sections, each well under the 2000 char half budget used below but together
+# over it, so the whole document is read as one part that must be split in half.
+_DENSE_DOC = "\n### F01.EU01.CU01 Section A\n" + _FILLER * 25 + "\n### F01.EU01.CU02 Section B\n" + _FILLER * 25
+
+
+async def test_a_truncated_part_is_retried_as_two_halves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BT-010 / BR-001: a part whose output is truncated is split and retried."""
+    from tgi.config import settings
+    from tgi.services.llm import LLMJSONError
+
+    # Floors reading_budget_chars to 4000, so _DENSE_DOC (~2300 chars) is one top-level
+    # part, and its half budget (2000) is small enough to actually split it in two.
+    monkeypatch.setattr(settings, "max_context_tokens", 1)
+    monkeypatch.setattr(settings, "max_output_tokens", 1)
+    client = _FakeClient(
+        [
+            LLMJSONError("model m returned no valid JSON after 5 attempts (last error: cut off)"),
+            {"context": "moitie A", "scenarios": [{"title": "a"}], "discards": []},
+            {"context": "moitie B", "scenarios": [{"title": "b"}], "discards": []},
+        ]
+    )
+    result = await DistillerAgent(client, "prompt").distil("m", _DENSE_DOC)  # type: ignore[arg-type]
+
+    assert len(client.calls) == 3
+    assert {s["title"] for s in result["scenarios"]} == {"a", "b"}
+
+
+async def test_every_half_failing_still_raises_the_last_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edge case: every part/sub-part ultimately fails, the version must say so (BR-003)."""
+    import pytest
+
+    from tgi.config import settings
+    from tgi.services.llm import LLMJSONError
+
+    monkeypatch.setattr(settings, "max_context_tokens", 1)
+    monkeypatch.setattr(settings, "max_output_tokens", 1)
+    client = _FakeClient(
+        [
+            LLMJSONError("whole failed"),
+            LLMJSONError("half A failed"),
+            LLMJSONError("half B failed"),
+        ]
+    )
+
+    with pytest.raises(LLMJSONError):
+        await DistillerAgent(client, "prompt").distil("m", _DENSE_DOC)  # type: ignore[arg-type]
+    assert len(client.calls) == 3
+
+
+async def test_an_unsplittable_oversized_section_stops_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BT-011 / BR-002: a one-section document cannot be split, so it fails once, not forever."""
+    import pytest
+
+    from tgi.config import settings
+    from tgi.services.llm import LLMJSONError
+
+    monkeypatch.setattr(settings, "max_context_tokens", 1)
+    monkeypatch.setattr(settings, "max_output_tokens", 1)
+    doc = _FILLER * 200  # no "\n#" section marker anywhere: split_for_reading can never divide it
+    client = _FakeClient([LLMJSONError("model m returned no valid JSON after 5 attempts (last error: cut off)")])
+
+    with pytest.raises(LLMJSONError):
+        await DistillerAgent(client, "prompt").distil("m", doc)  # type: ignore[arg-type]
+    assert len(client.calls) == 1
+
+
+async def test_a_document_that_fits_makes_exactly_one_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BT-020 / BR-004: unaffected common case, one part, one call."""
+    from tgi.config import settings
+
+    monkeypatch.setattr(settings, "max_context_tokens", 128_000)
+    monkeypatch.setattr(settings, "max_output_tokens", 16_000)
+    client = _FakeClient([{"context": "c", "scenarios": [{"title": "ok"}], "discards": []}])
+
+    result = await DistillerAgent(client, "prompt").distil("m", DOC)  # type: ignore[arg-type]
+
+    assert len(client.calls) == 1
+    assert result["scenarios"][0]["title"] == "ok"
+
+
 # ---------------------------------------------------------------------------
 # Deterministic completion
 # ---------------------------------------------------------------------------

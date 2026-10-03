@@ -296,8 +296,67 @@ async def test_an_illegible_distillation_fails_the_whole_version(
 
     final = await state.load_version(pid, version)
     assert final["status"] == "failed"
-    assert final["error"] == "réponse du modèle illisible"
+    # BR-003: the real exception text, not the fixed placeholder string
+    assert final["error"] == "no JSON after 3 attempts"
     assert final["scenarios"] == []
+
+
+_FILLER = "Le système applique cette règle décrite ici. "
+# Two sections, each under the 2000 char half budget used below but together over it,
+# so the whole document is read as one part whose honest answer needs a split.
+_DENSE_DOC = "\n### F01.EU01.CU01 Section A\n" + _FILLER * 25 + "\n### F01.EU01.CU02 Section B\n" + _FILLER * 25
+
+
+class _TruncatingDistillerLLM(_ScriptedLLM):
+    """distiller truncates on the whole part, succeeds on either half (keyed on length)."""
+
+    def __init__(self, truncate_over: int) -> None:
+        super().__init__()
+        self._truncate_over = truncate_over
+
+    async def chat_json(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> Any:
+        from tgi.services.llm import LLMJSONError
+
+        purpose = str(kwargs.get("purpose", ""))
+        self.calls.append(purpose)
+        if purpose != "distiller":
+            answer = self.answers.get(purpose, {})
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        if len(user_content) > self._truncate_over:
+            raise LLMJSONError("model m returned no valid JSON after 5 attempts (last error: cut off)")
+        return {
+            "context": "partie",
+            "scenarios": [
+                {
+                    "title": "Voir son portefeuille",
+                    "container": "F01.EU01.CU01",
+                    "requirement_refs": [],
+                    "kind": "nominal",
+                }
+            ],
+            "discards": [],
+        }
+
+
+async def test_a_dense_document_that_would_truncate_today_reaches_done(
+    orchestrator: Orchestrator, state: StateManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BT-001 end to end reproduction of BUG-001: today this fails every time."""
+    from tgi.config import settings
+
+    # Floors reading_budget_chars to 4000: _DENSE_DOC (~2300 chars) is one top-level
+    # part, and its half budget (2000) is small enough to split it into its two sections.
+    monkeypatch.setattr(settings, "max_context_tokens", 1)
+    monkeypatch.setattr(settings, "max_output_tokens", 1)
+    llm = _TruncatingDistillerLLM(truncate_over=2000)
+    pid, version = await _new_run(state, _DENSE_DOC)
+
+    await orchestrator.run(pid, version, "m", llm, _DENSE_DOC)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    assert final["status"] == "done"
 
 
 async def test_a_full_disk_at_workbook_write_fails_the_version(

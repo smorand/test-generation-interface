@@ -135,8 +135,8 @@ class Orchestrator:
         except (LLMConnectionError, LLMAuthError) as exc:
             await self._fail(project_id, version, str(exc))
             return
-        except LLMJSONError:
-            await self._fail(project_id, version, "r\u00e9ponse du mod\u00e8le illisible")
+        except LLMJSONError as exc:
+            await self._fail(project_id, version, str(exc))
             return
 
         scenarios = attach_requirements(distilled["scenarios"], requirements, container_titles)
