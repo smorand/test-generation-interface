@@ -32,6 +32,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.port == 8080
     assert s.max_context_tokens == 128000
     assert s.projects_dir == "./projects"
+    assert s.scenario_similarity_threshold == 0.9
 
 
 def test_settings_env_prefix(monkeypatch) -> None:
@@ -40,6 +41,13 @@ def test_settings_env_prefix(monkeypatch) -> None:
     s = Settings()
     assert s.model_generator == "custom-model"
     assert s.max_parallel_scenarios == 9
+
+
+def test_scenario_similarity_threshold_read_from_env(monkeypatch) -> None:
+    """FR-NEW-087: TGI_SCENARIO_SIMILARITY_THRESHOLD overrides the 0.9 default."""
+    monkeypatch.setenv("TGI_SCENARIO_SIMILARITY_THRESHOLD", "0.75")
+    s = Settings()
+    assert s.scenario_similarity_threshold == 0.75
 
 
 def test_log_dir_default() -> None:

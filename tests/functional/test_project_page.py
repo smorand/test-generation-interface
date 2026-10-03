@@ -102,6 +102,19 @@ async def test_accordion_collapsed_by_default(client: AsyncClient, project_with_
     assert 'id="distiller-prompt"' in body
 
 
+async def test_accordion_has_similarity_judge_entry(client: AsyncClient, project_with_source: str) -> None:
+    """FR-NEW-088: similarity_judge is a 4th collapsible entry alongside the 3 existing ones."""
+    response = await client.get(f"/?project={project_with_source}")
+
+    assert response.status_code == 200
+    body = response.text
+    assert 'id="distiller-prompt"' in body
+    assert 'id="scenario-prompt"' in body
+    assert 'id="coverage-prompt"' in body
+    assert 'id="similarity-judge-prompt"' in body
+    assert 'name="similarity_judge"' in body
+
+
 async def test_no_version_selected_fully_static(client: AsyncClient, project_with_source: str) -> None:
     """E2E-NEW-011: no version param -> no EventSource, no x-text anywhere."""
     response = await client.get(f"/?project={project_with_source}")

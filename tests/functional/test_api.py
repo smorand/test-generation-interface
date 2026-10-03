@@ -759,7 +759,7 @@ async def test_qc_export_on_a_version_with_no_test_is_409(
     assert response.json() == {"detail": "aucun test à exporter"}
 
 
-async def test_an_unknown_requirement_prefix_produces_inconnu_and_a_warning(
+async def test_a_test_with_no_requirement_ref_produces_inconnu_and_a_warning(
     client: AsyncClient, models_file: dict[str, Any], project_with_source: str, projects_dir: Path
 ) -> None:
     started = await client.post(f"/api/v1/projects/{project_with_source}/runs", json={"model": models_file["name"]})
@@ -774,12 +774,12 @@ async def test_an_unknown_requirement_prefix_produces_inconnu_and_a_warning(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     for scenario in state["scenarios"]:
         for test in scenario.get("tests") or []:
-            test["requirement_refs"] = ["ZZ99.ZZ01"]
+            test["requirement_refs"] = []
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
     response = await client.post(f"/api/v1/projects/{project_with_source}/versions/{version}/qc")
     assert response.status_code == 201
-    assert any("pr\u00e9fixe d'exigence inconnu" in w for w in response.json()["warnings"])
+    assert any("sans r\u00e9f\u00e9rence" in w for w in response.json()["warnings"])
 
 
 # ---------------------------------------------------------------------------

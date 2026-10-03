@@ -25,6 +25,7 @@ import aiofiles
 from tgi.config import settings
 from tgi.locks import lock_for
 from tgi.services.paths import is_project_id, validated_project_id, validated_version
+from tgi.services.prompts import PROMPT_KEYS, default_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +383,9 @@ class StateManager:
             path = directory / relative
             async with aiofiles.open(path, encoding="utf-8") as f:
                 prompts[key] = await f.read()
+        for key in PROMPT_KEYS:
+            if key not in prompts:
+                prompts[key] = default_prompt(key)
         return prompts
 
     async def list_versions(self, project_id: str) -> list[dict[str, Any]]:

@@ -10,26 +10,27 @@ locally once a real QC import file is available (section 15).
 from __future__ import annotations
 
 import io
-import re
 from typing import Any
 
 from openpyxl import Workbook
 
+from tgi.classification import classification_of
+from tgi.grammar import Grammar, infer_grammar
+from tgi.workbook import onglet_type_name
+
 _SHEET_NAME = "QC"
-_HEADER = ["Subject", "Test Name", "Description", "Step Name", "Step Description", "Expected Results"]
+_HEADER = [
+    "Subject",
+    "Test Name",
+    "Description",
+    "Classification",
+    "Step Name",
+    "Step Description",
+    "Expected Results",
+]
 
 # Excel rejects a cell beyond this many characters.
 _MAX_CELL_CHARS = 32767
-
-_LAST_SEGMENT_PREFIX_RE = re.compile(r"^([A-Za-z]+)")
-
-_TYPE_BY_PREFIX = {
-    "RM": "RM",
-    "EM": "EMOE",
-    "M": "IHM",
-    "N": "IHM",
-    "T": "IHM",
-}
 
 
 def _truncate(value: str) -> str:
@@ -39,12 +40,15 @@ def _truncate(value: str) -> str:
     return value[: _MAX_CELL_CHARS - 1] + "…"
 
 
-def _requirement_type(ref: str) -> tuple[str, str]:
-    """TYPE for the first reference of a test, and the prefix it was read from (FR-NEW-036)."""
-    last_segment = ref.rsplit(".", maxsplit=1)[-1]
-    match = _LAST_SEGMENT_PREFIX_RE.match(last_segment)
-    prefix = match.group(1).upper() if match else ""
-    return _TYPE_BY_PREFIX.get(prefix, "INCONNU"), prefix
+def _grammar_of(state: dict[str, Any]) -> Grammar:
+    """Rebuild the numbering grammar from the requirements a run already extracted.
+
+    Same reconstruction as `workbook._grammar_of`, duplicated rather than imported because
+    that helper is private to its module.
+    """
+    refs = [str(r.get("ref")) for r in state.get("requirements") or [] if isinstance(r, dict) and r.get("ref")]
+    text = " ".join(ref for ref in refs for _ in range(5))
+    return infer_grammar(text)
 
 
 def build_qc_workbook(state: dict[str, Any]) -> tuple[bytes, list[str]]:
@@ -59,27 +63,22 @@ def build_qc_workbook(state: dict[str, Any]) -> tuple[bytes, list[str]]:
     sheet.title = _SHEET_NAME
     sheet.append(_HEADER)
 
-    titles = {str(k): str(v) for k, v in (state.get("containers") or {}).items()}
+    grammar = _grammar_of(state)
 
     for scenario in state.get("scenarios") or []:
         if not isinstance(scenario, dict):
             continue
-        container = str(scenario.get("container") or "")
-        use_case_title = titles.get(container, "")
-        scenario_id = str(scenario.get("id", ""))
-
         for test in scenario.get("tests") or []:
             if not isinstance(test, dict):
                 continue
             refs = [str(ref) for ref in test.get("requirement_refs") or []]
             if refs:
-                type_, prefix = _requirement_type(refs[0])
-                if type_ == "INCONNU":
-                    warnings.append(f"préfixe d'exigence inconnu: {prefix} ({refs[0]})")
+                subject = onglet_type_name(refs[0], grammar)
             else:
-                type_ = "INCONNU"
+                subject = "INCONNU"
+                warnings.append(f"test sans référence d'exigence: {test.get('id', '')}")
 
-            subject = f"{container or scenario_id}-{type_}_{use_case_title}_{scenario_id}"
+            classification = classification_of(refs, grammar)
             joined_refs = ", ".join(refs)
             test_name = f"TRA_{test.get('id', '')}_{test.get('name', '')}__{joined_refs}"
             description = str(test.get("description") or "")
@@ -93,6 +92,7 @@ def build_qc_workbook(state: dict[str, Any]) -> tuple[bytes, list[str]]:
                         _truncate(subject),
                         _truncate(test_name),
                         _truncate(description),
+                        classification,
                         f"Étape {step.get('order', '')}",
                         _truncate(str(step.get("description", ""))),
                         _truncate(str(step.get("expected_result", ""))),

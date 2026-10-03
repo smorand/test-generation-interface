@@ -175,6 +175,46 @@ def similar_rule_pairs(
     return pairs[:limit]
 
 
+def _scenario_signature(scenario: dict[str, Any]) -> str:
+    """Comparable text of a scenario: its title plus its tests' names."""
+    tests = scenario.get("tests")
+    names = (
+        " ".join(str(test.get("name", "")) for test in tests if isinstance(test, dict))
+        if isinstance(tests, list)
+        else ""
+    )
+    title = scenario.get("title") or scenario.get("name")
+    return normalize_label(f"{title} {names}")
+
+
+def similar_scenario_pairs(
+    scenarios: list[dict[str, Any]],
+    threshold: float = 0.9,
+    limit: int = 20,
+) -> list[tuple[str, str, float]]:
+    """Scenario pairs worded almost the same, project wide, for the similarity judge to arbitrate.
+
+    Pure text prefilter (DEC-028): O(n squared) over every scenario of the project, regardless
+    of functionality, so it bounds the number of pairs the LLM judge is asked about rather than
+    the other way round. No LLM call here.
+
+    Returns at most limit pairs, worst first.
+    """
+    labelled = [
+        (str(scenario["id"]), _scenario_signature(scenario))
+        for scenario in scenarios
+        if isinstance(scenario, dict) and scenario.get("id") and (scenario.get("title") or scenario.get("name"))
+    ]
+    pairs: list[tuple[str, str, float]] = []
+    for index, (left_id, left_text) in enumerate(labelled):
+        for right_id, right_text in labelled[index + 1 :]:
+            ratio = SequenceMatcher(None, left_text, right_text).ratio()
+            if ratio >= threshold:
+                pairs.append((left_id, right_id, round(ratio, 3)))
+    pairs.sort(key=lambda pair: pair[2], reverse=True)
+    return pairs[:limit]
+
+
 def saturated_rule_ids(tests: list[dict[str, Any]], max_per_rule: int) -> set[str]:
     """Rules that already carry max_per_rule tests.
 

@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 _SHAPE_HINT = (
     'Return a JSON object shaped exactly like: {"context": "...", "scenarios": [{"title": "...", '
     '"container": "F03.EU05.CU01", "actors": ["..."], "preconditions": "...", '
-    '"requirement_refs": ["F03.EU05.CU01.RM01"], "kind": "nominal"}], "discards": []}'
+    '"requirement_refs": ["F03.EU05.CU01.RM01"], "kind": "nominal"}], "discards": [], '
+    '"labels": {"E04": "..."}}'
 )
 
 # Rough conversion measured on the reference document: 279 617 characters for about 77 700 tokens
@@ -101,6 +102,7 @@ def _clean_scenario(raw: Any, text: str, grammar: Grammar, index: int) -> dict[s
         "preconditions": str(raw.get("preconditions") or "").strip(),
         "requirement_refs": refs,
         "kind": kind if kind in _VALID_KINDS else "nominal",
+        "source_section": grammar.container_of(refs[0]) if refs else "",
         "status": "pending",
         "tests": [],
     }
@@ -119,6 +121,14 @@ def _clean_discard(raw: Any, text: str) -> dict[str, Any] | None:
         "refs": keep_known_references(raw.get("refs"), text),
         "decision": "proposed",
     }
+
+
+def _clean_labels(raw: Any, text: str) -> dict[str, str]:
+    """Keep only the glossary entries whose reference the document really contains."""
+    if not isinstance(raw, dict):
+        return {}
+    kept = keep_known_references(list(raw.keys()), text)
+    return {ref: str(raw[original]).strip() for ref in kept for original in raw if original.strip().upper() == ref}
 
 
 class DistillerAgent:
@@ -146,6 +156,7 @@ class DistillerAgent:
         contexts: list[str] = []
         scenarios: list[dict[str, Any]] = []
         discards: list[dict[str, Any]] = []
+        labels: dict[str, str] = {}
 
         any_success = False
         last_error: RuntimeError | None = None
@@ -181,6 +192,7 @@ class DistillerAgent:
                 cleaned_discard = _clean_discard(raw, text)
                 if cleaned_discard:
                     discards.append(cleaned_discard)
+            labels.update(_clean_labels(result.get("labels"), text))
 
         if parts and not any_success and last_error is not None:
             # Every part failed: this is a distillation failure, not an empty document, and
@@ -190,7 +202,7 @@ class DistillerAgent:
         logger.info(
             "Distilled %d scenario(s) and %d discard(s) from %d part(s)", len(scenarios), len(discards), len(parts)
         )
-        return {"context": "\n\n".join(contexts), "scenarios": scenarios, "discards": discards}
+        return {"context": "\n\n".join(contexts), "scenarios": scenarios, "discards": discards, "labels": labels}
 
 
 def unstated_discards(requirements: list[Requirement]) -> list[dict[str, Any]]:

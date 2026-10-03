@@ -169,6 +169,19 @@ async def test_read_prompts_dereferences_the_relative_paths(manager: StateManage
     assert prompts["distiller"] == "contenu d"
 
 
+async def test_read_prompts_falls_back_to_default_for_a_key_missing_on_disk(
+    manager: StateManager,
+) -> None:
+    from tgi.services.prompts import default_prompt
+
+    project = await manager.create_project("spec.md", b"x")
+    await manager.create_version(project["id"], "m", {"distiller": "d", "scenario_generator": "s", "coverage": "c"})
+
+    prompts = await manager.read_prompts(project["id"], "v1")
+
+    assert prompts["similarity_judge"] == default_prompt("similarity_judge")
+
+
 async def test_list_versions_sorts_numerically_not_lexicographically(manager: StateManager) -> None:
     project = await manager.create_project("spec.md", b"x")
     for _ in range(10):

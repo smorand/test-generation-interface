@@ -14,6 +14,17 @@ Ce qu'on attend:
   que ça marche ». Ce que l'utilisateur fait, ce que le système répond.
 - Les préconditions du scénario ne sont pas des étapes: n'écris pas « se connecter » ni « accéder à
   l'écran » comme première étape si c'est déjà une précondition.
+- Chaque étape nomme l'acteur réel du scénario (celui indiqué dans « acteurs », par exemple « Le RRC
+  sélectionne... ») plutôt que le mot générique « l'utilisateur ». Si aucun acteur n'est précisé,
+  « l'utilisateur » reste le terme par défaut.
+- Chaque étape qui cite un écran, un objet, un message ou un email utilise le libellé en clair donné
+  dans « Libellés connus » plutôt que la référence codée, quand ce libellé existe ; sinon la référence
+  codée reste utilisée telle quelle.
+- Une étape qui change l'écran affiché nomme explicitement l'écran de départ et l'écran d'arrivée, en
+  clair (ex: « Depuis l'écran de composition du portefeuille, l'utilisateur accède à l'écran de détail
+  du contact »). Une étape qui liste une donnée issue d'une exigence détaille cette donnée dans le
+  texte de l'étape plutôt que de citer seulement la référence de l'exigence. Ne force jamais une étape
+  de navigation artificielle sur un scénario qui ne change pas d'écran.
 - Quand plusieurs exigences ne diffèrent que par une donnée (messages d'erreur d'un écran, libellés,
   valeurs d'une table), écris UN test et mets les cas dans `data_rows`, une ligne par cas. N'écris
   pas un test par message.

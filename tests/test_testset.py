@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from tgi.testset import merge_tests, normalize_label, rule_ids_of, saturated_rule_ids, similar_rule_pairs
+from tgi.testset import (
+    merge_tests,
+    normalize_label,
+    rule_ids_of,
+    saturated_rule_ids,
+    similar_rule_pairs,
+    similar_scenario_pairs,
+)
 
 
 def _test(test_id: str, rule: str, name: str, description: str = "d") -> dict[str, Any]:
@@ -192,3 +199,49 @@ def test_similar_rule_pairs_sorted_and_capped() -> None:
 def test_similar_rule_pairs_skips_incomplete_entries() -> None:
     rules = [_rule("R1", "texte"), {"id": "R2"}, {"description": "sans id"}, "pas un dict"]
     assert similar_rule_pairs(rules, threshold=0.1) == []  # type: ignore[arg-type]
+
+
+def _scenario(scenario_id: str, title: str) -> dict[str, Any]:
+    return {"id": scenario_id, "title": title, "tests": []}
+
+
+def test_similar_scenario_pairs_threshold_changes_the_count() -> None:
+    """E2E-NEW-021: real SequenceMatcher ratios, not nominal ones.
+
+    Between S1/S2: 0.965, S1/S3: 0.9306, S2/S3: 0.8392. Threshold 0.9 keeps the
+    two pairs at or above it, threshold 0.99 keeps none.
+    """
+    scenarios = [
+        _scenario("S1", "verifier ajout gac banque participante identifiant valide pour operation"),
+        _scenario("S2", "verifier ajout gac banque paroticipanteidtntifiant valide pour peration"),
+        _scenario("S3", "virifier ajort gac banque partscipaqte identxfiant valide pour operation"),
+    ]
+
+    pairs = similar_scenario_pairs(scenarios, threshold=0.9)
+    assert len(pairs) == 2
+    assert {(a, b) for a, b, _ in pairs} == {("S1", "S2"), ("S1", "S3")}
+    assert pairs == sorted(pairs, key=lambda pair: pair[2], reverse=True)
+
+    assert similar_scenario_pairs(scenarios, threshold=0.99) == []
+
+
+def test_similar_scenario_pairs_compares_title_and_test_names() -> None:
+    scenarios = [
+        {"id": "S1", "title": "ajout du gac", "tests": [{"name": "cas nominal"}]},
+        {"id": "S2", "title": "ajout du gac", "tests": [{"name": "cas nominal"}]},
+    ]
+    pairs = similar_scenario_pairs(scenarios, threshold=0.9)
+    assert len(pairs) == 1
+    assert pairs[0] == ("S1", "S2", 1.0)
+
+
+def test_similar_scenario_pairs_sorted_and_capped() -> None:
+    scenarios = [_scenario(f"S{i}", f"le systeme traite la demande numero {i}") for i in range(12)]
+    pairs = similar_scenario_pairs(scenarios, threshold=0.5, limit=5)
+    assert len(pairs) == 5
+    assert pairs == sorted(pairs, key=lambda pair: pair[2], reverse=True)
+
+
+def test_similar_scenario_pairs_skips_incomplete_entries() -> None:
+    scenarios = [_scenario("S1", "texte"), {"id": "S2"}, {"title": "sans id"}, "pas un dict"]
+    assert similar_scenario_pairs(scenarios, threshold=0.1) == []  # type: ignore[arg-type]

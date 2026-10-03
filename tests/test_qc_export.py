@@ -9,12 +9,32 @@ from openpyxl import load_workbook
 
 from tgi.qc_export import build_qc_workbook
 
-_HEADER = ["Subject", "Test Name", "Description", "Step Name", "Step Description", "Expected Results"]
+_HEADER = [
+    "Subject",
+    "Test Name",
+    "Description",
+    "Classification",
+    "Step Name",
+    "Step Description",
+    "Expected Results",
+]
 
 
 def _state(refs: list[str], **extra: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "containers": {"F03.EU05.CU01": "Déléguer temporairement"},
+        "requirements": [
+            {"ref": "F03.EU05.CU01.RM01"},
+            {"ref": "F03.EU05.CU01.RM02"},
+            {"ref": "F03.EU05.CU01.EM01"},
+            {"ref": "F03.EU05.CU01.EM02"},
+            {"ref": "E04.M01"},
+            {"ref": "E04.M02"},
+            {"ref": "E04.N01"},
+            {"ref": "E04.N02"},
+            {"ref": "E04.T01"},
+            {"ref": "E04.T02"},
+        ],
         "scenarios": [
             {
                 "id": "SC-001",
@@ -50,38 +70,62 @@ def test_one_row_per_step_with_subject_and_test_name_repeated() -> None:
     assert sheet.max_row == 3  # header + 2 steps
     assert sheet["A2"].value == sheet["A3"].value
     assert sheet["B2"].value == sheet["B3"].value
-    assert sheet["D2"].value == "Étape 1"
-    assert sheet["D3"].value == "Étape 2"
+    assert sheet["E2"].value == "Étape 1"
+    assert sheet["E3"].value == "Étape 2"
 
 
 def test_subject_and_test_name_composition() -> None:
     content, _ = build_qc_workbook(_state(["F03.EU05.CU01.RM01"]))
     sheet = load_workbook(BytesIO(content))["QC"]
-    assert sheet["A2"].value == "F03.EU05.CU01-RM_Déléguer temporairement_SC-001"
+    assert sheet["A2"].value == "F03.EU05.CU01-RM"
     assert sheet["B2"].value == "TRA_TEST-0001_cas nominal__F03.EU05.CU01.RM01"
     assert "Exigences validées : F03.EU05.CU01.RM01" in sheet["C2"].value
 
 
-def test_type_derivation_table() -> None:
+def test_test_name_composition_is_locked_regression() -> None:
+    """FR-NEW-068 / DEC-021: Test Name stays TRA_<id>_<name>__<refs>, not rewritten for the email example."""
+    content, _ = build_qc_workbook(_state(["F03.EU05.CU01.RM01", "F03.EU05.CU01.RM02"]))
+    sheet = load_workbook(BytesIO(content))["QC"]
+    assert sheet["B2"].value == "TRA_TEST-0001_cas nominal__F03.EU05.CU01.RM01, F03.EU05.CU01.RM02"
+
+
+def test_description_composition_is_locked_regression() -> None:
+    """FR-NEW-069: Description stays <description>\\nExigences validées : <refs>."""
+    content, _ = build_qc_workbook(_state(["F03.EU05.CU01.RM01"]))
+    sheet = load_workbook(BytesIO(content))["QC"]
+    assert sheet["C2"].value == "Une description.\nExigences validées : F03.EU05.CU01.RM01"
+
+
+def test_subject_follows_onglet_type_name_for_ihm_and_rm() -> None:
+    content, _ = build_qc_workbook(_state(["E04.M01"]))
+    sheet = load_workbook(BytesIO(content))["QC"]
+    assert sheet["A2"].value == "IHM_E04"
+
+    content, _ = build_qc_workbook(_state(["F03.EU05.CU01.RM01"]))
+    sheet = load_workbook(BytesIO(content))["QC"]
+    assert sheet["A2"].value == "F03.EU05.CU01-RM"
+
+
+def test_classification_column_present_after_description() -> None:
+    content, _ = build_qc_workbook(_state(["E04.M01"]))
+    sheet = load_workbook(BytesIO(content))["QC"]
+    headers = [cell.value for cell in sheet[1]]
+    assert headers.index("Classification") == headers.index("Description") + 1
+    assert sheet["D2"].value == "MOA"
+
+
+def test_subject_derivation_uses_onglet_type_name_for_each_kind() -> None:
     cases = {
-        "F03.EU05.CU01.RM01": "RM",
-        "F03.EU05.CU01.EM01": "EMOE",
-        "F03.EU05.CU01.M01": "IHM",
-        "F03.EU05.CU01.N01": "IHM",
-        "F03.EU05.CU01.T01": "IHM",
+        "F03.EU05.CU01.RM01": "F03.EU05.CU01-RM",
+        "F03.EU05.CU01.EM01": "F03.EU05.CU01-EMOE",
+        "E04.M01": "IHM_E04",
+        "E04.N01": "IHM_E04",
     }
-    for ref, expected_type in cases.items():
+    for ref, expected_subject in cases.items():
         content, warnings = build_qc_workbook(_state([ref]))
         sheet = load_workbook(BytesIO(content))["QC"]
-        assert f"-{expected_type}_" in sheet["A2"].value, ref
+        assert sheet["A2"].value == expected_subject, ref
         assert warnings == []
-
-
-def test_unknown_prefix_yields_inconnu_and_a_warning() -> None:
-    content, warnings = build_qc_workbook(_state(["F03.EU05.CU01.ZZ01"]))
-    sheet = load_workbook(BytesIO(content))["QC"]
-    assert "-INCONNU_" in sheet["A2"].value
-    assert any("préfixe d'exigence inconnu: ZZ" in w for w in warnings)
 
 
 def test_a_cell_beyond_32767_characters_is_truncated() -> None:
@@ -95,7 +139,8 @@ def test_a_cell_beyond_32767_characters_is_truncated() -> None:
     assert sheet["C2"].value.endswith("…")
 
 
-def test_a_test_with_no_requirement_ref_still_produces_a_row_typed_inconnu() -> None:
-    content, _ = build_qc_workbook(_state([]))
+def test_a_test_with_no_requirement_ref_still_produces_a_row_subject_inconnu() -> None:
+    content, warnings = build_qc_workbook(_state([]))
     sheet = load_workbook(BytesIO(content))["QC"]
-    assert "-INCONNU_" in sheet["A2"].value
+    assert sheet["A2"].value == "INCONNU"
+    assert any("sans référence" in w or "inconnu" in w.lower() for w in warnings)

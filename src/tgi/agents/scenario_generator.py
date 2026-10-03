@@ -44,6 +44,13 @@ def _requirement_block(requirements: list[Requirement]) -> str:
     return "\n".join(lines)
 
 
+def _labels_block(labels: dict[str, str] | None) -> str:
+    """Libellés en clair pour les références citées (FR-NEW-065), vide si rien n'est connu."""
+    if not labels:
+        return "(aucun libellé connu, utiliser les références codées)"
+    return "\n".join(f"- {ref}: {label}" for ref, label in labels.items())
+
+
 def _clean_steps(raw: Any) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     for item in raw if isinstance(raw, list) else []:
@@ -94,6 +101,7 @@ class ScenarioGeneratorAgent:
         target: int,
         document: str,
         start_index: int,
+        labels: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the tests of this scenario, references verified against the document."""
         known = {requirement.ref for requirement in requirements}
@@ -106,6 +114,7 @@ class ScenarioGeneratorAgent:
             f"- préconditions: {scenario.get('preconditions') or 'aucune'}\n"
             f"- nature: {scenario.get('kind', 'nominal')}\n\n"
             f"Exigences que ce scénario doit valider:\n{_requirement_block(requirements)}\n\n"
+            f"Libellés connus:\n{_labels_block(labels)}\n\n"
             f"Extrait de la spécification:\n---\n{evidence or '(aucun extrait localisé)'}\n---\n\n"
             "Écris les cas de test de ce scénario. JSON uniquement."
         )

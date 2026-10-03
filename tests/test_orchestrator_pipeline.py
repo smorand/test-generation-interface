@@ -458,3 +458,154 @@ async def test_an_accepted_discard_leaves_the_coverage_denominator(state: StateM
     assert after["requirements"] == before["requirements"] - 1
     assert "E01.N0X" not in after["missing"]
     assert after["discarded"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3bis: similarity judge, merge marking (US-0012)
+# ---------------------------------------------------------------------------
+
+DOC_WITH_SIMILAR_SCENARIOS = DOC
+
+
+class _SimilarityScriptedLLM(_ScriptedLLM):
+    """Like _ScriptedLLM but distils two near-identical scenarios directly."""
+
+    def __init__(self, judge_verdicts: list[Any] | None = None, **answers: Any) -> None:
+        super().__init__(**answers)
+        self.answers["distiller"] = {
+            "context": "Portefeuille.",
+            "scenarios": [
+                {
+                    "title": "Voir son portefeuille",
+                    "container": "F01.EU01.CU01",
+                    "requirement_refs": ["F01.EU01.CU01.RM01"],
+                    "kind": "nominal",
+                },
+                {
+                    "title": "Voir son portefeuille",
+                    "container": "F01.EU01.CU02",
+                    "requirement_refs": ["F01.EU01.CU02.RM01"],
+                    "kind": "nominal",
+                },
+            ],
+            "discards": [],
+        }
+        self.answers["scenario_generator"] = {
+            "tests": [
+                {
+                    "name": "cas nominal",
+                    "description": "d",
+                    "requirement_refs": ["F01.EU01.CU01.RM01", "F01.EU01.CU02.RM01"],
+                    "steps": [{"order": 1, "description": "agir", "expected_result": "vu"}],
+                }
+            ]
+        }
+        self._judge_verdicts = list(judge_verdicts or [])
+        self._judge_call = 0
+
+    async def chat_json(self, model: str, system_prompt: str, user_content: str, **kwargs: Any) -> Any:
+        purpose = str(kwargs.get("purpose", ""))
+        if purpose == "similarity_judge":
+            self.calls.append(purpose)
+            answer = self._judge_verdicts[self._judge_call]
+            self._judge_call += 1
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        return await super().chat_json(model, system_prompt, user_content, **kwargs)
+
+
+async def test_doublon_verdict_marks_the_higher_id_scenario(orchestrator: Orchestrator, state: StateManager) -> None:
+    """E2E-NEW-017: two scenarios from different functionalities judged doublon."""
+    pid, version = await _new_run(state, DOC_WITH_SIMILAR_SCENARIOS)
+    llm = _SimilarityScriptedLLM(judge_verdicts=[{"verdict": "doublon", "justification": "même parcours, même écran"}])
+    await orchestrator.run(pid, version, "m", llm, DOC_WITH_SIMILAR_SCENARIOS)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    by_id = {str(s["id"]): s for s in final["scenarios"]}
+    ids = sorted(by_id, key=lambda i: int("".join(ch for ch in i if ch.isdigit()) or 0))
+    lower_id, higher_id = ids[0], ids[1]
+
+    higher = by_id[higher_id]
+    assert higher["merged_into"] == lower_id
+    assert "même parcours" in higher["merge_reason"]
+    assert by_id[lower_id].get("merged_into") is None
+    assert higher in final["scenarios"]
+
+
+async def test_a_fusionner_verdict_marks_like_doublon(orchestrator: Orchestrator, state: StateManager) -> None:
+    """E2E-NEW-018: "a_fusionner" behaves exactly like "doublon"."""
+    pid, version = await _new_run(state, DOC_WITH_SIMILAR_SCENARIOS)
+    llm = _SimilarityScriptedLLM(judge_verdicts=[{"verdict": "a_fusionner", "justification": "a_fusionner: redondant"}])
+    await orchestrator.run(pid, version, "m", llm, DOC_WITH_SIMILAR_SCENARIOS)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    by_id = {str(s["id"]): s for s in final["scenarios"]}
+    ids = sorted(by_id, key=lambda i: int("".join(ch for ch in i if ch.isdigit()) or 0))
+    higher = by_id[ids[1]]
+    assert higher["merged_into"] == ids[0]
+    assert "a_fusionner" in higher["merge_reason"]
+
+
+async def test_variante_legitime_never_merges_and_coverage_is_unchanged(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
+    """E2E-NEW-019: variante_legitime leaves both scenarios unmarked, coverage untouched."""
+    pid, version = await _new_run(state, DOC_WITH_SIMILAR_SCENARIOS)
+    llm = _SimilarityScriptedLLM(
+        judge_verdicts=[{"verdict": "variante_legitime", "justification": "actes différents du même acteur"}]
+    )
+    await orchestrator.run(pid, version, "m", llm, DOC_WITH_SIMILAR_SCENARIOS)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    for scenario in final["scenarios"]:
+        assert scenario.get("merged_into") is None
+
+    before = coverage_summary(final)
+    after = coverage_summary(final)
+    assert before["covered"] == after["covered"]
+    assert before["tests"] == after["tests"]
+
+
+async def test_a_judge_failure_on_one_pair_logs_and_continues(
+    orchestrator: Orchestrator, state: StateManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """EXC-003a: LLMJSONError on one pair is logged, the run still finishes."""
+    from tgi.services.llm import LLMJSONError
+
+    pid, version = await _new_run(state, DOC_WITH_SIMILAR_SCENARIOS)
+    llm = _SimilarityScriptedLLM(judge_verdicts=[LLMJSONError("illisible")])
+    with caplog.at_level("WARNING"):
+        await orchestrator.run(pid, version, "m", llm, DOC_WITH_SIMILAR_SCENARIOS)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    assert final["status"] == "done"
+    for scenario in final["scenarios"]:
+        assert scenario.get("merged_into") is None
+
+
+async def test_requirement_rows_still_lists_tests_of_a_merged_scenario(
+    orchestrator: Orchestrator, state: StateManager
+) -> None:
+    """E2E-NEW-024: a merged_into scenario stays fully visible in the traceability matrix."""
+    from tgi.coverage_report import requirement_rows
+
+    pid, version = await _new_run(state, DOC_WITH_SIMILAR_SCENARIOS)
+    llm = _SimilarityScriptedLLM(judge_verdicts=[{"verdict": "doublon", "justification": "même parcours, même écran"}])
+    await orchestrator.run(pid, version, "m", llm, DOC_WITH_SIMILAR_SCENARIOS)  # type: ignore[arg-type]
+
+    final = await state.load_version(pid, version)
+    by_id = {str(s["id"]): s for s in final["scenarios"]}
+    ids = sorted(by_id, key=lambda i: int("".join(ch for ch in i if ch.isdigit()) or 0))
+    merged = by_id[ids[1]]
+    assert merged["merged_into"] == ids[0]
+
+    merged_test_refs = {ref for test in merged.get("tests") or [] for ref in test.get("requirement_refs") or []}
+    assert merged_test_refs
+
+    rows = requirement_rows(final)
+    covering_rows = [row for row in rows if row["ref"] in merged_test_refs]
+    assert covering_rows
+    for row in covering_rows:
+        assert row["status"] == "covered"
+        assert row["tests"]

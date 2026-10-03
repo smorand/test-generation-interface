@@ -149,7 +149,8 @@
             prompts: {
               distiller: fd.get('distiller'),
               scenario_generator: fd.get('scenario_generator'),
-              coverage: fd.get('coverage')
+              coverage: fd.get('coverage'),
+              similarity_judge: fd.get('similarity_judge')
             }
           };
           fetch('/api/v1/projects/{{ project.id }}/runs', {
@@ -186,6 +187,10 @@
               <div class="bx--form-item">
                 <label class="bx--label" for="coverage-prompt">Prompt — couverture</label>
                 <textarea id="coverage-prompt" class="bx--text-area tgi-prompt" name="coverage">{{ prompts.get("coverage", "") }}</textarea>
+              </div>
+              <div class="bx--form-item">
+                <label class="bx--label" for="similarity-judge-prompt">Prompt — similarité</label>
+                <textarea id="similarity-judge-prompt" class="bx--text-area tgi-prompt" name="similarity_judge">{{ prompts.get("similarity_judge", "") }}</textarea>
               </div>
             </div>
           </li>

@@ -32,12 +32,21 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`, `config_dir`
 - `src/tgi/grammar.py` : infers the numbering the document gives itself, extracts requirements
 - `src/tgi/agents/` : `Orchestrator.run(project_id, version, model, llm, text)` drives
-  distiller / scenario_generator / coverage, each constructed with the version's own prompt
+  distiller / scenario_generator / coverage, each constructed with the version's own prompt;
+  a Phase 3bis then runs `SimilarityJudgeAgent` over the pairs `testset.similar_scenario_pairs`
+  prefiltered, marking the numerically higher scenario of a `doublon`/`a_fusionner` pair with
+  `merged_into`/`merge_reason` (never destructive, never touches `coverage_report.py`)
+- `src/tgi/classification.py` : `classification_of(refs, grammar)`, the shared deterministic
+  MOA/MOE/MOA-MOE/INCONNU classification, consumed by `workbook.py` and `qc_export.py`
 - `src/tgi/coverage_report.py` : coverage counted, and the requirement traceability matrix
-- `src/tgi/deliverable.py` : the two reading axes (scenario tree, requirement rows)
+- `src/tgi/deliverable.py` : the two reading axes (scenario tree, requirement rows); unchanged
+  by SPEC-0004, still serves the web view
 - `src/tgi/progress.py` : run progress, elapsed/remaining, and the SSE payload shape
-- `src/tgi/workbook.py` : the recette xlsx (summary, traceability, one sheet per functionality)
-- `src/tgi/qc_export.py` : the second workbook, one `QC` sheet shaped for ALM's Excel import
+- `src/tgi/workbook.py` : the recette xlsx; test sheets are one per (requirement type,
+  attachment reference) via `onglet_type_name` (`IHM_<écran>`, `<CU>-RM`, `<CU>-EMOE`), plus
+  "Jeux de données", "Analyse" and the Synthèse legend/cross-reference
+- `src/tgi/qc_export.py` : the second workbook, one `QC` sheet shaped for ALM's Excel import,
+  `Subject` aligned on `onglet_type_name`, `Classification` column via `classification_of`
 - `src/tgi/locks.py` : locks keyed by the running event loop
 - `src/tgi/build.py` : build identifier shown in the page and on the stylesheet
 - `src/tgi/{logging_config,tracing}.py` : rich console plus file logs, OpenTelemetry

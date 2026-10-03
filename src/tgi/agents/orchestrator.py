@@ -21,6 +21,7 @@ import aiofiles
 from tgi.agents.coverage import CoverageAgent, uncovered_refs
 from tgi.agents.distiller import DistillerAgent, attach_requirements, unstated_discards
 from tgi.agents.scenario_generator import ScenarioGeneratorAgent
+from tgi.agents.similarity_judge import SimilarityJudgeAgent
 from tgi.config import settings
 from tgi.coverage_report import coverage_summary, discarded_refs
 from tgi.events import publish
@@ -28,7 +29,7 @@ from tgi.grammar import Requirement, containers, extract_requirements, infer_gra
 from tgi.locks import lock_for
 from tgi.services.llm import LLMAuthError, LLMConnectionError, LLMJSONError
 from tgi.services.state_manager import WORKBOOK_FILENAME
-from tgi.testset import merge_tests, normalize_label
+from tgi.testset import merge_tests, normalize_label, similar_scenario_pairs
 from tgi.workbook import build_workbook
 
 if TYPE_CHECKING:
@@ -144,6 +145,7 @@ class Orchestrator:
         state.update(
             {
                 "context": distilled["context"],
+                "labels": distilled.get("labels") or {},
                 "scenarios": scenarios,
                 "requirements": [asdict(requirement) for requirement in requirements],
                 "containers": container_titles,
@@ -195,7 +197,46 @@ class Orchestrator:
             await self._fail(project_id, version, abort["error"])
             return
 
+        await self._run_similarity_phase(project_id, version, model, llm)
         await self._finalize(project_id, version)
+
+    async def _run_similarity_phase(self, project_id: str, version: str, model: str, llm: LLMClient) -> None:
+        """Phase 3bis: judge near-duplicate scenarios, mark the redundant one non destructively.
+
+        Never removes a scenario or a test, never calls coverage_report in write: the judge's
+        verdict never changes the arithmetic coverage count (DEC-030).
+        """
+        prompts = await self._state.read_prompts(project_id, version)
+        judge = SimilarityJudgeAgent(llm, prompts["similarity_judge"])
+        state = await self._state.load_version(project_id, version)
+        scenarios = state.get("scenarios") or []
+        pairs = similar_scenario_pairs(scenarios, settings.scenario_similarity_threshold)
+
+        def _rank(scenario_id: str) -> int:
+            digits = "".join(ch for ch in scenario_id if ch.isdigit())
+            return int(digits) if digits else 0
+
+        for scenario_a_id, scenario_b_id, _ratio in pairs:
+            scenario_a = next((s for s in scenarios if str(s.get("id")) == scenario_a_id), None)
+            scenario_b = next((s for s in scenarios if str(s.get("id")) == scenario_b_id), None)
+            if scenario_a is None or scenario_b is None:
+                continue
+            try:
+                verdict = await judge.judge(model, scenario_a, scenario_b)
+            except (LLMJSONError, LLMConnectionError) as exc:
+                logger.warning("Similarity judge failed on %s/%s: %s", scenario_a_id, scenario_b_id, exc)
+                continue
+
+            if verdict["verdict"] not in ("doublon", "a_fusionner"):
+                continue
+
+            redundant_id, kept_id = sorted((scenario_a_id, scenario_b_id), key=_rank, reverse=True)
+            await self._state.update_version_scenario(
+                project_id,
+                version,
+                redundant_id,
+                {"merged_into": kept_id, "merge_reason": verdict["justification"]},
+            )
 
     async def _process_scenario(
         self,
@@ -237,6 +278,7 @@ class Orchestrator:
                 target=target,
                 document=text,
                 start_index=_test_offset(scenario_id),
+                labels=state.get("labels") or {},
             )
         except LLMJSONError as exc:
             logger.warning("Scenario %s produced no test: %s", scenario_id, exc)

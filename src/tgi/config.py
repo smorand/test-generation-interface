@@ -149,6 +149,9 @@ class Settings(BaseSettings):
     # Rules worded almost the same are only flagged for the reviewer, never
     # merged: similarity cannot tell a restated rule from its own negation.
     rule_similarity_threshold: float = 0.9
+    # Prefilter threshold for similar_scenario_pairs: bounds how many pairs reach the
+    # similarity judge, never the judge's own decision threshold.
+    scenario_similarity_threshold: float = 0.9
 
     # Logging and tracing. Both the application log and the OTel JSONL export land
     # in TGI_LOGS. Setting otel_destination additionally ships spans over OTLP HTTP.

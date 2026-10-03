@@ -157,6 +157,33 @@ async def test_unusable_scenarios_and_discards_are_ignored() -> None:
     assert [d["reason"] for d in result["discards"]] == ["sans_valeur_test"]
 
 
+async def test_labels_are_filtered_and_scenarios_carry_their_source_section() -> None:
+    """E2E-NEW-013: labels filtered to known references, source_section computed by code."""
+    client = _FakeClient(
+        [
+            {
+                "context": "c",
+                "scenarios": [
+                    {
+                        "title": "Voir son portefeuille",
+                        "container": "F01.EU01.CU01",
+                        "requirement_refs": ["F01.EU01.CU01.RM01"],
+                        "kind": "nominal",
+                    }
+                ],
+                "discards": [],
+                "labels": {"E04": "Écran de composition du portefeuille", "ZZZ99": "Référence inventée"},
+            }
+        ]
+    )
+    doc = DOC + "\nL'écran E04 présente le portefeuille.\n"
+    result = await DistillerAgent(client, "prompt").distil("m", doc)  # type: ignore[arg-type]
+
+    assert result["labels"] == {"E04": "Écran de composition du portefeuille"}
+    assert "ZZZ99" not in result["labels"]
+    assert result["scenarios"][0]["source_section"] == "F01.EU01.CU01"
+
+
 async def test_a_failing_part_does_not_lose_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
     """A model that fails on one part must not cost the whole document."""
     from tgi.config import settings
