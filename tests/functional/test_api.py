@@ -342,6 +342,7 @@ async def test_a_run_produces_progress_then_a_downloadable_workbook(
     xlsx = await client.get(f"/api/v1/projects/{project_with_source}/versions/{version}/xlsx")
     assert xlsx.status_code == 200
     assert xlsx.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert f'filename="specification_habilitations_{version}.xlsx"' in xlsx.headers["content-disposition"]
     from io import BytesIO
 
     workbook = load_workbook(BytesIO(xlsx.content))

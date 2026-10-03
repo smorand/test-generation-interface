@@ -158,3 +158,13 @@
 .tgi-actions {
   margin-top: 1rem;
 }
+
+.tgi-xlsx-icon {
+  margin-right: 0.25rem;
+  vertical-align: middle;
+  fill: currentColor;
+}
+
+.bx--accordion {
+  margin-bottom: 1.25rem;
+}

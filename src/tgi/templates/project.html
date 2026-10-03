@@ -140,7 +140,7 @@
       </div>
       {% endif %}
 
-      <form id="run-form" x-data="{ running: false, error: '' }"
+      <form id="run-form" x-data="{ running: false, error: '', promptsOpen: false }"
         x-on:submit.prevent="
           running = true; error = '';
           const fd = new FormData($el);
@@ -166,18 +166,30 @@
             {% endfor %}
           </select>
         </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="distiller-prompt">Prompt — distillation</label>
-          <textarea id="distiller-prompt" class="bx--text-area tgi-prompt" name="distiller">{{ prompts.get("distiller", "") }}</textarea>
-        </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="scenario-prompt">Prompt — génération des scénarios</label>
-          <textarea id="scenario-prompt" class="bx--text-area tgi-prompt" name="scenario_generator">{{ prompts.get("scenario_generator", "") }}</textarea>
-        </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="coverage-prompt">Prompt — couverture</label>
-          <textarea id="coverage-prompt" class="bx--text-area tgi-prompt" name="coverage">{{ prompts.get("coverage", "") }}</textarea>
-        </div>
+        <ul class="bx--accordion">
+          <li class="bx--accordion__item" :class="{ 'bx--accordion__item--active': promptsOpen }">
+            <button type="button" class="bx--accordion__heading" x-on:click="promptsOpen = !promptsOpen" :aria-expanded="promptsOpen ? 'true' : 'false'">
+              <svg focusable="false" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" class="bx--accordion__arrow" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M11 8L6 13 5.3 12.3 9.6 8 5.3 3.7 6 3z"></path>
+              </svg>
+              <div class="bx--accordion__title">Prompts</div>
+            </button>
+            <div class="bx--accordion__content" x-show="promptsOpen">
+              <div class="bx--form-item">
+                <label class="bx--label" for="distiller-prompt">Prompt — distillation</label>
+                <textarea id="distiller-prompt" class="bx--text-area tgi-prompt" name="distiller">{{ prompts.get("distiller", "") }}</textarea>
+              </div>
+              <div class="bx--form-item">
+                <label class="bx--label" for="scenario-prompt">Prompt — génération des scénarios</label>
+                <textarea id="scenario-prompt" class="bx--text-area tgi-prompt" name="scenario_generator">{{ prompts.get("scenario_generator", "") }}</textarea>
+              </div>
+              <div class="bx--form-item">
+                <label class="bx--label" for="coverage-prompt">Prompt — couverture</label>
+                <textarea id="coverage-prompt" class="bx--text-area tgi-prompt" name="coverage">{{ prompts.get("coverage", "") }}</textarea>
+              </div>
+            </div>
+          </li>
+        </ul>
         <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
           <div class="bx--inline-notification__details">
             <p class="bx--inline-notification__text" x-text="error"></p>
@@ -189,9 +201,10 @@
       </form>
     </section>
 
-    {% if version_state %}
     <section class="bx--tile tgi-tile"
+      {% if version_state %}
       x-data="{
+        liveId: '{{ version_state.id }}',
         status: '{{ version_state.status }}',
         percent: 0,
         error: '{{ version_state.error or '' }}'
@@ -201,17 +214,9 @@
         source.addEventListener('progress', e => { percent = JSON.parse(e.data).percent; });
         source.addEventListener('done', e => { status = 'done'; source.close(); });
         source.addEventListener('error', e => { status = 'failed'; error = JSON.parse(e.data).error; source.close(); });
-      ">
-      <h3 class="bx--type-productive-heading-02 tgi-heading">{{ version_state.id }}</h3>
-      {% include "partials/progress.html" %}
-      <div class="tgi-actions">
-        <a class="bx--btn bx--btn--tertiary" x-show="status === 'done'"
-          href="/api/v1/projects/{{ project.id }}/versions/{{ version_state.id }}/xlsx">Télécharger le classeur</a>
-      </div>
-    </section>
-    {% endif %}
-
-    <section class="bx--tile tgi-tile">
+      "
+      {% endif %}
+    >
       <h3 class="bx--type-productive-heading-02 tgi-heading">Versions</h3>
       {% if not versions %}
       <p class="bx--type-body-long-01">Aucune version</p>
@@ -224,12 +229,24 @@
           {% for v in versions %}
           <tr>
             <td><a class="bx--link" href="/?project={{ project.id }}&version={{ v.id }}">{{ v.id }}</a></td>
+            {% if version_state and v.id == version_state.id %}
+            <td>
+              <span x-show="status === 'running'"><span x-text="status"></span> — <span x-text="percent"></span>%</span>
+              <span x-show="status === 'done'" x-text="status"></span>
+              <span x-show="status === 'failed'">failed — <span x-text="error"></span></span>
+            </td>
+            {% else %}
             <td>{{ v.status }}</td>
+            {% endif %}
             <td>{{ v.get("model", "") }}</td>
             <td>{{ v.get("created_at", "") }}</td>
             <td>
-              {% if v.status == "done" %}
-              <a class="bx--link" href="/api/v1/projects/{{ project.id }}/versions/{{ v.id }}/xlsx">xlsx</a>
+              {% if version_state and v.id == version_state.id %}
+              <span x-show="status === 'done'">
+                <svg aria-hidden="true" class="tgi-xlsx-icon" width="16" height="16" viewBox="0 0 16 16"><path d="M8 11.5 3.5 7l1-1 2.8 2.8V1h1.4v7.8L11.5 6l1 1z"/><path d="M2 13.5h12V15H2z"/></svg><a class="bx--link" href="/api/v1/projects/{{ project.id }}/versions/{{ v.id }}/xlsx">xlsx</a>
+              </span>
+              {% elif v.status == "done" %}
+              <svg aria-hidden="true" class="tgi-xlsx-icon" width="16" height="16" viewBox="0 0 16 16"><path d="M8 11.5 3.5 7l1-1 2.8 2.8V1h1.4v7.8L11.5 6l1 1z"/><path d="M2 13.5h12V15H2z"/></svg><a class="bx--link" href="/api/v1/projects/{{ project.id }}/versions/{{ v.id }}/xlsx">xlsx</a>
               {% endif %}
             </td>
           </tr>

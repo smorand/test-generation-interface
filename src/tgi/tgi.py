@@ -525,7 +525,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
 
     @application.get("/api/v1/projects/{project_id}/versions/{version}/xlsx")
     async def download_xlsx(project_id: ValidProjectId, version: ValidVersion) -> Response:
-        await _load_project_or_404(project_id)
+        project = await _load_project_or_404(project_id)
         state = await _load_version_or_404(project_id, version)
         if state.get("status") == "running":
             raise HTTPException(status_code=409, detail="génération en cours")
@@ -533,7 +533,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
             raise HTTPException(status_code=409, detail="version en échec")
         path = manager.version_dir(project_id, version) / WORKBOOK_FILENAME
         content = await asyncio.to_thread(path.read_bytes)
-        return Response(content=content, media_type=_XLSX_MEDIA_TYPE)
+        filename = f"{project.get('name', project_id)}_{version}.xlsx"
+        return Response(
+            content=content,
+            media_type=_XLSX_MEDIA_TYPE,
+            headers={"Content-Disposition": _content_disposition(filename)},
+        )
 
     @application.post("/api/v1/projects/{project_id}/versions/{version}/qc", status_code=201)
     async def create_qc(project_id: ValidProjectId, version: ValidVersion) -> JSONResponse:
