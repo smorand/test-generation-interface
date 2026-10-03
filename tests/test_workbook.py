@@ -13,7 +13,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from tgi.workbook import build_workbook, onglet_type_name, sheet_title
+from tgi.workbook import _TEST_COLUMNS, build_workbook, onglet_type_name, sheet_title
 
 
 def _state() -> dict[str, Any]:
@@ -81,6 +81,18 @@ def test_the_reviewer_opens_on_the_summary_then_the_traceability() -> None:
     assert "Écarts" in names
 
 
+def test_all_sheet_comes_right_after_traceability_and_carries_every_test() -> None:
+    """ "ALL" repeats every test of every type sheet, in the same row shape, so a reviewer
+    can scan the whole plan without opening one tab per type."""
+    names = load_workbook(io.BytesIO(build_workbook(_reorg_state()))).sheetnames
+    assert names[:3] == ["Synthèse", "Traçabilité", "ALL"]
+
+    all_sheet = _sheet_of(_reorg_state(), "ALL")
+    assert [cell.value for cell in all_sheet[1]] == [label for label, _ in _TEST_COLUMNS]
+    test_ids = {row[4] for row in all_sheet.iter_rows(min_row=2, values_only=True)}
+    assert test_ids == {"TEST-RM", "TEST-IHM", "TEST-EMOE"}
+
+
 def test_traceability_carries_the_wording_of_every_requirement() -> None:
     """A row with a reference and no wording is what made uncovered requirements unusable."""
     trace = _sheet("Traçabilité")
@@ -93,17 +105,17 @@ def test_traceability_carries_the_wording_of_every_requirement() -> None:
 
 
 def test_e2e_mod_001_only_the_first_step_row_of_a_test_carries_its_metadata() -> None:
-    """Only the first step row of a test carries its metadata columns; the following step
-    rows of the same test leave them blank, except "ID test" (FR-NEW-080, FR-NEW-081)."""
+    """Only the first step row of a test carries its metadata columns, including "ID test";
+    the following step rows of the same test leave every metadata column blank."""
     sheet = _sheet("F01.CU01-RM")
     rows = list(sheet.iter_rows(min_row=2, values_only=True))
 
-    steps_of_first = [row for row in rows if row[4] == "TEST-0001"]
-    assert [row[7] for row in steps_of_first] == [1, 2]
-    first_row, second_row = steps_of_first
+    first_row, second_row = rows[0], rows[1]
+    assert [first_row[7], second_row[7]] == [1, 2]
+    assert first_row[4] == "TEST-0001"
     assert first_row[5] == "Création nominale"
+    assert not second_row[4]
     assert not second_row[5]
-    assert second_row[4] == "TEST-0001"
 
 
 def test_e2e_new_004_jeux_de_donnees_sheet_references_test_id_and_source_sheet() -> None:
@@ -130,7 +142,7 @@ def test_e2e_new_004_jeux_de_donnees_sheet_references_test_id_and_source_sheet()
     ]
 
 
-_METADATA_COLUMNS = (0, 1, 2, 3, 5, 6, 10, 11, 12)
+_METADATA_COLUMNS = (0, 1, 2, 3, 4, 5, 6, 10, 11, 12)
 
 
 def _multi_step_state(test_id: str, step_count: int, ref: str) -> dict[str, Any]:
@@ -167,8 +179,7 @@ def _multi_step_state(test_id: str, step_count: int, ref: str) -> dict[str, Any]
 
 
 def test_e2e_new_002_metadata_columns_are_blank_on_step_rows_2_plus() -> None:
-    """Only the first step row of a 3-step test carries its metadata, "ID test" stays filled
-    on every row (FR-NEW-080, FR-NEW-081)."""
+    """Only the first step row of a 3-step test carries its metadata (FR-NEW-080, FR-NEW-081)."""
     state = _multi_step_state("TEST-0100", 3, "EU01.CU01.RM01")
 
     sheet = _sheet_of(state, "EU01.CU01-RM")
@@ -177,14 +188,13 @@ def test_e2e_new_002_metadata_columns_are_blank_on_step_rows_2_plus() -> None:
     assert len(rows) == 3
     first, second, third = rows
     assert first[0] == "EU01.CU01"
+    assert first[4] == "TEST-0100"
     assert first[5] == "Test multi-étapes"
     assert first[10] == "EU01.CU01.RM01"
     assert first[11] in {"MOE", "MOA", "MOA/MOE", "INCONNU"}
     assert first[12] == "draft"
-    assert first[4] == "TEST-0100"
 
     for row in (second, third):
-        assert row[4] == "TEST-0100"
         for column in _METADATA_COLUMNS:
             assert not row[column]
 
@@ -198,7 +208,6 @@ def test_e2e_new_011_a_test_metadata_value_never_reappears_past_its_first_row() 
 
     assert len(rows) == 5
     for row in rows[1:]:
-        assert row[4] == "TEST-0400"
         for column in _METADATA_COLUMNS:
             assert not row[column]
 
@@ -217,8 +226,11 @@ def test_a_test_is_one_block_of_shading_across_its_rows() -> None:
     sheet = _sheet("F01.CU01-RM")
 
     shades: dict[str, set[str]] = {}
+    current_test = None
     for row in sheet.iter_rows(min_row=2):
-        shades.setdefault(str(row[4].value), set()).add(str(row[0].fill.start_color.rgb))
+        if row[4].value:
+            current_test = row[4].value
+        shades.setdefault(str(current_test), set()).add(str(row[0].fill.start_color.rgb))
 
     assert all(len(distinct) == 1 for distinct in shades.values())
     assert len({next(iter(distinct)) for distinct in shades.values()}) == 2
@@ -402,6 +414,7 @@ def test_e2e_new_001_one_sheet_per_type_really_present() -> None:
     assert set(names) == {
         "Synthèse",
         "Traçabilité",
+        "ALL",
         "EU01.CU01-RM",
         "IHM_E04",
         "F01.EU02.CU03-EMOE",

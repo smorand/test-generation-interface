@@ -31,8 +31,6 @@ _HEADER_FILL = PatternFill("solid", start_color="FF0F62FE")
 _HEADER_FONT = Font(color="FFFFFFFF", bold=True)
 # A very light grey: it has to survive printing and not fight with the status colours
 _BAND_FILL = PatternFill("solid", start_color="FFF2F4F8")
-# Zero based index of the "ID test" column, the block a reviewer follows across step rows
-_TEST_ID_COLUMN = 4
 _WRAP = Alignment(vertical="top", wrap_text=True)
 _TOP = Alignment(vertical="top")
 
@@ -100,6 +98,7 @@ _DATA_ROW_COLUMNS = [
 _SHEET_DESCRIPTIONS = {
     "Synthèse": "vue d'ensemble des compteurs de couverture et la légende des onglets.",
     "Traçabilité": "une ligne par exigence du document, avec son statut et les tests qui la couvrent.",
+    "ALL": "tous les tests de tous les onglets de type, dans la même mise en forme.",
     "Jeux de données": "les jeux de données de chaque test, un par ligne, rattachés à son onglet source.",
     "Écarts": "les éléments du document écartés de la génération, avec leur motif.",
     "Analyse": "une ligne par section du document, avec ses compteurs d'exigences et de scénarios.",
@@ -145,20 +144,30 @@ def _write_header(sheet: Worksheet, columns: list[tuple[str, int]]) -> None:
     sheet.freeze_panes = "A2"
 
 
-def _finish_sheet(sheet: Worksheet, columns: list[tuple[str, int]], band_on: int | None = None) -> None:
+def _finish_sheet(
+    sheet: Worksheet,
+    columns: list[tuple[str, int]],
+    band_on: int | None = None,
+    band_breaks: list[bool] | None = None,
+) -> None:
     """Autofilter, wrapped text on the long columns, and one shade per block.
 
     A reviewer reads 7000 rows of steps, and an even and odd banding is useless there: what
-    they follow is a test, which spans several rows. So the shade changes when the value of
-    one column changes, which draws each test, or each requirement, as a block.
+    they follow is a test, which spans several rows. So the shade changes at each block, which
+    draws each test, or each requirement, as one. Most sheets detect that from a column whose
+    value stays the same across a block (`band_on`); the test sheets blank "ID test" past a
+    test's first row, so they instead pass the block boundaries they already know (`band_breaks`).
     """
     last_row = max(sheet.max_row, 1)
     sheet.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{last_row}"
     wrapped = {index for index, (_, width) in enumerate(columns, start=1) if width >= _WRAPPED_COLUMN_WIDTH}
     previous: object = None
     shaded = False
-    for row in sheet.iter_rows(min_row=2, max_row=last_row):
-        if band_on is not None:
+    for offset, row in enumerate(sheet.iter_rows(min_row=2, max_row=last_row)):
+        if band_breaks is not None:
+            if offset < len(band_breaks) and band_breaks[offset]:
+                shaded = not shaded
+        elif band_on is not None:
             current = row[band_on].value
             if current != previous:
                 shaded = not shaded
@@ -171,30 +180,31 @@ def _finish_sheet(sheet: Worksheet, columns: list[tuple[str, int]], band_on: int
 
 def _test_metadata(
     scenario: Any, test: dict[str, Any], refs: str, classification: str, description: str, is_first: bool
-) -> tuple[list[Any], str, str, list[Any]]:
-    """The metadata columns around "ID test" and the step triple, blank on every row but the
-    first (FR-NEW-080, FR-NEW-081)."""
+) -> tuple[list[Any], str, str, str, list[Any]]:
+    """The metadata columns, including "ID test", blank on every row but the first
+    (FR-NEW-080, FR-NEW-081)."""
     if not is_first:
-        return (["", "", "", ""], "", "", ["", "", ""])
+        return (["", "", "", ""], "", "", "", ["", "", ""])
     lead = [scenario.container or UNPLACED, scenario.id, scenario.title, scenario.kind]
-    return (lead, test.get("name", ""), description, [refs, classification, test.get("status", "")])
+    return (lead, test.get("id", ""), test.get("name", ""), description, [refs, classification, test.get("status", "")])
 
 
-def _test_rows(scenario: Any, tests: list[dict[str, Any]], grammar: Grammar) -> list[list[Any]]:
-    """One row per step. Only the first row of each test carries its metadata columns; the
-    following ones leave them blank, except "ID test" which stays filled on every row
-    (FR-NEW-080, FR-NEW-081).
+def _test_rows(scenario: Any, tests: list[dict[str, Any]], grammar: Grammar) -> tuple[list[list[Any]], list[bool]]:
+    """One row per step, and a parallel flag marking the row that starts a new test's block.
+
+    Only the first row of each test carries its metadata columns, "ID test" included; the
+    following ones leave them blank (FR-NEW-080, FR-NEW-081).
     """
     rows: list[list[Any]] = []
+    starts: list[bool] = []
     for test in tests:
         refs_list = [str(ref) for ref in test.get("requirement_refs") or []]
         refs = ", ".join(refs_list)
         classification = classification_of(refs_list, grammar)
         steps = [step for step in (test.get("steps") or []) if isinstance(step, dict)] or [{}]
-        test_id = test.get("id", "")
         is_first = True
         for step in steps:
-            lead, name, description, trailer = _test_metadata(
+            lead, test_id, name, description, trailer = _test_metadata(
                 scenario, test, refs, classification, test.get("description", ""), is_first
             )
             rows.append(
@@ -209,6 +219,7 @@ def _test_rows(scenario: Any, tests: list[dict[str, Any]], grammar: Grammar) -> 
                     *trailer,
                 ]
             )
+            starts.append(is_first)
             is_first = False
     if not tests:
         rows.append(
@@ -228,7 +239,19 @@ def _test_rows(scenario: Any, tests: list[dict[str, Any]], grammar: Grammar) -> 
                 "",
             ]
         )
-    return rows
+        starts.append(True)
+    return rows, starts
+
+
+def _append_test_rows(sheet: Worksheet, entries: list[tuple[Any, dict[str, Any]]], grammar: Grammar) -> None:
+    """Append rows for a list of (scenario, test) pairs, shaded one block per test."""
+    band_breaks: list[bool] = []
+    for entry, test in entries:
+        rows, starts = _test_rows(entry, [test], grammar)
+        for line in rows:
+            sheet.append(line)
+        band_breaks.extend(starts)
+    _finish_sheet(sheet, _TEST_COLUMNS, band_breaks=band_breaks)
 
 
 def _grammar_of(state: dict[str, Any]) -> Grammar:
@@ -403,17 +426,24 @@ def build_workbook(state: dict[str, Any]) -> bytes:
     # Banded per use case: the matrix is read use case by use case
     _finish_sheet(trace, _TRACE_COLUMNS, band_on=2)
 
-    # Then one sheet per (requirement type, rattachement), one row per step.
     grammar = _grammar_of(state)
     tests_by_group = _tests_by_group(state, tests_by_scenario)
+
+    # Sheet three: every test of every type sheet below, in the same row shape, so a
+    # reviewer can scan the whole plan without opening one tab per type.
+    all_sheet = workbook.create_sheet(sheet_title("ALL", used_names))
+    _write_header(all_sheet, _TEST_COLUMNS)
+    _append_test_rows(
+        all_sheet,
+        [pair for key in sorted(tests_by_group, key=natural_key) for pair in tests_by_group[key]],
+        grammar,
+    )
+
+    # Then one sheet per (requirement type, rattachement), one row per step.
     for key in sorted(tests_by_group, key=natural_key):
         sheet = workbook.create_sheet(sheet_title(key, used_names))
         _write_header(sheet, _TEST_COLUMNS)
-        for entry, test in tests_by_group[key]:
-            for line in _test_rows(entry, [test], grammar):
-                sheet.append(line)
-        # Banded per test, since a test spans one row per step
-        _finish_sheet(sheet, _TEST_COLUMNS, band_on=_TEST_ID_COLUMN)
+        _append_test_rows(sheet, tests_by_group[key], grammar)
 
     # One row per data_rows entry, tagged with the test's ID and its type sheet
     # (FR-NEW-078): a single "Détail" column, never one per key (DEC-026).
