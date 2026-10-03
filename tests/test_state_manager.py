@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -202,6 +203,23 @@ async def test_a_corrupted_version_state_is_reported_minimally(manager: StateMan
 
     with pytest.raises(VersionCorrupted):
         await manager.load_version(project["id"], "v1")
+
+
+async def test_list_versions_carries_the_persisted_error(manager: StateManager, projects_dir: Path) -> None:
+    project = await manager.create_project("spec.md", b"x")
+    await manager.create_version(project["id"], "m", {})
+    await manager.create_version(project["id"], "m", {})
+    state_path = projects_dir / project["id"] / "v1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "failed"
+    state["error"] = "mod\u00e8le indisponible"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    listed = await manager.list_versions(project["id"])
+
+    by_id = {v["id"]: v for v in listed}
+    assert by_id["v1"]["error"] == "mod\u00e8le indisponible"
+    assert by_id["v2"]["error"] == ""
 
 
 async def test_delete_version_removes_its_folder_and_nothing_else(manager: StateManager, projects_dir: Path) -> None:

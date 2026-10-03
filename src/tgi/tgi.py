@@ -13,7 +13,7 @@ import json
 import logging
 import tempfile
 import unicodedata
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
@@ -291,6 +291,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         models, models_warning = await model_store.read_models(app_settings.config_dir)
         versions = await manager.list_versions(pid) if selected_project else []
         prompts = default_prompts() if selected_project else {}
+
+        if selected_project and not version:
+            running = next((v for v in versions if v["status"] == "running"), None)
+            if running is not None:
+                with suppress(InvalidIdentifier, FileNotFoundError, VersionCorrupted):
+                    selected_version_state = await manager.load_version(pid, running["id"])
 
         return templates.TemplateResponse(
             request,

@@ -409,6 +409,7 @@ class StateManager:
                     "status": state.get("status", "done"),
                     "model": state.get("model", ""),
                     "created_at": state.get("created_at", ""),
+                    "error": state.get("error") or "",
                 }
             )
         entries.sort(key=lambda e: _version_number(str(e["id"])), reverse=True)

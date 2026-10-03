@@ -241,7 +241,7 @@
               <span x-show="status === 'failed'">failed — <span x-text="error"></span></span>
             </td>
             {% else %}
-            <td>{{ v.status }}</td>
+            <td>{% if v.status == "failed" and v.get("error") %}failed — {{ v.error }}{% else %}{{ v.status }}{% endif %}</td>
             {% endif %}
             <td>{{ v.get("model", "") }}</td>
             <td>{{ v.get("created_at", "") }}</td>

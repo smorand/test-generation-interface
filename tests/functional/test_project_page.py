@@ -8,9 +8,12 @@ specs/SPEC-0003_.../spec.md for their specification.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
     from httpx import AsyncClient
 
@@ -183,3 +186,98 @@ async def test_submit_handler_untouched_by_accordion(client: AsyncClient, projec
     assert "fd.get('distiller')" in body
     assert "fd.get('scenario_generator')" in body
     assert "fd.get('coverage')" in body
+
+
+async def _force_status(projects_dir: Path, project_id: str, version: str, **overrides: Any) -> None:
+    state_path = projects_dir / project_id / version / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(overrides)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
+async def _wait_until_done(client: AsyncClient, project_id: str, version: str) -> None:
+    import asyncio
+
+    for _ in range(50):
+        detail = await client.get(f"/api/v1/projects/{project_id}/versions/{version}")
+        if detail.json()["status"] == "done":
+            break
+        await asyncio.sleep(0.02)
+
+
+async def test_reload_without_version_shows_live_progress_for_the_running_version(
+    client: AsyncClient, project_with_source: str, models_file: dict[str, Any], projects_dir: Path
+) -> None:
+    """BT-001 / BUG-001: GET /?project=P1 with no &version= must still live-bind the running row."""
+    version = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, version)
+    await _force_status(projects_dir, project_with_source, version, status="running")
+
+    response = await client.get(f"/?project={project_with_source}")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "EventSource" in body
+    assert 'x-text="percent"' in body
+
+
+async def test_default_selection_targets_the_running_versions_own_events_endpoint(
+    client: AsyncClient, project_with_source: str, models_file: dict[str, Any], projects_dir: Path
+) -> None:
+    """BT-010 / BR-001: the EventSource URL names the running version's own id."""
+    version = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, version)
+    await _force_status(projects_dir, project_with_source, version, status="running")
+
+    response = await client.get(f"/?project={project_with_source}")
+
+    assert response.status_code == 200
+    assert f"/api/v1/projects/{project_with_source}/versions/{version}/events" in response.text
+
+
+async def test_non_live_failed_row_shows_its_error_inline(
+    client: AsyncClient, project_with_source: str, models_file: dict[str, Any], projects_dir: Path
+) -> None:
+    """BT-012 / BR-003: a failed row that is not the live row shows the error inline."""
+    v1 = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, v1)
+    v2 = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, v2)
+    await _force_status(projects_dir, project_with_source, v2, status="failed", error="disque plein")
+
+    response = await client.get(f"/?project={project_with_source}&version={v1}")
+
+    assert response.status_code == 200
+    assert "failed \u2014 disque plein" in response.text
+
+
+async def test_nothing_running_still_renders_fully_static(
+    client: AsyncClient, project_with_source: str, models_file: dict[str, Any]
+) -> None:
+    """BT-013 / BR-004: no running version -> no default selection, SC-004 unaffected."""
+    version = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, version)
+
+    response = await client.get(f"/?project={project_with_source}")
+
+    assert response.status_code == 200
+    versions_section = response.text.split('<h3 class="bx--type-productive-heading-02 tgi-heading">Versions</h3>')[1]
+    assert "EventSource" not in versions_section
+    assert "x-text=" not in versions_section
+
+
+async def test_explicit_version_still_wins_over_the_running_default(
+    client: AsyncClient, project_with_source: str, models_file: dict[str, Any], projects_dir: Path
+) -> None:
+    """BT-020: an explicit &version= always overrides the running default."""
+    v1 = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, v1)
+    v2 = await _run_version(client, project_with_source, models_file)
+    await _wait_until_done(client, project_with_source, v2)
+    await _force_status(projects_dir, project_with_source, v2, status="running")
+
+    response = await client.get(f"/?project={project_with_source}&version={v1}")
+
+    assert response.status_code == 200
+    assert f"/api/v1/projects/{project_with_source}/versions/{v1}/events" in response.text
+    assert f"/api/v1/projects/{project_with_source}/versions/{v2}/events" not in response.text
