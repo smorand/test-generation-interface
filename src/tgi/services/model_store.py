@@ -1,9 +1,18 @@
-"""The model table: base_url, api_key, and model name, edited from the interface.
+"""The model table: base_url, api_key, model name, thinking level and streaming,
+edited from the interface.
 
 Lives in ``<config_dir>/models.json`` rather than an environment variable, because an
 exploitant provisions the directory once (FR-NEW-026) while the testeuse adds and
 removes endpoints herself (FR-NEW-027). The api_key never leaves this module in clear:
 every caller outside it sees ``masked()``'s output (FR-NEW-028).
+
+The two optional fields override the global .env defaults for that model only, so a
+reasoning model can think while a fast one answers directly, and a gateway that buffers
+can be run without streaming while the others stream:
+
+- ``thinking``: "" (follow TGI_DISABLE_THINKING), "off" (answer directly, the
+  vLLM/SGLang switch), or "low"/"medium"/"high" (the standard reasoning_effort).
+- ``stream``: null (follow TGI_LLM_STREAM), true or false.
 """
 
 from __future__ import annotations
@@ -26,6 +35,11 @@ _MAX_NAME_LENGTH = 120
 # Below this length the real prefix would show through a fixed slice, so the mask
 # collapses to a constant instead (FR-NEW-054).
 _MIN_LENGTH_FOR_SUFFIX = 8
+
+# The reasoning levels a model entry can pin, beyond the global default. "" means
+# "no override": the .env decides. "off" is the vLLM/SGLang switch, the others are
+# the standard reasoning_effort values an OpenAI compatible endpoint understands.
+THINKING_LEVELS = ("", "off", "low", "medium", "high")
 
 
 class InvalidModelEntry(ValueError):
@@ -103,6 +117,10 @@ def _validate_entry(entry: dict[str, Any]) -> dict[str, Any]:
     model = str(entry.get("model", "")).strip()
     base_url = str(entry.get("base_url", ""))
     api_key = str(entry.get("api_key", ""))
+    thinking = str(entry.get("thinking") or "").strip().lower()
+    if thinking not in THINKING_LEVELS:
+        raise InvalidModelEntry(f"niveau de thinking invalide: {thinking} (off, low, medium, high)")
+    stream = _normalize_stream(entry.get("stream"))
     if not name:
         raise InvalidModelEntry("champ vide: name")
     if len(name) > _MAX_NAME_LENGTH:
@@ -111,7 +129,28 @@ def _validate_entry(entry: dict[str, Any]) -> dict[str, Any]:
         raise InvalidModelEntry("champ vide: model")
     if not base_url.lower().startswith(("http://", "https://")):
         raise InvalidModelEntry(f"base_url invalide: {base_url}")
-    return {"name": name, "base_url": base_url, "api_key": api_key, "model": model}
+    return {
+        "name": name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+        "thinking": thinking,
+        "stream": stream,
+    }
+
+
+def _normalize_stream(value: Any) -> bool | None:
+    """A checkbox comes back as "true"/"false" strings, a JSON body as a bool or nothing."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "1", "on"):
+        return True
+    if text in ("false", "0", "off"):
+        return False
+    raise InvalidModelEntry(f"stream doit être true ou false: {value}")
 
 
 async def add_model(config_dir: Path, raw_entry: dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +173,30 @@ async def remove_model(config_dir: Path, name: str) -> None:
         if len(remaining) == len(models):
             raise ModelNotFound(name)
         await _write_models(config_dir, remaining)
+
+
+async def update_model(config_dir: Path, name: str, raw_entry: dict[str, Any]) -> dict[str, Any]:
+    """Replace one entry under the models lock, keeping the key when it was left masked.
+
+    The edit form pre-fills the api_key input with the masked value, so submitting it
+    unchanged (or empty) must not wipe the real key: the mask marks "not re-entered".
+    A rename is allowed, as long as no other entry already carries the new name.
+    """
+    async with lock_for("models"):
+        models, _ = await read_models(config_dir)
+        index = next((i for i, m in enumerate(models) if m.get("name") == name), None)
+        if index is None:
+            raise ModelNotFound(name)
+        entry = dict(raw_entry)
+        api_key = str(entry.get("api_key", ""))
+        if not api_key or api_key.startswith("sk-***"):
+            entry["api_key"] = str(models[index].get("api_key", ""))
+        validated = _validate_entry(entry)
+        if validated["name"] != name and any(m.get("name") == validated["name"] for m in models):
+            raise ModelAlreadyExists(validated["name"])
+        models[index] = validated
+        await _write_models(config_dir, models)
+    return validated
 
 
 async def find_model(config_dir: Path, name: str) -> dict[str, Any] | None:

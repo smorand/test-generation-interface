@@ -1,4 +1,4 @@
-"""Tests for the LLM client: fence stripping, JSON parsing, retry logic."""
+"""Tests for the LLM client: fence stripping, JSON parsing, retry logic, streaming."""
 
 from __future__ import annotations
 
@@ -88,15 +88,91 @@ class _FakeResponse:
         self.choices = [_FakeChoice(message, finish_reason)]
 
 
+class _StreamDelta:
+    """One streamed delta, the shape ChoiceDelta takes over SSE."""
+
+    def __init__(self, content: str | None = None, reasoning: str | None = None) -> None:
+        self.content = content
+        if reasoning is not None:
+            self.reasoning_content = reasoning
+
+
+class _StreamChoice:
+    def __init__(self, delta: _StreamDelta | None, finish_reason: str | None = None) -> None:
+        self.delta = delta
+        self.finish_reason = finish_reason
+
+
+class _StreamChunk:
+    def __init__(self, choices: list[_StreamChoice]) -> None:
+        self.choices = choices
+
+
+class _FakeStream:
+    """Async iterable of chunks, exceptions included, like the SDK's AsyncStream."""
+
+    def __init__(self, items: list[Any]) -> None:
+        self._items = list(items)
+
+    async def __aenter__(self) -> _FakeStream:
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    def __aiter__(self) -> _FakeStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if not self._items:
+            raise StopAsyncIteration
+        item = self._items.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _as_stream(response: _FakeResponse) -> _FakeStream:
+    """Convert one canned response into the chunks a streaming endpoint sends."""
+    message = response.choices[0].message
+    content = message.content or ""
+    reasoning = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None) or ""
+    finish = response.choices[0].finish_reason
+    items: list[Any] = []
+    if reasoning:
+        items.append(_StreamChunk([_StreamChoice(_StreamDelta(reasoning=str(reasoning)))]))
+    half = max(1, len(content) // 2)
+    for piece in [content[:half], content[half:]] if content else []:
+        items.append(_StreamChunk([_StreamChoice(_StreamDelta(content=piece))]))
+    items.append(_StreamChunk([_StreamChoice(None, finish_reason=finish)]))
+    return _FakeStream(items)
+
+
 class _FakeCompletions:
     def __init__(self, responses: list[_FakeResponse]) -> None:
         self._responses = responses
         self._index = 0
 
-    async def create(self, **kwargs: Any) -> _FakeResponse:
+    async def create(self, **kwargs: Any) -> Any:
         resp = self._responses[min(self._index, len(self._responses) - 1)]
         self._index += 1
+        if kwargs.get("stream"):
+            return _as_stream(resp)
         return resp
+
+
+class _StreamCompletions(_FakeCompletions):
+    """Serve prebuilt streams in order, for tests that script the chunk sequence."""
+
+    def __init__(self, streams: list[Any]) -> None:
+        super().__init__([])
+        self._streams = streams
+        self._served = 0
+
+    async def create(self, **kwargs: Any) -> Any:
+        item = self._streams[min(self._served, len(self._streams) - 1)]
+        self._served += 1
+        return item
 
 
 class _FakeChat:
@@ -519,6 +595,249 @@ async def test_chat_json_ignores_reasoning_prose_and_retries() -> None:
     fake.chat.completions = _FakeCompletions(responses)
     client._client = fake  # type: ignore[assignment]
     assert await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3) == {"rules": [1]}
+
+
+# ---------------------------------------------------------------------------
+# Streaming: the default answer path, chosen so a slow gateway stops cutting the
+# connection before the generation is done (504).
+# ---------------------------------------------------------------------------
+
+
+def _streaming_client(streams: list[Any]) -> LLMClient:
+    """A client whose endpoint serves the given streams in order."""
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _StreamCompletions(streams)
+    client._client = fake  # type: ignore[assignment]
+    return client
+
+
+async def test_chat_accumulates_streamed_deltas() -> None:
+    """The answer is folded from the deltas, not the last chunk alone."""
+    stream = _FakeStream(
+        [
+            _StreamChunk([_StreamChoice(_StreamDelta(content='{"a"'))]),
+            _StreamChunk([_StreamChoice(_StreamDelta(content=": 1}"))]),
+            _StreamChunk([_StreamChoice(None, finish_reason="stop")]),
+        ]
+    )
+    client = _streaming_client([stream])
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == '{"a": 1}'
+
+
+async def test_stream_ignores_chunks_with_no_choices() -> None:
+    """The usage frame some servers append carries no delta and must not end the answer."""
+    stream = _FakeStream(
+        [
+            _StreamChunk([_StreamChoice(_StreamDelta(content='{"a"'))]),
+            _StreamChunk([]),
+            _StreamChunk([_StreamChoice(_StreamDelta(content=": 1}"))]),
+            _StreamChunk([_StreamChoice(None, finish_reason="stop")]),
+        ]
+    )
+    client = _streaming_client([stream])
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == '{"a": 1}'
+
+
+async def test_stream_falls_back_to_reasoning_deltas() -> None:
+    """A model that only streams its thinking keeps the empty answer fallback."""
+    stream = _FakeStream(
+        [
+            _StreamChunk([_StreamChoice(_StreamDelta(reasoning="thought"))]),
+            _StreamChunk([_StreamChoice(None, finish_reason="stop")]),
+        ]
+    )
+    client = _streaming_client([stream])
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "thought"
+
+
+async def test_streamed_length_finish_reason_marks_truncation() -> None:
+    """finish_reason travels in the last chunk: a cut off answer must be retried as such."""
+    seen: list[str] = []
+    first = _FakeStream(
+        [
+            _StreamChunk([_StreamChoice(_StreamDelta(content="not json at all"))]),
+            _StreamChunk([_StreamChoice(None, finish_reason="length")]),
+        ]
+    )
+    second = _as_stream(_FakeResponse(_FakeMessage('{"ok": true}')))
+
+    class _Capturing(_StreamCompletions):
+        async def create(self, **kwargs: Any) -> Any:
+            seen.append(kwargs["messages"][-1]["content"])
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Capturing([first, second])
+    client._client = fake  # type: ignore[assignment]
+
+    assert await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3) == {"ok": True}
+    assert "cut off" in seen[1]
+
+
+async def test_a_stream_breaking_midway_is_retried() -> None:
+    """A connection dropped mid generation feeds the same retry loop as any API error."""
+    first = _FakeStream(
+        [
+            _StreamChunk([_StreamChoice(_StreamDelta(content='{"ok"'))]),
+            RuntimeError("peer closed the connection mid stream"),
+        ]
+    )
+    second = _as_stream(_FakeResponse(_FakeMessage('{"ok": true}')))
+    client = _streaming_client([first, second])
+    assert await client.chat_json(model="m", system_prompt="s", user_content="u", retries=3) == {"ok": True}
+
+
+async def test_streaming_dropped_once_endpoint_rejects_it() -> None:
+    """A gateway that only returns whole answers must not break every call."""
+    seen: list[Any] = []
+
+    class _Rejecting(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("stream"))
+            if kwargs.get("stream"):
+                raise RuntimeError("400 - This endpoint does not support stream mode")
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Rejecting([_FakeResponse(_FakeMessage("ok"))])
+    client._client = fake  # type: ignore[assignment]
+
+    # First call retries without streaming and succeeds
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "ok"
+    assert seen == [True, False]
+
+    # Streaming is not attempted again for this client instance
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[-1] is False
+    assert len(seen) == 3
+
+
+async def test_streaming_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TGI_LLM_STREAM=false keeps the whole answer path for exotic endpoints."""
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_stream", False)
+    seen: list[Any] = []
+
+    class _Recording(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("stream"))
+            return await super().create(**kwargs)
+
+    client = LLMClient()
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Recording([_FakeResponse(_FakeMessage("whole answer"))])
+    client._client = fake  # type: ignore[assignment]
+
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "whole answer"
+    assert seen == [False]
+
+
+# ---------------------------------------------------------------------------
+# Per model thinking level and stream preference, chosen from the parameters page
+# ---------------------------------------------------------------------------
+
+
+def _kwargs_client(entry: dict[str, Any], seen: list[Any]) -> LLMClient:
+    """A client built from a model table entry, recording every create() kwargs."""
+    from tgi.services.llm import build_llm_client
+
+    client = build_llm_client(entry)
+    fake = _FakeOpenAI([])
+
+    class _Recording(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            return await super().create(**kwargs)
+
+    fake.chat.completions = _Recording([_FakeResponse(_FakeMessage("ok"))])
+    client._client = fake  # type: ignore[assignment]
+    return client
+
+
+async def test_a_pinned_off_level_sends_the_switch_even_without_the_global_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", False)
+    seen: list[Any] = []
+    client = _kwargs_client(
+        {"name": "n", "base_url": "https://e", "api_key": "k", "model": "m", "thinking": "off"}, seen
+    )
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[0].get("extra_body") == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+async def test_a_pinned_reasoning_effort_level_is_sent_as_such(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", True)
+    seen: list[Any] = []
+    client = _kwargs_client(
+        {"name": "n", "base_url": "https://e", "api_key": "k", "model": "m", "thinking": "high"}, seen
+    )
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    # The pinned level wins over the global off switch
+    assert seen[0].get("reasoning_effort") == "high"
+    assert seen[0].get("extra_body") is None
+
+
+async def test_an_entry_without_a_level_follows_the_global_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "disable_thinking", True)
+    seen: list[Any] = []
+    client = _kwargs_client({"name": "n", "base_url": "https://e", "api_key": "k", "model": "m"}, seen)
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[0].get("extra_body") == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+async def test_reasoning_effort_dropped_once_endpoint_rejects_it() -> None:
+    """A gateway that validates parameters must not break every call."""
+    seen: list[Any] = []
+
+    class _Rejecting(_FakeCompletions):
+        async def create(self, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("reasoning_effort"))
+            if kwargs.get("reasoning_effort") is not None:
+                raise RuntimeError("400 - reasoning_effort: Extra inputs are not permitted")
+            return await super().create(**kwargs)
+
+    client = LLMClient(thinking="low")
+    fake = _FakeOpenAI([])
+    fake.chat.completions = _Rejecting([_FakeResponse(_FakeMessage("ok"))])
+    client._client = fake  # type: ignore[assignment]
+
+    assert await client.chat(model="m", system_prompt="s", user_content="u") == "ok"
+    assert seen == ["low", None]
+
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[-1] is None
+    assert len(seen) == 3
+
+
+async def test_a_pinned_stream_preference_overrides_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_stream", False)
+    seen: list[Any] = []
+    client = _kwargs_client({"name": "n", "base_url": "https://e", "api_key": "k", "model": "m", "stream": True}, seen)
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[0].get("stream") is True
+
+
+async def test_a_pinned_no_stream_overrides_a_streaming_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tgi.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_stream", True)
+    seen: list[Any] = []
+    client = _kwargs_client({"name": "n", "base_url": "https://e", "api_key": "k", "model": "m", "stream": False}, seen)
+    await client.chat(model="m", system_prompt="s", user_content="u")
+    assert seen[0].get("stream") is False
 
 
 class _FakeModel:

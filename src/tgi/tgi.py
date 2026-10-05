@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from tgi.agents.orchestrator import Orchestrator, run_lock
 from tgi.build import build_id
@@ -184,10 +184,26 @@ class RunCreate(BaseModel):
 
 
 class ModelCreate(BaseModel):
+    """A model table entry as the parameters form sends it.
+
+    thinking and stream are optional per model overrides of the .env defaults: the
+    selects post strings ("", "off", "low", "true", "false"), so both are read as
+    text here and normalized by the model store, which owns the schema.
+    """
+
     name: str
     base_url: str
     api_key: str
     model: str
+    thinking: str = ""
+    # The form posts strings ("true"/"false"), a JSON body posts booleans: both are
+    # accepted here and normalized by the model store, which owns the schema.
+    stream: str | bool | None = None
+
+    @field_validator("stream", mode="before")
+    @classmethod
+    def _none_instead_of_empty(cls, value: Any) -> Any:
+        return None if value == "" else value
 
 
 def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915
@@ -619,6 +635,18 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:  # noqa: PLR091
         except model_store.InvalidModelEntry as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return JSONResponse(status_code=201, content=model_store.masked(entry))
+
+    @application.put("/api/v1/models/{name}")
+    async def update_model_route(name: str, body: ModelCreate) -> JSONResponse:
+        try:
+            entry = await model_store.update_model(app_settings.config_dir, name, body.model_dump())
+        except model_store.ModelNotFound:
+            raise HTTPException(status_code=404, detail=f"modèle inconnu: {name}") from None
+        except model_store.ModelAlreadyExists:
+            raise HTTPException(status_code=409, detail=f"modèle déjà défini: {body.name}") from None
+        except model_store.InvalidModelEntry as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(content=model_store.masked(entry))
 
     @application.delete("/api/v1/models/{name}", status_code=204)
     async def delete_model_route(name: str) -> Response:

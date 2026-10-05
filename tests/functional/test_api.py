@@ -692,6 +692,101 @@ async def test_a_too_long_name_is_refused(client: AsyncClient) -> None:
     assert response.json() == {"detail": "nom de modèle trop long (max 120)"}
 
 
+async def test_a_model_can_pin_its_thinking_level_and_stream(client: AsyncClient) -> None:
+    """The parameters form chooses reasoning and streaming per model, not in the .env."""
+    created = await client.post(
+        "/api/v1/models",
+        json={
+            "name": "m1",
+            "base_url": "https://example.com",
+            "api_key": "sk-abcdefgh1234",
+            "model": "gpt-x",
+            "thinking": "low",
+            "stream": "false",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["thinking"] == "low"
+    assert created.json()["stream"] is False
+
+    listed = await client.get("/api/v1/models")
+    entry = listed.json()["models"][0]
+    assert entry["thinking"] == "low"
+    assert entry["stream"] is False
+    assert entry["api_key"] == "sk-***1234"
+
+
+async def test_an_unknown_thinking_level_is_our_own_422(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/models",
+        json={"name": "n", "base_url": "https://x", "api_key": "k", "model": "m", "thinking": "banana"},
+    )
+    assert response.status_code == 422
+    assert "niveau de thinking invalide" in response.json()["detail"]
+
+
+async def test_a_model_can_be_edited(client: AsyncClient) -> None:
+    await client.post(
+        "/api/v1/models",
+        json={"name": "m1", "base_url": "https://example.com", "api_key": "sk-abcdefgh1234", "model": "gpt-x"},
+    )
+    edited = await client.put(
+        "/api/v1/models/m1",
+        json={
+            "name": "m1",
+            "base_url": "https://example.com/v2",
+            "api_key": "sk-newkey12345",
+            "model": "gpt-y",
+            "thinking": "low",
+            "stream": "false",
+        },
+    )
+    assert edited.status_code == 200
+    assert edited.json()["model"] == "gpt-y"
+    assert edited.json()["thinking"] == "low"
+    assert edited.json()["stream"] is False
+
+    listed = await client.get("/api/v1/models")
+    assert listed.json()["models"][0]["base_url"] == "https://example.com/v2"
+    assert listed.json()["models"][0]["api_key"] == "sk-***2345"
+
+
+async def test_editing_without_reentering_the_key_keeps_it(client: AsyncClient, config_dir: Path) -> None:
+    """The edit form sends the masked value back: the real key must survive."""
+    await client.post(
+        "/api/v1/models",
+        json={"name": "m1", "base_url": "https://example.com", "api_key": "sk-abcdefgh1234", "model": "gpt-x"},
+    )
+    edited = await client.put(
+        "/api/v1/models/m1",
+        json={"name": "m1", "base_url": "https://example.com", "api_key": "sk-***1234", "model": "gpt-x"},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["api_key"] == "sk-***1234"
+    payload = json.loads((config_dir / "models.json").read_text(encoding="utf-8"))
+    assert payload["models"][0]["api_key"] == "sk-abcdefgh1234"
+
+
+async def test_renaming_a_model_onto_a_taken_name_is_409(client: AsyncClient) -> None:
+    await client.post("/api/v1/models", json={"name": "a", "base_url": "https://x", "api_key": "k", "model": "m"})
+    await client.post("/api/v1/models", json={"name": "b", "base_url": "https://x", "api_key": "k", "model": "m"})
+    renamed = await client.put(
+        "/api/v1/models/a",
+        json={"name": "b", "base_url": "https://x", "api_key": "k", "model": "m"},
+    )
+    assert renamed.status_code == 409
+    assert renamed.json() == {"detail": "modèle déjà défini: b"}
+
+
+async def test_editing_an_unknown_model_is_404(client: AsyncClient) -> None:
+    response = await client.put(
+        "/api/v1/models/nope",
+        json={"name": "n", "base_url": "https://x", "api_key": "k", "model": "m"},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "modèle inconnu: nope"}
+
+
 async def test_removing_an_unknown_model_is_404(client: AsyncClient) -> None:
     response = await client.delete("/api/v1/models/nope")
     assert response.status_code == 404
@@ -705,6 +800,29 @@ async def test_the_api_key_never_appears_in_clear_on_the_parametres_page(client:
     page = await client.get("/parametres")
     assert "sk-realsecret1234" not in page.text
     assert "sk-***1234" in page.text
+
+
+async def test_the_parametres_page_shows_the_pinned_choices(client: AsyncClient) -> None:
+    """The two per model choices must be readable on the table, and the form offers them."""
+    await client.post(
+        "/api/v1/models",
+        json={
+            "name": "raisonneur",
+            "base_url": "https://x",
+            "api_key": "sk-abcdefgh1234",
+            "model": "m",
+            "thinking": "low",
+            "stream": False,
+        },
+    )
+    page = await client.get("/parametres")
+    assert page.status_code == 200
+    # The pinned values, not the defaults
+    assert "faible" in page.text
+    assert "désactivé" in page.text
+    # The form offers both choices
+    assert 'name="thinking"' in page.text
+    assert 'name="stream"' in page.text
 
 
 # ---------------------------------------------------------------------------

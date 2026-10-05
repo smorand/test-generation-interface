@@ -2,9 +2,15 @@
 {% block title %}Paramètres — Générateur de tests{% endblock %}
 {% block content %}
 <div class="bx--row">
-  <div class="bx--col-lg-10 bx--col-md-8 bx--col-sm-4">
+  <div class="bx--col" x-data='tgiModelAdmin({{ models | tojson }})'>
+
     <section class="bx--tile tgi-tile">
-      <h2 class="bx--type-productive-heading-03 tgi-heading">Modèles</h2>
+      <div class="tgi-list-header">
+        <button id="add-model-btn" type="button" class="bx--btn bx--btn--primary" x-on:click="open(null)">
+          <span aria-hidden="true">+</span> Ajouter un modèle
+        </button>
+        <h2 class="bx--type-productive-heading-03 tgi-heading">Modèles</h2>
+      </div>
 
       {% if warning %}
       <div class="bx--inline-notification bx--inline-notification--warning" role="alert">
@@ -19,7 +25,7 @@
       {% else %}
       <table class="bx--data-table tgi-models-table">
         <thead>
-          <tr><th>Nom</th><th>Point d'accès</th><th>Modèle</th><th>Clé</th><th></th></tr>
+          <tr><th>Nom</th><th>Point d'accès</th><th>Modèle</th><th>Raisonnement</th><th>Streaming</th><th>Clé</th><th></th></tr>
         </thead>
         <tbody>
           {% for m in models %}
@@ -27,11 +33,19 @@
             <td>{{ m.name }}</td>
             <td>{{ m.base_url }}</td>
             <td>{{ m.model }}</td>
+            <td>{{ {'off': 'désactivé', 'low': 'faible', 'medium': 'moyen', 'high': 'élevé'}.get(m.thinking, 'défaut') }}</td>
+            <td>{{ 'défaut' if m.stream is not defined or m.stream is none else ('activé' if m.stream else 'désactivé') }}</td>
             <td><code>{{ m.api_key }}</code></td>
-            <td>
-              <button class="bx--btn bx--btn--danger--tertiary bx--btn--sm"
-                onclick="fetch('/api/v1/models/' + encodeURIComponent('{{ m.name }}'), {method: 'DELETE'}).then(() => location.reload())">
-                Retirer
+            <td class="tgi-row-actions">
+              <button class="bx--btn bx--btn--ghost bx--btn--sm tgi-icon-btn" type="button"
+                title="Modifier" aria-label="Modifier {{ m.name }}"
+                x-on:click="openByName('{{ m.name }}')">
+                <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16"><g fill-rule="nonzero"><path d="M7.926 3.38L1.002 9.72V12h2.304l6.926-6.316L7.926 3.38zm.738-.675l2.308 2.304 1.451-1.324-2.308-2.309-1.451 1.329zM.002 9.28L9.439.639a1 1 0 0 1 1.383.03l2.309 2.309a1 1 0 0 1-.034 1.446L3.694 13H.002V9.28zM0 16.013v-1h16v1z"></path></g></svg>
+              </button>
+              <button class="bx--btn bx--btn--ghost bx--btn--sm tgi-icon-btn" type="button"
+                title="Retirer" aria-label="Retirer {{ m.name }}"
+                x-on:click="removeByName('{{ m.name }}')">
+                <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16"><path d="M5 0h6v2H5zM2 3v3h1v10h10V6h1V3H2zm5 11H5V7h2v7zm4 0H9V7h2v7z"></path></svg>
               </button>
             </td>
           </tr>
@@ -41,42 +55,141 @@
       {% endif %}
     </section>
 
-    <section class="bx--tile tgi-tile" x-data="{ error: '' }">
-      <h3 class="bx--type-productive-heading-02 tgi-heading">Ajouter un modèle</h3>
-      <form
-        x-on:submit.prevent="
-          error = '';
-          const fd = new FormData($el);
-          const body = Object.fromEntries(fd.entries());
-          fetch('/api/v1/models', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
-            .then(r => r.json().then(d => ({ ok: r.ok, d })))
-            .then(({ ok, d }) => { if (ok) location.reload(); else { error = (typeof d.detail === 'string') ? d.detail : 'Erreur'; } })
-            .catch(e => { error = e.message; })
-        ">
-        <div class="bx--form-item">
-          <label class="bx--label" for="model-name">Nom</label>
-          <input id="model-name" class="bx--text-input" type="text" name="name" required />
+    <div
+      id="model-modal"
+      class="bx--modal"
+      :class="{ 'is-visible': showModal }"
+      x-on:click.self="if (!busy) showModal = false"
+    >
+      <div class="bx--modal-container">
+        <div class="bx--modal-header">
+          <h2 class="bx--modal-header__heading tgi-heading" x-text="editing ? 'Modifier le modèle' : 'Ajouter un modèle'"></h2>
+          <button
+            type="button"
+            class="bx--modal-close"
+            aria-label="Fermer"
+            x-on:click="if (!busy) showModal = false"
+          >
+            <span class="bx--modal-close__icon" aria-hidden="true">&times;</span>
+          </button>
         </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="model-base-url">Point d'accès (http/https)</label>
-          <input id="model-base-url" class="bx--text-input" type="text" name="base_url" required />
+        <div class="bx--modal-content">
+          <form x-on:submit.prevent="submit($el)">
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-name">Nom</label>
+              <input id="model-name" class="bx--text-input" type="text" name="name" x-model="name" required />
+            </div>
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-base-url">Point d'accès (http/https)</label>
+              <input id="model-base-url" class="bx--text-input" type="text" name="base_url" x-model="baseUrl" required />
+            </div>
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-api-key">Clé d'API</label>
+              <input id="model-api-key" class="bx--text-input" type="password" name="api_key" x-model="apiKey"
+                placeholder="Laisser la valeur affichée pour conserver la clé" />
+            </div>
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-model">Identifiant du modèle</label>
+              <input id="model-model" class="bx--text-input" type="text" name="model" x-model="modelId" required />
+            </div>
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-thinking">Niveau de raisonnement</label>
+              <select id="model-thinking" class="bx--select-input" name="thinking" x-model="thinking">
+                <option value="">Défaut (réglage global)</option>
+                <option value="off">Désactivé (réponse directe)</option>
+                <option value="low">Faible</option>
+                <option value="medium">Moyen</option>
+                <option value="high">Élevé</option>
+              </select>
+            </div>
+            <div class="bx--form-item">
+              <label class="bx--label" for="model-stream">Streaming</label>
+              <select id="model-stream" class="bx--select-input" name="stream" x-model="stream">
+                <option value="">Défaut (réglage global)</option>
+                <option value="true">Activé</option>
+                <option value="false">Désactivé</option>
+              </select>
+            </div>
+            <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
+              <div class="bx--inline-notification__details">
+                <p class="bx--inline-notification__text" x-text="error"></p>
+              </div>
+            </div>
+            <button type="submit" class="bx--btn bx--btn--primary tgi-btn-block" :disabled="busy"
+              x-text="editing ? 'Enregistrer' : 'Ajouter'"></button>
+          </form>
         </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="model-api-key">Clé d'API</label>
-          <input id="model-api-key" class="bx--text-input" type="password" name="api_key" required />
-        </div>
-        <div class="bx--form-item">
-          <label class="bx--label" for="model-model">Identifiant du modèle</label>
-          <input id="model-model" class="bx--text-input" type="text" name="model" required />
-        </div>
-        <div x-show="error" class="bx--inline-notification bx--inline-notification--error" role="alert">
-          <div class="bx--inline-notification__details">
-            <p class="bx--inline-notification__text" x-text="error"></p>
-          </div>
-        </div>
-        <button type="submit" class="bx--btn bx--btn--primary">Ajouter</button>
-      </form>
-    </section>
+      </div>
+    </div>
+
   </div>
 </div>
+
+<script>
+  // Model table administration: one modal for adding and editing, the edit
+  // pre-filled from the entry the pencil was clicked on. The api_key arrives
+  // masked and is sent back as-is when unchanged, which the server reads as
+  // "keep the existing key" rather than storing the mask.
+  function tgiModelAdmin(models) {
+    return {
+      models: models,
+      showModal: false,
+      busy: false,
+      error: '',
+      editing: null,
+      name: '',
+      baseUrl: '',
+      apiKey: '',
+      modelId: '',
+      thinking: '',
+      stream: '',
+      open(entry) {
+        this.error = '';
+        this.editing = entry ? entry.name : null;
+        this.name = entry ? entry.name : '';
+        this.baseUrl = entry ? entry.base_url : '';
+        this.apiKey = entry ? (entry.api_key || '') : '';
+        this.modelId = entry ? entry.model : '';
+        this.thinking = entry && entry.thinking ? entry.thinking : '';
+        this.stream = entry && (entry.stream === true || entry.stream === false) ? String(entry.stream) : '';
+        this.showModal = true;
+      },
+      openByName(name) {
+        this.open(this.models.find(m => m.name === name) || null);
+      },
+      removeByName(name) {
+        if (!confirm('Retirer le modèle ' + name + ' ?')) return;
+        fetch('/api/v1/models/' + encodeURIComponent(name), { method: 'DELETE' })
+          .then(() => location.reload());
+      },
+      submit(form) {
+        this.busy = true;
+        this.error = '';
+        const fd = new FormData(form);
+        const body = {
+          name: fd.get('name'),
+          base_url: fd.get('base_url'),
+          api_key: fd.get('api_key'),
+          model: fd.get('model'),
+          thinking: fd.get('thinking') || '',
+          stream: fd.get('stream')
+        };
+        const url = this.editing
+          ? '/api/v1/models/' + encodeURIComponent(this.editing)
+          : '/api/v1/models';
+        fetch(url, {
+          method: this.editing ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+          .then(r => r.json().then(d => ({ ok: r.ok, d })))
+          .then(({ ok, d }) => {
+            if (ok) location.reload();
+            else { this.error = tgiErrorText(d.detail); this.busy = false; }
+          })
+          .catch(e => { this.error = e.message; this.busy = false; });
+      }
+    };
+  }
+</script>
 {% endblock %}

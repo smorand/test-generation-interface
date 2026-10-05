@@ -238,6 +238,41 @@ awaits it, so a lock in a module level registry leaked between tests and raised 
 different event loop", making failures depend on test order. `locks.py` keys them by running
 loop.
 
+## The 504s: a gateway buffers, the client streams
+
+A run behind a corporate gateway (iagen-proxy → llmrouter) hit `504 Gateway Timeout` on
+nearly every distiller call while the very same endpoint answered a ping instantly. The
+gateway waits for the upstream's *complete* answer before forwarding a single byte, and
+cuts the connection once the model is slower than the gateway's own timeout: reachability,
+credentials and model id were all fine, only the generation was slow. Retries and the
+distiller's split-in-half recursion eventually got one project through (241 tests, 99 %),
+but each 504 cost five ~30 s timeouts before the split, which is why a second project on
+the same endpoint churned for hours.
+
+The fix is streaming (2026-10-05): `chat.completions.create(..., stream=True)`, the deltas
+folded by `_drain_stream` into (content, reasoning, finish_reason). The first chunks open
+the connection, so the gateway's timeout no longer applies to the whole generation.
+`TGI_LLM_STREAM=true` by default; an endpoint that rejects streaming is detected once
+(`_is_streaming_unsupported_error`, same pattern as the thinking switch and temperature
+probes) and the client falls back to whole answers for the process. Reasoning deltas keep
+the empty answer fallback, chunks with no choices are ignored (usage frames), and a stream
+breaking mid generation feeds the existing retry loop. `first_chunk_ms` on the `llm.chat`
+span separates an endpoint slow to answer from a generation slow to produce.
+
+Measured afterwards on the same gateway: a streamed call can still get the 504, because the
+gateway times out waiting for the upstream's *first byte* and that backend sometimes emits
+nothing for longer than the timeout. Streaming fixes the relaying of a long generation,
+not an upstream that stays silent; the retries stay necessary there.
+
+Both the thinking control and streaming became per model choices the same day, chosen on
+the `/parametres` page when a model is added: a `thinking` level ("" follows
+`TGI_DISABLE_THINKING`, "off" sends the vLLM/SGLang switch, "low"/"medium"/"high" send
+the standard `reasoning_effort`) and a `stream` boolean (null follows `TGI_LLM_STREAM`).
+The span reports what was really sent (`thinking_disabled`, `thinking_level`, `streamed`).
+
+Note the read timeout in `_build_http_client` (600 s) counts *between* chunks once
+streaming: it no longer caps a long generation as a whole.
+
 ## Live updates: three faults that all looked like one hung run
 
 A user reported the reading of the document turning forever until they reloaded, and a

@@ -34,6 +34,108 @@ async def test_add_model_persists_and_is_readable(config_dir: Path) -> None:
     assert models == [entry]
 
 
+async def test_a_model_pins_its_thinking_level_and_stream(config_dir: Path) -> None:
+    """The form posts strings: they must land normalized in models.json."""
+    entry = await model_store.add_model(
+        config_dir,
+        {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g", "thinking": "medium", "stream": "false"},
+    )
+    assert entry["thinking"] == "medium"
+    assert entry["stream"] is False
+
+    models, _ = await model_store.read_models(config_dir)
+    assert models[0]["thinking"] == "medium"
+    assert models[0]["stream"] is False
+
+
+def test_a_model_without_the_new_fields_keeps_the_global_defaults(config_dir: Path) -> None:
+    """An entry written before the fields existed must not become invalid."""
+    entry = model_store._validate_entry({"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g"})
+    assert entry["thinking"] == ""
+    assert entry["stream"] is None
+
+
+def test_a_true_stream_string_is_normalized(config_dir: Path) -> None:
+    entry = model_store._validate_entry(
+        {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g", "stream": True}
+    )
+    assert entry["stream"] is True
+
+
+async def test_add_model_rejects_an_unknown_thinking_level(config_dir: Path) -> None:
+    with pytest.raises(model_store.InvalidModelEntry, match="niveau de thinking invalide"):
+        await model_store.add_model(
+            config_dir, {"name": "n", "base_url": "https://x", "api_key": "k", "model": "g", "thinking": "banana"}
+        )
+
+
+async def test_add_model_rejects_a_bad_stream_value(config_dir: Path) -> None:
+    with pytest.raises(model_store.InvalidModelEntry, match="stream doit être"):
+        await model_store.add_model(
+            config_dir, {"name": "n", "base_url": "https://x", "api_key": "k", "model": "g", "stream": "maybe"}
+        )
+
+
+async def test_update_model_replaces_the_entry(config_dir: Path) -> None:
+    await model_store.add_model(config_dir, {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g"})
+    entry = await model_store.update_model(
+        config_dir,
+        "m1",
+        {"name": "m1", "base_url": "https://y", "api_key": "k2", "model": "g2", "thinking": "low", "stream": "false"},
+    )
+    assert entry["base_url"] == "https://y"
+    models, _ = await model_store.read_models(config_dir)
+    assert len(models) == 1
+    assert models[0]["model"] == "g2"
+
+
+async def test_update_model_keeps_the_key_when_it_comes_back_masked(config_dir: Path) -> None:
+    """The edit form pre-fills the masked value: submitting it must not store the mask."""
+    await model_store.add_model(
+        config_dir, {"name": "m1", "base_url": "https://x", "api_key": "sk-abcdefgh1234", "model": "g"}
+    )
+    entry = await model_store.update_model(
+        config_dir, "m1", {"name": "m1", "base_url": "https://x", "api_key": "sk-***1234", "model": "g"}
+    )
+    assert entry["api_key"] == "sk-abcdefgh1234"
+
+
+async def test_update_model_keeps_the_key_when_left_empty(config_dir: Path) -> None:
+    await model_store.add_model(
+        config_dir, {"name": "m1", "base_url": "https://x", "api_key": "sk-abcdefgh1234", "model": "g"}
+    )
+    entry = await model_store.update_model(
+        config_dir, "m1", {"name": "m1", "base_url": "https://x", "api_key": "", "model": "g"}
+    )
+    assert entry["api_key"] == "sk-abcdefgh1234"
+
+
+async def test_update_model_can_rename_without_collision(config_dir: Path) -> None:
+    await model_store.add_model(config_dir, {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g"})
+    entry = await model_store.update_model(
+        config_dir, "m1", {"name": "m2", "base_url": "https://x", "api_key": "k", "model": "g"}
+    )
+    assert entry["name"] == "m2"
+    models, _ = await model_store.read_models(config_dir)
+    assert [m["name"] for m in models] == ["m2"]
+
+
+async def test_update_model_rejects_a_rename_onto_an_existing_name(config_dir: Path) -> None:
+    await model_store.add_model(config_dir, {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g"})
+    await model_store.add_model(config_dir, {"name": "m2", "base_url": "https://x", "api_key": "k", "model": "g"})
+    with pytest.raises(model_store.ModelAlreadyExists):
+        await model_store.update_model(
+            config_dir, "m1", {"name": "m2", "base_url": "https://x", "api_key": "k", "model": "g"}
+        )
+
+
+async def test_update_model_on_an_unknown_name_raises(config_dir: Path) -> None:
+    with pytest.raises(model_store.ModelNotFound):
+        await model_store.update_model(
+            config_dir, "nope", {"name": "n", "base_url": "https://x", "api_key": "k", "model": "g"}
+        )
+
+
 async def test_models_json_is_written_mode_0600(config_dir: Path) -> None:
     await model_store.add_model(config_dir, {"name": "m1", "base_url": "https://x", "api_key": "k", "model": "g"})
     mode = (config_dir / model_store.MODELS_FILENAME).stat().st_mode

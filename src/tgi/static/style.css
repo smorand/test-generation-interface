@@ -151,6 +151,21 @@
   width: 100%;
 }
 
+.tgi-row-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tgi-icon-btn {
+  padding: 0.5rem;
+  vertical-align: middle;
+}
+
+.tgi-icon-btn svg {
+  display: block;
+  fill: currentColor;
+}
+
 .tgi-progress {
   margin: 1rem 0;
 }

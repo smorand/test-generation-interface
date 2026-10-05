@@ -27,8 +27,8 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 
 ## Structure
 
-- `src/tgi/tgi.py` : `create_app()` factory, the 18 routes (`GET /`, `GET /parametres`,
-  16 `/api/v1/...`), module-level `app`, `main()`
+- `src/tgi/tgi.py` : `create_app()` factory, the 19 routes (`GET /`, `GET /parametres`,
+  17 `/api/v1/...`), module-level `app`, `main()`
 - `src/tgi/config.py` : `Settings` (env_prefix `TGI_`), `settings` singleton, `log_dir`, `config_dir`
 - `src/tgi/grammar.py` : infers the numbering the document gives itself, extracts requirements
 - `src/tgi/agents/` : `Orchestrator.run(project_id, version, model, llm, text)` drives
@@ -55,8 +55,9 @@ Dev server: `uv run uvicorn tgi.tgi:app --reload --port 8080`.
 - `src/tgi/{logging_config,tracing}.py` : rich console plus file logs, OpenTelemetry
 - `src/tgi/{stats,validate}.py` : `tgi-stats` from traces, `tgi-validate` verdict on a model
 - `src/tgi/events.py` : SSE fan out keyed by `"<project_id>:<version>"`, one queue per connection
-- `src/tgi/services/` : `llm` (`build_llm_client(entry)`, per run), `model_store` (models.json
-  CRUD), `prompts` (the three shipped defaults), `doc_parser`, `state_manager`, `paths`
+- `src/tgi/services/` : `llm` (`build_llm_client(entry)`, per run, carrying the entry's
+  thinking level and stream preference), `model_store` (models.json CRUD, entries carrying
+  base_url, api_key, model, an optional thinking level and an optional stream override), `prompts` (the three shipped defaults), `doc_parser`, `state_manager`, `paths`
 - `src/tgi/services/state_manager.py` : disk layout. `projects/<project_id>/project.json` +
   `source/<filename>`; `projects/<project_id>/v<n>/state.json` + `prompts/*.md` +
   `testplan.xlsx` + `qc.xlsx` once produced. No database, no git repo per project.

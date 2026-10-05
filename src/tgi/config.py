@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     # 3 attempts total, first included: a client built with max_retries=0 keeps this the
     # only retry mechanism, so the count stays legible (FR-NEW-051).
     llm_json_retries: int = 3
+    # Stream the answers. A gateway that buffers a whole generation before forwarding
+    # it cuts the connection (504) once the model is slower than the gateway's own
+    # timeout; streamed, the first chunks open the connection and the rest flows. An
+    # endpoint that rejects streaming is detected once and fallen back from, so this
+    # stays on for every OpenAI compatible stack.
+    llm_stream: bool = True
     # The launcher listens here. Loopback by default, because this reads a client's functional
     # specification on a laptop and binding every interface put it on the local network; the
     # container sets its own host on the uvicorn command line.

@@ -5,13 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
 from openai import APIConnectionError, AsyncOpenAI, AuthenticationError
 
 from tgi.config import settings
 from tgi.tracing import trace_span
+
+if TYPE_CHECKING:
+    from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +203,11 @@ def _correction_prompt(
 _THINKING_SWITCH_PARAM = "chat_template_kwargs"
 _NO_THINKING_BODY: dict[str, Any] = {_THINKING_SWITCH_PARAM: {"enable_thinking": False}}
 
+# Reasoning effort, the standard OpenAI compatible field for models that expose a
+# level rather than an on/off switch.
+_REASONING_EFFORT_PARAM = "reasoning_effort"
+THINKING_LEVELS = ("", "off", "low", "medium", "high")
+
 
 def _reasoning_text(message: Any) -> str:
     """Reasoning trace of a reply, whatever the server calls it.
@@ -214,14 +223,56 @@ def _reasoning_text(message: Any) -> str:
     return ""
 
 
+async def _drain_stream(
+    stream: Any,
+    span: trace.Span,
+    started_at: float,
+) -> tuple[str, str, str | None]:
+    """Fold a streamed answer into (content, reasoning, finish_reason).
+
+    Chunks with no choices carry accounting, not a delta: the usage frame some
+    servers append must not be read as the answer ending. Reasoning deltas are
+    accumulated under the same two field names as _reasoning_text, so a model
+    that only streams its thinking keeps the empty answer fallback.
+    """
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    finish_reason: str | None = None
+    first = True
+    async for event in stream:
+        if first:
+            first = False
+            # Time to the first chunk separates an endpoint slow to answer from a
+            # generation slow to produce: the 504s live in this number.
+            span.set_attribute("first_chunk_ms", round((time.perf_counter() - started_at) * 1000))
+        choices = getattr(event, "choices", None) or []
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is not None:
+            piece = getattr(delta, "content", None)
+            if piece:
+                content_parts.append(str(piece))
+            thought = _reasoning_text(delta)
+            if thought:
+                reasoning_parts.append(thought)
+        reason = getattr(choice, "finish_reason", None)
+        if reason:
+            finish_reason = str(reason)
+    return "".join(content_parts), "".join(reasoning_parts), finish_reason
+
+
 def _is_unsupported_param_error(exc: Exception) -> bool:
-    """True when the endpoint rejected the switch we sent.
+    """True when the endpoint rejected the thinking control we sent.
 
     Gateways word this differently (litellm says "does not support parameters",
     Bedrock says "Extra inputs are not permitted"), so the reliable signal is the
     parameter name coming back in the error rather than any particular phrasing.
+    Both knobs are probed: the vLLM/SGLang switch and reasoning_effort.
     """
-    return _THINKING_SWITCH_PARAM in str(exc).lower()
+    text = str(exc).lower()
+    return _THINKING_SWITCH_PARAM in text or _REASONING_EFFORT_PARAM in text
 
 
 def _is_temperature_unsupported_error(exc: Exception) -> bool:
@@ -233,6 +284,17 @@ def _is_temperature_unsupported_error(exc: Exception) -> bool:
     _is_unsupported_param_error.
     """
     return "temperature" in str(exc).lower()
+
+
+def _is_streaming_unsupported_error(exc: Exception) -> bool:
+    """True when the endpoint refused streaming itself, not the request.
+
+    A few gateways only return whole answers ("stream mode is not supported").
+    The word stream in the rejection is the signal, the same reasoning as the
+    parameter probes: the name coming back in the error is more reliable than
+    any particular phrasing.
+    """
+    return "stream" in str(exc).lower()
 
 
 def _tls_verification() -> bool | str:
@@ -266,9 +328,25 @@ def _build_http_client() -> httpx.AsyncClient | None:
 class LLMClient:
     """Async OpenAI compatible client with JSON extraction and retry logic."""
 
-    __slots__ = ("_base_url", "_client", "_model_cache", "_temperature_supported", "_thinking_switch_supported")
+    __slots__ = (
+        "_base_url",
+        "_client",
+        "_model_cache",
+        "_stream_pref",
+        "_stream_supported",
+        "_temperature_supported",
+        "_thinking_level",
+        "_thinking_param_supported",
+    )
 
-    def __init__(self, base_url: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        *,
+        thinking: str | None = None,
+        stream: bool | None = None,
+    ) -> None:
         # Read at call time rather than frozen at import: the table of models supplies a
         # fresh base_url and api_key on every run (FR-MOD-002), and the default here only
         # serves tgi-validate, which has no table to read from.
@@ -282,8 +360,18 @@ class LLMClient:
             max_retries=0,
         )
         self._model_cache: dict[str, Any] | None = None
-        # Assume the switch is accepted until an endpoint proves otherwise.
-        self._thinking_switch_supported = True
+        # Per model overrides of the global settings, chosen when the model is added
+        # to the table: None or "" means "follow the .env", a level pins the model.
+        level = (thinking or "").strip().lower()
+        if level and level not in THINKING_LEVELS:
+            logger.warning("Unknown thinking level %r, ignoring it (expected: off, low, medium, high)", thinking)
+            level = ""
+        self._thinking_level = level
+        self._stream_pref = stream
+        # Assume the endpoint streams until it proves otherwise.
+        self._stream_supported = True
+        # Assume the thinking control is accepted until an endpoint proves otherwise.
+        self._thinking_param_supported = True
         # Assume a chosen temperature is accepted until an endpoint proves otherwise
         # (some reasoning models only accept their own fixed value).
         self._temperature_supported = True
@@ -306,6 +394,78 @@ class LLMClient:
         )
         return text
 
+    async def _send_with_param_fallbacks(
+        self,
+        model: str,
+        temperature: float,
+        budget: int,
+        messages: list[dict[str, str]],
+    ) -> tuple[Any, bool, str]:
+        """Send one completion request, dropping once rejected parameters.
+
+        Up to three corrective retries, each disabling one thing an endpoint just
+        proved it refuses, and remembered so later calls skip straight past it
+        instead of failing every time. Returns (response, streamed, level_sent):
+        what the request that succeeded was actually sent with, which is what the
+        spans must report.
+        """
+        # The level the model table pinned, or the global .env default when it did
+        # not: "" sends nothing and lets the endpoint decide on its own.
+        level = self._thinking_level or ("off" if settings.disable_thinking else "")
+        send_thinking = bool(level) and self._thinking_param_supported
+        stream_pref = self._stream_pref if self._stream_pref is not None else settings.llm_stream
+        streamed = stream_pref and self._stream_supported
+        send_temperature = self._temperature_supported
+
+        def _kwargs(*, send_thinking: bool, send_temperature: bool) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": budget}
+            if send_temperature:
+                kwargs["temperature"] = temperature
+            if send_thinking:
+                if level == "off":
+                    kwargs["extra_body"] = dict(_NO_THINKING_BODY)
+                else:
+                    kwargs[_REASONING_EFFORT_PARAM] = level
+            return kwargs
+
+        for _ in range(4):
+            try:
+                response = await self._client.chat.completions.create(
+                    **_kwargs(send_thinking=send_thinking, send_temperature=send_temperature),
+                    stream=streamed,
+                )
+                return response, streamed, (level if send_thinking else "")
+            except Exception as exc:
+                if streamed and _is_streaming_unsupported_error(exc):
+                    logger.warning(
+                        "Endpoint rejects streaming, falling back to whole answers for this process: %s",
+                        str(exc)[:200],
+                    )
+                    self._stream_supported = False
+                    streamed = False
+                    continue
+                if send_thinking and _is_unsupported_param_error(exc):
+                    logger.warning(
+                        "Endpoint rejects the thinking control (%s), disabling it for this process: %s",
+                        level,
+                        str(exc)[:200],
+                    )
+                    self._thinking_param_supported = False
+                    send_thinking = False
+                    continue
+                if send_temperature and _is_temperature_unsupported_error(exc):
+                    logger.warning(
+                        "Endpoint rejects temperature=%s for model %s, disabling it for this process: %s",
+                        temperature,
+                        model,
+                        str(exc)[:200],
+                    )
+                    self._temperature_supported = False
+                    send_temperature = False
+                    continue
+                raise
+        raise RuntimeError(f"unreachable: exhausted parameter retries for model {model}")
+
     async def _chat_raw(
         self,
         model: str,
@@ -325,56 +485,31 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
+        started = time.perf_counter()
+        with trace_span("llm.chat", {"model": model, "max_tokens": budget}) as span:
+            response, streamed, level_sent = await self._send_with_param_fallbacks(model, temperature, budget, messages)
+            # What the request was really sent with, not what was configured: stats
+            # counts the switch that reached the endpoint, fallbacks included.
+            span.set_attribute("streamed", streamed)
+            span.set_attribute("thinking_disabled", level_sent == "off")
+            span.set_attribute("thinking_level", level_sent)
 
-        def _kwargs(*, send_switch: bool, send_temperature: bool) -> dict[str, Any]:
-            kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": budget}
-            if send_temperature:
-                kwargs["temperature"] = temperature
-            if send_switch:
-                kwargs["extra_body"] = dict(_NO_THINKING_BODY)
-            return kwargs
-
-        send_switch = settings.disable_thinking and self._thinking_switch_supported
-        send_temperature = self._temperature_supported
-        with trace_span(
-            "llm.chat",
-            {"model": model, "max_tokens": budget, "thinking_disabled": bool(send_switch)},
-        ):
-            # Up to two corrective retries, each disabling one parameter an endpoint
-            # just proved it refuses, and remembered so later calls skip straight
-            # past it instead of failing every time (same reasoning as the switch).
-            for _ in range(3):
-                try:
-                    response = await self._client.chat.completions.create(
-                        **_kwargs(send_switch=send_switch, send_temperature=send_temperature)
-                    )
-                    break
-                except Exception as exc:
-                    if send_switch and _is_unsupported_param_error(exc):
-                        logger.warning(
-                            "Endpoint rejects the thinking switch, disabling it for this process: %s",
-                            str(exc)[:200],
-                        )
-                        self._thinking_switch_supported = False
-                        send_switch = False
-                        continue
-                    if send_temperature and _is_temperature_unsupported_error(exc):
-                        logger.warning(
-                            "Endpoint rejects temperature=%s for model %s, disabling it for this process: %s",
-                            temperature,
-                            model,
-                            str(exc)[:200],
-                        )
-                        self._temperature_supported = False
-                        send_temperature = False
-                        continue
-                    raise
+            content: str
+            reasoning: str
+            finish_reason: str | None
+            if streamed:
+                # A gateway buffers a whole generation before forwarding it, and cuts
+                # the connection (504) once the model is slower than the gateway's
+                # own timeout. Streamed, the first chunks open the connection and
+                # the rest flows: the generation that timed out whole is relayed.
+                async with response as stream:
+                    content, reasoning, finish_reason = await _drain_stream(stream, span, started)
             else:
-                raise RuntimeError(f"unreachable: exhausted parameter retries for model {model}")
-        choice = response.choices[0]
-        msg = choice.message
-        content = msg.content or ""
-        reasoning = _reasoning_text(msg)
+                choice = response.choices[0]
+                msg = choice.message
+                content = msg.content or ""
+                reasoning = _reasoning_text(msg)
+                finish_reason = getattr(choice, "finish_reason", None)
         if reasoning:
             # Reasoning is never the answer, but knowing it happened explains both
             # the latency and the truncations.
@@ -389,7 +524,6 @@ class LLMClient:
                 len(reasoning),
             )
             content = reasoning
-        finish_reason: str | None = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
             logger.warning(
                 "Model %s hit the %d token output budget before finishing its answer",
@@ -548,5 +682,13 @@ def build_llm_client(entry: dict[str, Any]) -> LLMClient:
 
     Replaces the module level singleton whose base_url and api_key were frozen at
     import (FR-MOD-002): the table of models carries several endpoints, not one.
+    The entry's optional thinking level and stream preference travel with it, so
+    each model runs with its own reasoning and streaming choices.
     """
-    return LLMClient(base_url=str(entry.get("base_url", "")), api_key=str(entry.get("api_key", "")))
+    stream = entry.get("stream")
+    return LLMClient(
+        base_url=str(entry.get("base_url", "")),
+        api_key=str(entry.get("api_key", "")),
+        thinking=str(entry.get("thinking") or "") or None,
+        stream=stream if isinstance(stream, bool) else None,
+    )

@@ -90,6 +90,15 @@ install needs `TGI_PROJECTS_DIR` and optionally `TGI_CONFIG_DIR`, nothing else.
 `TGI_LLM_BASE_URL` / `TGI_LLM_API_KEY` below are read only by `tgi-validate`, which validates
 a model and endpoint independently of the web app's own table.
 
+Each entry of the model table also carries two optional choices, made when the model is
+added on `/parametres` and overriding the `.env` defaults for that model only:
+
+- **Niveau de raisonnement**: `défaut` (follow `TGI_DISABLE_THINKING`), `désactivé` (the
+  vLLM/SGLang switch for an immediate answer), or `faible` / `moyen` / `élevé` (the standard
+  `reasoning_effort` field). An endpoint that rejects the control is detected once and the
+  control is then dropped for the process.
+- **Streaming**: `défaut` (follow `TGI_LLM_STREAM`), `activé` or `désactivé`.
+
 | Variable | Default | Description |
 |---|---|---|
 | `TGI_CONFIG_DIR` | `$HOME/.config/tgi` | Where `models.json` lives (mode `0600`) |
@@ -101,6 +110,7 @@ a model and endpoint independently of the web app's own table.
 | `TGI_MAX_PARALLEL_SCENARIOS` | `5` | Scenarios generated in parallel |
 | `TGI_TESTS_PER_SCENARIO` | `5` | Target tests per scenario, editable per project |
 | `TGI_LLM_JSON_RETRIES` | `3` | Retries when the model returns no usable JSON |
+| `TGI_LLM_STREAM` | `true` | Stream answers chunk by chunk, so a slow gateway stops cutting the connection (504) |
 | `TGI_DISABLE_THINKING` | `false` | Send the vLLM/SGLang switch turning reasoning off |
 | `TGI_TEST_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two tests of the same rule are duplicates |
 | `TGI_RULE_SIMILARITY_THRESHOLD` | `0.9` | Above this ratio two rules are flagged for review, never merged |
@@ -283,7 +293,7 @@ There is no judge. Coverage is arithmetic on the requirements the document decla
 
 ## API Routes
 
-Two pages, 16 JSON routes. `project_id` and `version` are always validated before they can
+Two pages, 17 JSON routes. `project_id` and `version` are always validated before they can
 compose a disk path (`src/tgi/services/paths.py`); a malformed or absent identifier gets the
 same 404 body.
 
@@ -305,7 +315,8 @@ same 404 body.
 | `GET` | `/api/v1/projects/{id}/versions/{v}/qc.xlsx` | Download the QC export |
 | `DELETE` | `/api/v1/projects/{id}/versions/{v}` | Delete a version (not while running) |
 | `GET` | `/api/v1/models` | List the model table (api key masked) |
-| `POST` | `/api/v1/models` | Add a model entry |
+| `POST` | `/api/v1/models` | Add a model entry, with its thinking level and stream preference |
+| `PUT` | `/api/v1/models/{name}` | Edit a model entry (the api key is kept when the masked value is sent back) |
 | `DELETE` | `/api/v1/models/{name}` | Remove a model entry |
 
 ## Test JSON Schema
